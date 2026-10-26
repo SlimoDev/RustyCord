@@ -3,5 +3,12 @@
   "variant": "standard",
   "branch": "NotDiscord",
   "version": "0.3.1",
-  "release": null
+  "release": {
+    "kind": "installer",
+    "tag": "NotDiscord-v0.3.1",
+    "url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.3.1/NotDiscord-Setup-0.3.1.exe",
+    "bytes": 118365895,
+    "sha256": "29b1c658938a491d4e6a06a8d2069a0ffccfd7d07c15800e8447c8b0d3d66d22",
+    "executable_sha256": "e53ccaf1b1db293bd2585101f8079580cfa6e7aaf99058936211972bc73e1106"
+  }
 }
