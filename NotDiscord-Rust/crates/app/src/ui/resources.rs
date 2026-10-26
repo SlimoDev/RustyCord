@@ -6,6 +6,17 @@ mod avatar_cache;
 mod image_spool;
 #[path = "resources/custom_animation.rs"]
 mod custom_animation;
+#[path = "resources/gif_source.rs"]
+mod gif_source;
+#[path = "resources/webp_animation.rs"]
+mod webp_animation;
+#[path = "resources/animation_clock.rs"]
+mod animation_clock;
+pub use gif_source::{remember_source,resolved_url};
+#[cfg(test)]
+use gif_source::media_from_html;
+#[path = "resources/deleted_preview.rs"]
+mod deleted_preview;
 use avatar_cache::AvatarCache;
 use image_spool::{DecodeGate, DecodePermit, EncodedSpool};
 use std::{
@@ -103,6 +114,7 @@ pub struct Pictures {
     message_animation: Option<bool>,
     emoji_sections: Vec<EmojiSection>,
     textures: HashMap<String, (TextureHandle, usize, u64)>,
+    deleted_previews: deleted_preview::Cache,
     pending: HashSet<String>,
     failed: HashMap<String, (Instant, String)>,
     request: mpsc::SyncSender<PictureRequest>,
@@ -179,6 +191,7 @@ pub struct Animation {
     pub frames: Vec<(TextureHandle, Duration)>,
     pub index: usize,
     pub next: Instant,
+    started: Instant,
 }
 impl Drop for Pictures {
     fn drop(&mut self) {
@@ -218,7 +231,6 @@ pub fn is_image_url(value: &str) -> bool {
         .any(|extension| path.ends_with(extension))
     })
 }
-static SOURCES: OnceLock<Mutex<HashMap<String, (String, Instant)>>> = OnceLock::new();
 static HTTP: OnceLock<Option<reqwest::blocking::Client>> = OnceLock::new();
 static SAVING: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
 struct SaveSlot;
@@ -343,88 +355,6 @@ fn client() -> Option<&'static reqwest::blocking::Client> {
     })
     .as_ref()
 }
-pub fn remember_source(page: &str, media: &str) -> bool {
-    if !notdiscord_core::parsing::gif_page(page) || !allowed(media) {
-        return false;
-    }
-    let mut known = SOURCES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap();
-    if known.len() >= 128 && !known.contains_key(page) {
-        if let Some(old) = known.keys().next().cloned() {
-            known.remove(&old);
-        }
-    }
-    let changed = known
-        .get(page)
-        .is_none_or(|(previous, _)| previous != media);
-    known.insert(page.into(), (media.into(), Instant::now()));
-    changed
-}
-pub fn resolved_url(value: &str) -> Option<String> {
-    if allowed(value) {
-        return Some(value.into());
-    }
-    if !notdiscord_core::parsing::gif_page(value) {
-        return None;
-    }
-    if let Some((url, _)) = SOURCES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap()
-        .get(value)
-        .filter(|(_, at)| at.elapsed() < Duration::from_secs(15 * 60))
-        .cloned()
-    {
-        return Some(url);
-    }
-    let c = client()?;
-    let response = c.get(value).send().ok()?.error_for_status().ok()?;
-    if response.content_length().is_some_and(|n| n > 512 * 1024) {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    response.take(512 * 1024 + 1).read_to_end(&mut bytes).ok()?;
-    if bytes.len() > 512 * 1024 {
-        return None;
-    }
-    let html = String::from_utf8_lossy(&bytes);
-    let result = media_from_html(&html)?;
-    remember_source(value, &result);
-    Some(result)
-}
-fn media_from_html(html: &str) -> Option<String> {
-    let patterns = [
-        r#"(?i)"contentUrl"\s*:\s*"([^"\r\n]+)""#,
-        r#"(?i)<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']"#,
-        r#"(?i)<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']"#,
-    ];
-    let mut candidates = Vec::new();
-    for pattern in patterns {
-        let re = regex::Regex::new(pattern).ok()?;
-        for capture in re.captures_iter(&html) {
-            let raw = capture
-                .get(1)?
-                .as_str()
-                .replace("&amp;", "&")
-                .replace("\\/", "/")
-                .replace("\\u002F", "/");
-            let raw = raw.replace("\\u002f", "/").replace("\\u0026", "&");
-            if allowed(&raw)
-                && url::Url::parse(&raw).is_ok_and(|url| {
-                    ![".mp4", ".webm", ".html"]
-                        .iter()
-                        .any(|suffix| url.path().to_ascii_lowercase().ends_with(suffix))
-                })
-            {
-                candidates.push(raw);
-            }
-        }
-    }
-    candidates.sort_by_key(|url| !notdiscord_core::parsing::direct_gif(url));
-    candidates.into_iter().next()
-}
 #[cfg(test)]
 fn response_bytes(
     response: impl Read,
@@ -468,20 +398,8 @@ fn http_image_error(status: reqwest::StatusCode) -> Option<String> {
 }
 fn download_bytes_cancellable(url: &str, limit: u64, cancelled: impl Fn() -> bool) -> Result<Vec<u8>, String> {
     if cancelled() { return Err("Carga de imagen cancelada.".into()); }
-    let url = resolved_url(url).ok_or(if notdiscord_core::parsing::gif_page(url) {
-        "El proveedor no entregó el GIF. Vuelve a cargar el chat para actualizar su enlace multimedia, o abre el original."
-    } else {"Origen de imagen no permitido o no disponible."})?;
-    let c = client().ok_or("No se pudo iniciar la descarga de la imagen.")?;
-    let response = c.get(&url).send().map_err(|e| {
-        if e.is_timeout() {
-            "La descarga de la imagen tardó demasiado. Puedes reintentar.".to_string()
-        } else {
-            "No se pudo conectar con el servidor de la imagen.".to_string()
-        }
-    })?;
-    if let Some(error) = http_image_error(response.status()) {
-        return Err(error);
-    }
+    let source = gif_source::resolve(url,gif_source::Want::Animation,&cancelled)?;
+    let response = gif_source::get(&source,&cancelled).inspect_err(|_|gif_source::invalidate(url,&source))?;
     let length = response.content_length();
     response_bytes_cancellable(response, length, limit, cancelled)
 }
@@ -534,7 +452,7 @@ fn download_spool(
     limit: u64,
     cancelled: impl Fn() -> bool,
 ) -> Result<(EncodedSpool, reqwest::header::HeaderMap), String> {
-    let url = resolved_url(url).ok_or("Origen de imagen no permitido o no disponible.")?;
+    let url = gif_source::resolve(url,gif_source::Want::Poster,&cancelled)?;
     let c = client().ok_or("No se pudo iniciar la descarga de la imagen.")?;
     let response = c.get(&url).send().map_err(|e| {
         if e.is_timeout() {
@@ -874,6 +792,7 @@ impl Pictures {
             message_animation: None,
             emoji_sections: Vec::new(),
             textures: HashMap::new(),
+            deleted_previews: deleted_preview::Cache::default(),
             pending: HashSet::new(),
             failed: HashMap::new(),
             request,
@@ -983,12 +902,13 @@ impl Pictures {
                 })
                 .collect::<Vec<_>>();
             if !frames.is_empty() {
-                let next = Instant::now() + frames[0].1;
+                let next = Instant::now();
                 self.animation = Some(Animation {
                     url,
                     frames,
                     index: 0,
                     next,
+                    started: next,
                 });
             }
         }
@@ -1289,6 +1209,7 @@ impl Pictures {
         self.stop();
         self.custom_animations.clear();
         self.textures = HashMap::new();
+        self.deleted_previews = deleted_preview::Cache::default();
         self.pending = HashSet::new();
         self.failed = HashMap::new();
         self.local_sources = HashMap::new();
@@ -1303,6 +1224,7 @@ impl Pictures {
         *self.avatar_cache.lock().unwrap_or_else(|e| e.into_inner()) = cache;
     }
     pub fn play(&mut self, _ctx: &egui::Context, url: String) {
+        gif_source::retry(&url);
         self.stop();
         if self.visuals_suspended() { self.suspended_animation = Some(url); return; }
         let generation = self.animation_generation.load(Ordering::Acquire);
@@ -1353,9 +1275,11 @@ impl Pictures {
             return None;
         }
         self.animation_seen = true;
-        if Instant::now() >= a.next {
-            a.index = (a.index + 1) % a.frames.len();
-            a.next = Instant::now() + a.frames[a.index].1;
+        let now=Instant::now();
+        if now >= a.next {
+            let(index,remaining)=animation_clock::source_frame(a.frames.iter().map(|(_,delay)|*delay),now.saturating_duration_since(a.started));
+            a.index=index;
+            a.next=now+remaining.max(Duration::from_nanos(1_000_000_000/30));
         }
         ctx.request_repaint_after(a.next.saturating_duration_since(Instant::now()));
         Some(a.frames[a.index].0.clone())
@@ -1418,6 +1342,7 @@ fn decode_animation_checked(
     bytes: &[u8],
     cancelled: impl Fn() -> bool,
 ) -> Result<AnimationFrames, String> {
+    if bytes.starts_with(b"RIFF"){return webp_animation::decode(bytes,cancelled);}
     let Ok(mut scan) = gif::DecodeOptions::new().read_info(Cursor::new(bytes)) else {
         return Err("Decodificación GIF: cabecera no válida o archivo incompatible.".into());
     };
@@ -1473,7 +1398,7 @@ fn decode_animation_checked(
         }
         let Ok(f) = frame else { return Err("Decodificación GIF: datos de imagen dañados.".into()) };
         let delay = f.delay().numer_denom_ms();
-        let delay = Duration::from_millis((delay.0 / delay.1.max(1)).clamp(20, 10_000) as u64);
+        let delay = animation_clock::source_delay(delay.0,delay.1);
         let image = f.into_buffer();
         if image.width() != w || image.height() != h {
             return Err("Decodificación GIF: dimensiones inconsistentes.".into());
@@ -1789,7 +1714,7 @@ mod tests {
     fn invalid_over_limit_animation_returns_no_partial_playback() {
         assert!(decode_animation_bytes(&gif_frames(401, 10), || false).is_empty());
         let decoded = decode_animation_bytes(&gif_frames(2, 2000), || false);
-        assert_eq!(decoded[0].3, Duration::from_secs(10));
+        assert_eq!(decoded[0].3, Duration::from_secs(20));
     }
     #[test]
     fn honours_background_disposal() {

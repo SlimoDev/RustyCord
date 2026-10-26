@@ -1,5 +1,5 @@
 param(
-    [string]$Destination = (Join-Path $PSScriptRoot 'dist\NotDiscord-0.3.0'),
+    [string]$Destination = (Join-Path $PSScriptRoot 'target\installer-payload'),
     [Parameter(Mandatory = $true)][string]$RuntimeRoot
 )
 $ErrorActionPreference = 'Stop'

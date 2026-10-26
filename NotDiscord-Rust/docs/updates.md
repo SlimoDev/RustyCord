@@ -1,79 +1,88 @@
-# Versiones y actualización
+# Versiones e instalación de NotDiscord
 
-Esta entrega actualiza únicamente **NotDiscord estándar**. La rama, el binario,
-los accesos directos y los paquetes existentes de **NotDiscord+** se conservan sin
-cambios. El Plus conservado todavía no incluye este actualizador ni participa en
-la configuración, sesión o exclusión bidireccional nuevas; esa integración queda
-pendiente de una actualización de Plus autorizada por el usuario.
+Esta entrega actualiza sólo **NotDiscord estándar**. NotDiscord+ conserva su rama,
+ejecutable y accesos directos anteriores; todavía no participa en el actualizador
+ni en la configuración y exclusión bidireccionales nuevas.
 
-Esta entrega actualiza sólo NotDiscord. NotDiscord+ mantiene su rama, paquete y
-acceso directo anteriores; la correspondencia Plus de la tabla describe el
-soporte preparado para una futura actualización autorizada. El Plus anterior
-todavía no consulta este manifiesto ni participa en la exclusión compartida.
+La distribución actual es exclusivamente el instalador
+**NotDiscord-Setup-0.3.1.exe**. No se publica una edición portable de esta versión.
+La instalación permite elegir una carpeta y, por defecto, utiliza Programs del
+usuario para no requerir elevación. Una ruta protegida necesita el consentimiento
+normal de Windows; el actualizador no intenta eludir UAC.
 
-`version.json` es el manifiesto compilado y publicado. `schema` vale 1. Su
-correspondencia es explícita y se valida tanto en el cliente como en el instalador:
+version.json utiliza schema 2, variant standard y branch NotDiscord. La aplicación
+consulta ese archivo en la rama NotDiscord de SlimoDev/RustyCord mediante la API
+pública de GitHub, sin cuenta ni credenciales. La correspondencia futura de Plus
+sería variant plus / branch codex/notdiscord-plus; no se publica ni modifica Plus
+en esta entrega. La versión instalada aparece en el título y se compara mediante
+precedencia SemVer, incluidos prereleases numéricos.
 
-| Variante | `variant` | Rama de GitHub |
-|---|---|---|
-| NotDiscord | `standard` | `NotDiscord` |
-| NotDiscord+ (correspondencia futura, fuera de esta entrega) | `plus` | `codex/notdiscord-plus` |
+La consulta se realiza fuera del hilo de interfaz, cinco segundos después de
+abrir una ejecución normal y luego cada seis horas. Los previews no consultan.
+El control ↻ permite consultar o reintentar; los errores se muestran sin bloquear.
+Actualizar sólo se habilita para una versión más reciente con instalador válido.
+No hay avisos repetidos sobre la misma versión.
 
-La aplicación consulta el archivo de su propia rama mediante la API pública de
-GitHub, sin credenciales de Discord ni autenticación de GitHub. La consulta corre
-fuera del hilo de interfaz, a los cinco segundos de abrir una ejecución normal y
-luego cada seis horas; los previews no consultan. El botón permite reintentar.
-GitHub puede limitar las consultas anónimas y el error queda visible en su tooltip.
-El botón «Actualizar» sólo se habilita para una versión nueva con paquete; el
-control contiguo «↻» permite consultar o reintentar. La precedencia sigue SemVer
-(mayor, menor, parche y prerelease numérico; los
-metadatos `+build` no alteran el orden). No se muestran avisos repetidos: hay un
-único estado de actualización en el pie de la aplicación.
+El manifiesto publicado tiene esta estructura:
 
-Un manifiesto con una versión más reciente y `release: null` se muestra como
-publicado pero con paquete pendiente; no habilita una instalación ficticia. Para
-habilitarla, el publicador debe generar y publicar un ZIP y su SHA-256:
+    {
+      "schema": 2,
+      "variant": "standard",
+      "branch": "NotDiscord",
+      "version": "0.3.1",
+      "release": {
+        "kind": "installer",
+        "tag": "NotDiscord-v0.3.1",
+        "url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.3.1/NotDiscord-Setup-0.3.1.exe",
+        "sha256": "<SHA-256 del Setup.exe>",
+        "bytes": 123,
+        "executable_sha256": "<SHA-256 del NotDiscord.exe que instala>"
+      }
+    }
 
-```powershell
-.\prepare-update-release.ps1 -PackageRoot 'dist\paquete-compilado' -Tag 'notdiscord-v0.3.0' -OutputDirectory 'dist\release-notdiscord-v0.3.0'
-```
+release null significa que el instalador todavía no está publicado. Los
+manifiestos de esquema 1 se leen sólo para conocer su versión: este actualizador
+no descarga sus ZIP. El cliente 0.3.0 antiguo no entiende el esquema 2 y necesita
+la primera instalación manual del nuevo Setup.exe; las versiones instaladas con
+este mecanismo podrán usar Actualizar en adelante.
 
-El script sólo prepara archivos locales; no compila ni ejecuta el cliente, no usa
-cuentas, no sube archivos y no publica releases. El ZIP resultante se publica como
-asset de la etiqueta indicada en `SlimoDev/RustyCord`, y el `version.json`
-resultante se publica en la rama que indica su propio manifiesto. La etiqueta no
-es la fuente de selección de variante: la rama sigue siendo la fuente de verdad.
-Hay que incrementar la versión antes de compilar y conservar esa versión en el
-paquete. El manifiesto debe publicarse después de que su asset esté disponible.
+Al pulsar Actualizar se descarga y valida el instalador HTTPS de la variante
+correcta. Se comprueban origen de GitHub, tamaño, SHA-256 y formato de ejecutable.
+La preparación se guarda en
+%LOCALAPPDATA%\NotDiscord\updates\<identificador>, que es escribible aunque el
+programa esté instalado en una carpeta protegida. No se ejecuta código remoto
+antes de la acción explícita del usuario.
 
-La actualización descarga sólo componentes propios: ejecutable Rust, addon,
-loader multimedia, icono, licencias, configuración de runtime, lanzador y versión.
-Los motores de terceros no se redistribuyen. El índice incluye los hashes de los
-motores existentes que la versión requiere; una instalación incompatible debe
-recibir un paquete completo en lugar de sustituir esos motores automáticamente.
+El helper incorporado al binario reserva Admission, confirma que está preparado
+y espera el cierre ordenado del cliente. Si no pueden guardarse las preferencias,
+el cliente cancela la entrega y permanece abierto; el helper libera las reservas.
+Tras la salida, se entrega Owner al instalador mediante un lease validado, mientras
+el helper conserva Admission. Inno Setup mantiene Owner durante los cambios y su
+restauración, por lo que un fallo del helper no deja los archivos sin coordinación.
 
-El cliente valida origen HTTPS de GitHub, variante, rama, tamaño y SHA-256 del
-ZIP. Un instalador local incorporado al binario valida rutas, archivos, hashes y
-compatibilidad antes de pedir el cierre. Rechaza rutas absolutas, traversal,
-enlaces, nombres reservados, archivos ajenos al producto y paquetes excesivos.
-La interfaz se cierra sólo después de recibir la confirmación del instalador.
-Éste reserva la admisión compartida entre las dos variantes antes de confirmar
-la entrega y adquiere la propiedad compartida tras la salida del proceso. Mantiene
-ambas reservas durante la sustitución y cualquier restauración para impedir que
-otra instancia abra los archivos a medias. Espera la salida ordenada del proceso, conserva copia de los archivos
-reemplazados y trata de restaurarlos si falla una sustitución. Después vuelve a
-abrir el mismo ejecutable con los mismos argumentos; los accesos directos siguen
-apuntando a esa ruta. No sobrescribe datos, preferencias, sesión ni cachés. Un
-fallo de instalación se registra en `.notdiscord-update/<id>/error.txt` y produce
-un aviso de Windows; el staging y la copia de seguridad se conservan para revisar
-un fallo. El hash protege la integridad respecto del manifiesto publicado, no
-sustituye la confianza en quienes pueden publicar en el repositorio.
+El instalador se ejecuta silenciosamente sobre la misma carpeta mediante /DIR.
+Se conserva el ámbito de una instalación registrada (usuario o equipo); solicitar
+elevación para escribir no convierte por sí solo una instalación de usuario en
+instalación para todo el equipo. Setup no fuerza el cierre de otras aplicaciones.
+Su modo de actualización no abre el cliente por su cuenta: el helper comprueba
+el SHA-256 del ejecutable y el manifiesto instalados, libera la coordinación y
+vuelve a abrir la misma ruta con los mismos argumentos. Configuración y sesión
+continúan en su almacenamiento existente. Si falla la instalación, se muestra
+el error y sólo se reabre la versión anterior automáticamente si sus componentes
+de ejecución siguen idénticos. Los registros permanecen en la carpeta de preparación.
 
-Si no se pueden guardar los cambios antes del cierre, el cliente cancela la
-entrega mediante un marcador que el instalador observa durante su espera. La
-aplicación permanece abierta y la reserva de admisión se libera sin esperar el
-timeout de cierre ni modificar archivos instalados.
+Para preparar la publicación, después de compilar el cliente y el instalador:
 
-Por instrucción del usuario, el flujo se revisa y compila sin ejecutar pruebas
-funcionales ni la aplicación. La instalación y el reinicio quedan pendientes de
-su confirmación; un release sólo está disponible cuando se publican sus assets.
+    .\prepare-update-release.ps1 -Installer 'dist\NotDiscord-Setup-0.3.1.exe' -Executable 'ruta-del-payload\NotDiscord.exe' -Destination 'ruta-nueva\version.json'
+
+El script únicamente lee los ejecutables compilados y escribe el manifiesto; no
+ejecuta, sube o publica nada, ni crea un ZIP. Se publica el Setup.exe como asset de
+NotDiscord-v0.3.1 y después el manifiesto generado en la rama NotDiscord. Primero
+se compila con release null, se empaqueta y se calculan los hashes; el manifiesto
+con el hash del instalador no se vuelve a incluir en ese mismo instalador, evitando
+un ciclo de hashes. Los hashes verifican integridad respecto de la publicación;
+no sustituyen la confianza en quienes pueden publicar en el repositorio.
+
+Por indicación del usuario no se ejecutan pruebas funcionales, el instalador ni
+el cliente. La compilación y revisión estática no verifican instalación, UAC,
+cierre, llamadas o reinicio reales. Su funcionamiento queda pendiente de confirmación.

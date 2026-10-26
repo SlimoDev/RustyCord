@@ -30,10 +30,14 @@ pub struct Manifest {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Release {
+    #[serde(default)]
+    pub kind: String,
     pub tag: String,
     pub url: String,
     pub sha256: String,
     pub bytes: u64,
+    #[serde(default)]
+    pub executable_sha256: String,
 }
 
 fn installed() -> &'static Manifest {
@@ -346,7 +350,7 @@ fn client() -> Result<reqwest::blocking::Client, String> {
         .map_err(|_| "No se pudo preparar la conexión de actualización".into())
 }
 fn lane_valid(manifest: &Manifest) -> bool {
-    manifest.schema == 1
+    matches!(manifest.schema, 1 | 2)
         && matches!(
             (manifest.variant.as_str(), manifest.branch.as_str()),
             ("standard", "NotDiscord") | ("plus", "codex/notdiscord-plus")
@@ -386,13 +390,18 @@ fn check_remote() -> Result<Option<Manifest>, String> {
     if bytes.len() > 64 * 1024 {
         return Err("El manifiesto de actualización es demasiado grande".into());
     }
-    let remote: Manifest = serde_json::from_slice(&bytes)
+    let mut remote: Manifest = serde_json::from_slice(&bytes)
         .map_err(|_| "GitHub no publicó un manifiesto de versión válido".to_string())?;
     if !lane_valid(&remote) || remote.variant != own.variant || remote.branch != own.branch {
         return Err("El manifiesto pertenece a otra variante".into());
     }
     let current = Version::parse(&own.version)?;
     let newer = Version::parse(&remote.version)?;
+    if remote.schema == 1 {
+        // Read old version metadata for precedence only. This edition installs
+        // exclusively the published Setup.exe; it never downloads a legacy ZIP.
+        remote.release = None;
+    }
     if let Some(release) = &remote.release {
         validate_release(&remote, release)?;
     }
@@ -406,22 +415,31 @@ fn validate_release(manifest: &Manifest, release: &Release) -> Result<(), String
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-._+".contains(&b));
     let prefix = if manifest.variant == "plus" {
-        "NotDiscord-Plus"
+        "NotDiscord-Plus-Setup"
     } else {
-        "NotDiscord"
+        "NotDiscord-Setup"
     };
     let expected = format!(
-        "https://github.com/SlimoDev/RustyCord/releases/download/{}/{}-{}.zip",
+        "https://github.com/SlimoDev/RustyCord/releases/download/{}/{}-{}.exe",
         release.tag, prefix, manifest.version
     );
-    if !valid_tag
+    if manifest.schema != 2
+        || release.kind != "installer"
+        || !valid_tag
         || release.url != expected
         || release.bytes == 0
         || release.bytes > MAX_PACKAGE_BYTES
         || release.sha256.len() != 64
         || !release.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+        || release.executable_sha256.len() != 64
+        || !release
+            .executable_sha256
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit())
     {
-        return Err("El paquete publicado tiene una ruta, tamaño o SHA-256 no válido".into());
+        return Err(
+            "El instalador publicado tiene un formato, ruta, tamaño o SHA-256 no válido".into(),
+        );
     }
     Ok(())
 }
@@ -429,13 +447,14 @@ fn validate_release(manifest: &Manifest, release: &Release) -> Result<(), String
 struct InstallPlan {
     schema: u32,
     target_root: PathBuf,
-    archive: PathBuf,
+    installer: PathBuf,
     work_root: PathBuf,
     variant: String,
     branch: String,
     version: String,
     sha256: String,
     bytes: u64,
+    executable_sha256: String,
     parent_pid: u32,
     executable: PathBuf,
     arguments: String,
@@ -457,22 +476,27 @@ fn prepare_update(
         .parent()
         .ok_or("No se encontró la carpeta instalada")?;
     if !target.join("runtime.json").is_file() {
-        return Err("Esta ejecución procede del código fuente. Instala un paquete compilado para actualizar desde la aplicación".into());
+        return Err("Esta ejecución procede del código fuente. Instala NotDiscord con su Setup.exe para actualizar desde la aplicación".into());
     }
     reject_reparse_ancestors(target)?;
-    let base = target.join(".notdiscord-update");
+    let local = std::env::var_os("LOCALAPPDATA")
+        .ok_or("Windows no informó la carpeta local de este usuario")?;
+    let local = PathBuf::from(local);
+    reject_reparse_ancestors(&local)?;
+    let base = local.join("NotDiscord").join("updates");
     if base.exists() {
         reject_reparse_ancestors(&base)?;
     }
     fs::create_dir_all(&base)
         .map_err(|_| "La carpeta instalada no permite preparar la actualización")?;
+    reject_reparse_ancestors(&base)?;
     let work = base.join(uuid::Uuid::new_v4().simple().to_string());
     fs::create_dir(&work).map_err(|_| "No se pudo crear la carpeta temporal de actualización")?;
-    let archive = work.join("package.zip");
+    let installer = work.join("setup.exe");
     let mut output = OpenOptions::new()
         .create_new(true)
         .write(true)
-        .open(&archive)
+        .open(&installer)
         .map_err(|_| "No se pudo preparar la descarga")?;
     let mut response = client()?
         .get(&release.url)
@@ -528,15 +552,16 @@ fn prepare_update(
     }
     let (admission_mutex, owner_mutex) = crate::instance::coordination_names()?;
     let plan = InstallPlan {
-        schema: 1,
+        schema: 2,
         target_root: target.to_path_buf(),
-        archive,
+        installer,
         work_root: work.clone(),
         variant: manifest.variant.clone(),
         branch: manifest.branch.clone(),
         version: manifest.version.clone(),
         sha256: release.sha256.clone(),
         bytes: release.bytes,
+        executable_sha256: release.executable_sha256.clone(),
         parent_pid: std::process::id(),
         executable: executable.clone(),
         arguments: std::env::args_os()
@@ -564,7 +589,7 @@ fn prepare_update(
         .output()
         .map_err(|_| "No se pudo preparar el instalador de Windows")?;
     if !output.status.success() {
-        return Err("El paquete no pasó la validación previa. Consulta .notdiscord-update en la carpeta instalada".into());
+        return Err("El instalador no pasó la validación previa. Consulta %LOCALAPPDATA%\\NotDiscord\\updates".into());
     }
     launch_installer(&plan_path)?;
     Ok(plan_path)
@@ -615,7 +640,7 @@ fn launch_installer(plan: &Path) -> Result<(), String> {
             .map_err(|_| "No se pudo comprobar el instalador")?
             .is_some()
         {
-            return Err("El instalador no pudo prepararse. La aplicación seguirá abierta; consulta .notdiscord-update".into());
+            return Err("El instalador no pudo prepararse. La aplicación seguirá abierta; consulta %LOCALAPPDATA%\\NotDiscord\\updates".into());
         }
         std::thread::sleep(Duration::from_millis(100));
     }

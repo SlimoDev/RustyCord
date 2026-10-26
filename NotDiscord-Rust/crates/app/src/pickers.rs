@@ -43,17 +43,7 @@ pub fn media_host(h: &str) -> bool {
         .is_match(h)
 }
 pub fn is_page(value: &str) -> bool {
-    if !safe_link(value) {
-        return false;
-    }
-    let u = url::Url::parse(value).unwrap();
-    match u.host_str().unwrap_or("") {
-        "tenor.com" | "www.tenor.com" => u.path().starts_with("/view/"),
-        "giphy.com" | "www.giphy.com" | "klipy.com" | "www.klipy.com" => {
-            u.path().starts_with("/gifs/")
-        }
-        _ => false,
-    }
+    safe_link(value) && notdiscord_core::parsing::gif_page(value)
 }
 pub fn normalized(value: &str) -> String {
     let value = value.trim();
@@ -153,6 +143,7 @@ pub fn parse(value: &Value, mode: &str, limit: usize) -> Result<GifPage, String>
         .take(limit.clamp(1, 96))
         .filter_map(|v| {
             let link = normalized(&text(v, "url"));
+            let animation = notdiscord_core::parsing::provider_animation_source(v).unwrap_or_default();
             let src = ["gif_src", "gifSrc", "src"]
                 .iter()
                 .map(|key| normalized(&text(v, key)))
@@ -182,11 +173,7 @@ pub fn parse(value: &Value, mode: &str, limit: usize) -> Result<GifPage, String>
                 thumbnail_url: thumbnail,
                 width: i(v, "width").clamp(0, 8192),
                 height: i(v, "height").clamp(0, 8192),
-                animation_url: if notdiscord_core::parsing::direct_gif(&src) {
-                    src
-                } else {
-                    String::new()
-                },
+                animation_url: animation,
             })
         })
         .collect::<Vec<_>>();
@@ -254,7 +241,7 @@ pub fn favorites(encoded: &str) -> Result<Vec<GifItem>, String> {
                         title: "Guardado en Discord".into(),
                         width,
                         height,
-                        animation_url: if notdiscord_core::parsing::direct_gif(&src) {
+                        animation_url: if notdiscord_core::parsing::direct_animation(&src) {
                             src
                         } else {
                             String::new()

@@ -8,6 +8,23 @@ fn browser_link(value: &str) -> bool {
         && url::Url::parse(value).is_ok_and(|url| matches!(url.scheme(), "http" | "https")
             && url.host_str().is_some() && url.username().is_empty() && url.password().is_none())
 }
+fn gif_url(value: &str) -> bool {
+    notdiscord_core::parsing::gif_page(value) || notdiscord_core::parsing::direct_animation(value)
+}
+/// Link-preview text and the media card come from separate bounded parsers.
+/// Suppress only the redundant wrapper for a recognized GIF that has its own
+/// media representation. An article which happens to contain a GIF keeps its
+/// ordinary title, description and fields.
+fn redundant_gif_embed(embed: &ChatEmbed, message: &ChatMessage) -> bool {
+    gif_url(&embed.url) && embed.fields.is_empty()
+        && (!message.components_v2 && message.attachments.iter().any(|attachment|
+            (attachment.animated || attachment.content_type.as_deref() == Some("image/gif")
+                || gif_url(&attachment.url))
+            && notdiscord_core::parsing::same_media_resource(&attachment.url, &embed.url))
+            || message.components.iter().any(|component|
+                matches!(component.kind, 11..=13) && gif_url(&component.url)
+                    && notdiscord_core::parsing::same_media_resource(&component.url, &embed.url)))
+}
 impl NotDiscordUi {
     fn received_link(&mut self, ui: &mut egui::Ui, label: &str, url: &str, strong: bool) {
         let text = RichText::new(label).size(self.prefs.chat_size).color(if browser_link(url) { self.theme.accent } else { self.theme.ink });
@@ -20,6 +37,7 @@ impl NotDiscordUi {
     }
     pub(super) fn draw_message_rich(&mut self, ui: &mut egui::Ui, message: &ChatMessage, state: &AppSnapshot) {
         for (index, embed) in message.embeds.iter().take(10).enumerate() {
+            if redundant_gif_embed(embed, message) { continue; }
             ui.push_id(("received-embed", index), |ui| {
                 let response = egui::Frame::new().fill(self.theme.surface).corner_radius(5)
                     .inner_margin(egui::Margin::same(11)).show(ui, |ui| {
@@ -74,8 +92,18 @@ impl NotDiscordUi {
                                 } else { self.component_media(ui, component); }
                             }
                             13 => {
-                                let name = if component.text.is_empty() { "Archivo adjunto" } else { &component.text };
-                                self.received_link(ui, name, &component.url, false);
+                                if gif_url(&component.url) {
+                                    let duplicate = shown_media.iter().any(|known|
+                                        notdiscord_core::parsing::same_media_resource(known, &component.url));
+                                    if duplicate { return; }
+                                    shown_media.push(&component.url);
+                                    if component.spoiler {
+                                        ui.collapsing("Mostrar contenido oculto", |ui| self.component_media(ui, component));
+                                    } else { self.component_media(ui, component); }
+                                } else {
+                                    let name = if component.text.is_empty() { "Archivo adjunto" } else { &component.text };
+                                    self.received_link(ui, name, &component.url, false);
+                                }
                             }
                             14 => { ui.separator(); }
                             _ => {
@@ -98,25 +126,79 @@ impl NotDiscordUi {
         // downloads/decoders merely because the deleted row becomes visible.
         let red = Color32::from_rgb(242, 63, 67);
         for embed in message.embeds.iter().take(10) {
+            if redundant_gif_embed(embed, message) { continue; }
             for text in [&embed.author, &embed.title, &embed.description, &embed.footer] {
                 if !text.is_empty() { selectable_message_label(ui, RichText::new(readable_mentions(text, &message.mentions, state)).size(self.prefs.chat_size).color(red)); }
             }
+            self.draw_deleted_text_previews(ui, &embed.description, message);
             for field in embed.fields.iter().take(25) {
                 for text in [&field.name, &field.value] {
                     if !text.is_empty() { selectable_message_label(ui, RichText::new(readable_mentions(text, &message.mentions, state)).size(self.prefs.chat_size).color(red)); }
                 }
+                self.draw_deleted_text_previews(ui, &field.value, message);
             }
         }
         for component in message.components.iter().take(40).filter(|component| !component.text.is_empty()) {
             selectable_message_label(ui, RichText::new(readable_mentions(&component.text, &message.mentions, state)).size(self.prefs.chat_size).color(red));
         }
+        let mut shown_media: Vec<&str> = Vec::new();
+        for component in message.components.iter().take(40).filter(|component|
+            matches!(component.kind, 11..=13) && resources::is_image_url(&component.url)) {
+            let duplicate = message.attachments.iter().any(|attachment|
+                notdiscord_core::parsing::same_media_resource(&attachment.url, &component.url)
+                    || attachment.preview_url.as_deref().is_some_and(|poster|
+                        notdiscord_core::parsing::same_media_resource(poster, &component.url)))
+                || shown_media.iter().any(|known|
+                    notdiscord_core::parsing::same_media_resource(known, &component.url));
+            if duplicate { continue; }
+            shown_media.push(&component.url);
+            let name = if gif_url(&component.url) { "GIF" } else { "Imagen" };
+            let mut draw = |ui: &mut egui::Ui| {
+                if !self.draw_deleted_media_card(ui, &component.url, &component.url, name, None)
+                    && component.text.is_empty() {
+                    selectable_message_label(ui, RichText::new("Contenido multimedia eliminado · vista previa no disponible en esta sesión")
+                        .size(self.prefs.chat_size).color(red));
+                }
+            };
+            if component.spoiler { ui.collapsing("Mostrar contenido oculto", draw); }
+            else { draw(ui); }
+        }
     }
     fn component_media(&mut self, ui: &mut egui::Ui, component: &ChatComponent) {
-        if !component.text.is_empty() { selectable_message_label(ui, RichText::new(&component.text).size(self.prefs.chat_size)); }
-        if notdiscord_core::parsing::trusted_media(&component.url) && resources::is_image_url(&component.url) {
-            let gif = notdiscord_core::parsing::direct_gif(&component.url) || notdiscord_core::parsing::gif_page(&component.url);
+        let gif = gif_url(&component.url);
+        if !gif && !component.text.is_empty() { selectable_message_label(ui, RichText::new(&component.text).size(self.prefs.chat_size)); }
+        if gif || notdiscord_core::parsing::trusted_media(&component.url) && resources::is_image_url(&component.url) {
             self.media_card(ui, &component.url, &component.url, gif, if gif { "GIF" } else { "Imagen" }, None);
         } else if browser_link(&component.url) { self.received_link(ui, "Abrir contenido multimedia", &component.url, false); }
         else { ui.small(RichText::new("El servicio no proporcionó un enlace multimedia compatible.").color(self.theme.muted)); }
+    }
+}
+
+#[cfg(test)]
+mod gif_wrapper_tests {
+    use super::*;
+
+    #[test]
+    fn gif_wrapper_requires_matching_media_and_keeps_ordinary_link_information() {
+        let page = "https://klipy.com/gifs/synthetic-greeting";
+        let gif = "https://static.klipy.com/synthetic/greeting.gif";
+        let parse = |url| notdiscord_core::parsing::message(&serde_json::json!({
+            "id":"300", "channel_id":"200", "author":{"id":"100","username":"Synthetic"},
+            "content":url, "embeds":[{"url":url,"title":"Synthetic greeting","provider":{"name":"Klipy"},
+                "image":{"url":gif},"thumbnail":{"url":gif}}]
+        }));
+        let message = parse(page);
+        assert!(redundant_gif_embed(&message.embeds[0], &message));
+        let article = parse("https://example.test/greeting-article");
+        assert!(!redundant_gif_embed(&article.embeds[0], &article));
+        let mut missing = message.clone();
+        missing.attachments.clear();
+        assert!(!redundant_gif_embed(&missing.embeds[0], &missing));
+        let mut components_only = message.clone();
+        components_only.components_v2 = true;
+        assert!(!redundant_gif_embed(&components_only.embeds[0], &components_only));
+        let mut rich = message;
+        rich.embeds[0].fields.push(ChatEmbedField { name:"Bot field".into(),value:"Preserved content".into(),..Default::default() });
+        assert!(!redundant_gif_embed(&rich.embeds[0], &rich));
     }
 }

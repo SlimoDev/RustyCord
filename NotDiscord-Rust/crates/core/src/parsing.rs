@@ -4,6 +4,9 @@ use std::collections::HashSet;
 #[path = "parsing/message_rich.rs"]
 mod message_rich;
 pub use message_rich::{message_components, rich_embeds};
+#[path = "parsing/gif_media.rs"]
+mod gif_media;
+pub use gif_media::{animation_rendition, direct_animation, provider_animation_source};
 
 pub fn s(value: &Value, key: &str) -> String {
     value
@@ -501,12 +504,15 @@ pub fn prefer_media_url<'a>(current: &'a str, candidate: &'a str) -> &'a str {
 pub fn deduplicate_media(files: Vec<ChatAttachment>) -> Vec<ChatAttachment> {
     let mut result: Vec<ChatAttachment> = Vec::new();
     for file in files {
-        let same = result.iter_mut().find(|old| [&old.url].into_iter().chain(old.preview_url.as_ref())
-            .any(|a| [&file.url].into_iter().chain(file.preview_url.as_ref()).any(|b| same_media_resource(a,b))));
+        let same = result.iter_mut().find(|old| [&old.url].into_iter().chain(old.preview_url.as_ref()).chain(old.animation_url.as_ref())
+            .any(|a| [&file.url].into_iter().chain(file.preview_url.as_ref()).chain(file.animation_url.as_ref()).any(|b| same_media_resource(a,b))));
         if let Some(old) = same {
             old.url = prefer_media_url(&old.url, &file.url).to_owned();
             if let Some(preview) = &file.preview_url {
                 old.preview_url = Some(old.preview_url.as_ref().map(|current| prefer_media_url(current, preview)).unwrap_or(preview).to_owned());
+            }
+            if let Some(animation)=&file.animation_url{
+                old.animation_url=Some(old.animation_url.as_ref().map(|current|prefer_media_url(current,animation)).unwrap_or(animation).to_owned());
             }
             if let Some(preview) = &old.preview_url {
                 if direct_gif(&old.url) && direct_gif(preview) { old.url = prefer_media_url(&old.url, preview).to_owned(); }
@@ -556,6 +562,7 @@ pub fn attachments(value: &Value) -> Vec<ChatAttachment> {
                 size: v["size"].as_i64().unwrap_or(0),
                 animated,
                 preview_url: (!proxy.is_empty() && proxy != chosen).then_some(proxy),
+                animation_url: animated.then_some(chosen),
             }
         })
         .collect()
@@ -566,21 +573,24 @@ pub fn embeds(value: &Value) -> Vec<ChatAttachment> {
         let image = &v["image"];
         let thumb = &v["thumbnail"];
         let page = s(v, "url");
+        let gif_context = gif_page(&page) || s(v,"type")=="gifv";
         let mut preview = s(thumb, "proxy_url");
         if preview.is_empty() {
             preview = s(thumb, "url")
         }
         let direct = [
+            provider_animation_source(v).unwrap_or_default(),
             s(image, "url"),
             s(image, "proxy_url"),
-            s(thumb, "url"),
-            s(thumb, "proxy_url"),
+            s(&v["video"], "url"),
+            s(&v["video"], "proxy_url"),
         ]
         .into_iter()
-        .filter(|v| direct_gif(v)).reduce(|current, candidate| prefer_media_url(&current, &candidate).to_owned());
+        .filter(|v| direct_gif(v) || gif_context && animation_rendition(v)).reduce(|current, candidate| prefer_media_url(&current, &candidate).to_owned());
         if gif_page(&page) || direct.is_some() {
             let is_page = gif_page(&page);
-            let poster = direct.clone().unwrap_or(preview);
+            let poster = if trusted_media(&preview){preview}else{direct.clone().unwrap_or_default()};
+            let animation_url=direct.clone();
             out.push(ChatAttachment {
                 id: format!("embed-{}", out.len()),
                 name: "GIF".into(),
@@ -590,6 +600,7 @@ pub fn embeds(value: &Value) -> Vec<ChatAttachment> {
                 height: i(if is_page { thumb } else { image }, "height"),
                 animated: true,
                 preview_url: trusted_media(&poster).then_some(poster),
+                animation_url,
                 ..ChatAttachment::default()
             });
             continue;
@@ -1277,7 +1288,8 @@ mod tests {
             &json!([{"url":page,"image":{"url":animation},"thumbnail":{"url":"https://media.tenor.com/synthetic/poster.png","width":320,"height":180}}]),
         );
         assert_eq!(parsed[0].url, page);
-        assert_eq!(parsed[0].preview_url.as_deref(), Some(animation));
+        assert_eq!(parsed[0].preview_url.as_deref(), Some("https://media.tenor.com/synthetic/poster.png"));
+        assert_eq!(parsed[0].animation_url.as_deref(), Some(animation));
         assert!(parsed[0].animated);
     }
     #[test]

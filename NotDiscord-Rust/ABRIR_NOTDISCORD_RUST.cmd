@@ -1,2 +1,2 @@
 @echo off
-start "" "%~dp0dist\NotDiscord-0.3.0\NotDiscord.exe" --runtime-root "%~dp0dist\NotDiscord-0.3.0" --data-dir "%~dp0data"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0launch-installed.ps1"

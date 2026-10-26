@@ -239,6 +239,9 @@ pub struct ChatAttachment {
     pub size: i64,
     pub animated: bool,
     pub preview_url: Option<String>,
+    /// Actual animation rendition supplied by the message/provider, independent
+    /// of its still thumbnail. A filename extension alone is not this metadata.
+    pub animation_url: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, rename_all = "PascalCase")]

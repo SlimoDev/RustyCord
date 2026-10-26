@@ -2,239 +2,228 @@ param(
     [Parameter(Mandatory=$true)][ValidateSet('Prepare','Install')][string]$Mode,
     [Parameter(Mandatory=$true)][string]$PlanPath
 )
-$ErrorActionPreference = 'Stop'
-$plan = $null
-$rollback = @()
-$workValidated = $false
-$admissionMutex = $null
-$ownerMutex = $null
-$admissionHeld = $false
-$ownerHeld = $false
-$installationCommitted = $false
-$cancelled = $false
+# Orchestrates only the verified product installer, never a portable ZIP.
+$ErrorActionPreference='Stop'
+$workValidated=$false
+$admissionMutex=$null
+$ownerMutex=$null
+$admissionHeld=$false
+$ownerHeld=$false
+$cancelled=$false
+$parentExited=$false
+$installationCommitted=$false
+$oldExecutableHash=$null
+$oldRuntimeFingerprint=$null
+$setupStarted=$false
+function Assert-NoLinks([string]$Path) {
+    $current=[IO.Path]::GetFullPath($Path)
+    while($current) {
+        if(Test-Path -LiteralPath $current) {
+            if((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'La ruta contiene un enlace o punto de redireccionamiento.'}
+        }
+        $parent=[IO.Path]::GetDirectoryName($current)
+        if($parent -eq $current){break}
+        $current=$parent
+    }
+}
 function Take-UpdateMutex([Threading.Mutex]$Mutex) {
-    try { return $Mutex.WaitOne(60000) }
-    catch [Threading.AbandonedMutexException] { return $true }
+    try{return $Mutex.WaitOne(60000)}catch [Threading.AbandonedMutexException]{return $true}
 }
 function Release-UpdateLocks {
-    if ($script:ownerHeld) { $script:ownerMutex.ReleaseMutex(); $script:ownerHeld=$false }
-    if ($script:ownerMutex) { $script:ownerMutex.Dispose(); $script:ownerMutex=$null }
-    if ($script:admissionHeld) { $script:admissionMutex.ReleaseMutex(); $script:admissionHeld=$false }
-    if ($script:admissionMutex) { $script:admissionMutex.Dispose(); $script:admissionMutex=$null }
+    if($script:ownerHeld){$script:ownerMutex.ReleaseMutex();$script:ownerHeld=$false}
+    if($script:ownerMutex){$script:ownerMutex.Dispose();$script:ownerMutex=$null}
+    if($script:admissionHeld){$script:admissionMutex.ReleaseMutex();$script:admissionHeld=$false}
+    if($script:admissionMutex){$script:admissionMutex.Dispose();$script:admissionMutex=$null}
 }
-function Assert-NoLinks([string]$Path) {
-    $current = [IO.Path]::GetFullPath($Path)
-    while ($current) {
-        if (Test-Path -LiteralPath $current) {
-            $item = Get-Item -LiteralPath $current -Force
-            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'La ruta contiene un enlace o punto de redireccionamiento.' }
-        }
-        $parent = [IO.Path]::GetDirectoryName($current)
-        if ($parent -eq $current) { break }
-        $current = $parent
-    }
-}
-function Inside([string]$Root, [string]$Relative) {
-    if ([IO.Path]::IsPathRooted($Relative) -or $Relative.Contains(':')) { throw 'Ruta absoluta no permitida en el paquete.' }
-    $pieces = $Relative.Replace('\','/').Split('/')
-    foreach ($piece in $pieces) {
-        if (!$piece -or $piece -eq '.' -or $piece -eq '..' -or $piece.EndsWith('.') -or $piece.EndsWith(' ') -or $piece -match '[<>:"|?*\x00-\x1F]') { throw 'Nombre de archivo no válido en el paquete.' }
-        if ($piece -match '^(?i:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\.|$)') { throw 'Nombre reservado de Windows en el paquete.' }
-    }
-    $full = [IO.Path]::GetFullPath((Join-Path $Root $Relative))
-    if (!$full.StartsWith($Root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Ruta fuera de la carpeta autorizada.' }
-    Assert-NoLinks $full
-    return $full
-}
-function Allowed([string]$Name) {
-    return $Name -match '^(NotDiscord\.exe|NotDiscord\.Media\.node|runtime\.json|version\.json|package-files\.json|discord\.ico|UNICODE-LICENSE\.txt|SYMPHONIA-LICENSE-MPL-2\.0\.txt|ABRIR_NOTDISCORD_(PLUS|RUST)\.cmd|media-runtime/resources/app/(main\.cjs|package\.json))$'
-}
-function Verify-Payload {
-    $version = Get-Content -LiteralPath (Inside $payload 'version.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($version.schema -ne 1 -or $version.variant -cne $plan.variant -or $version.branch -cne $plan.branch -or $version.version -cne $plan.version) { throw 'La versión del paquete no coincide con la publicación.' }
-    $catalogFile = Inside $payload 'package-files.json'
-    if ((Get-Item -LiteralPath $catalogFile).Length -gt 2MB) { throw 'El índice de archivos del paquete es demasiado grande.' }
-    $catalog = Get-Content -LiteralPath $catalogFile -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($catalog.schema -ne 1 -or !$catalog.files -or @($catalog.files.PSObject.Properties).Count -gt 10000 -or !$catalog.runtime) { throw 'El índice de archivos del paquete no es válido.' }
-    $names = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-    foreach ($entry in $catalog.files.PSObject.Properties) {
-        $name = $entry.Name.Replace('\','/')
-        if (!(Allowed $name) -or $name -eq 'package-files.json' -or !$names.Add($name)) { throw 'Archivo duplicado o no permitido en el índice.' }
-        $file = Inside $payload $name
-        if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Falta un archivo del paquete: $name" }
-        if ($entry.Value.sha256 -notmatch '^[0-9a-fA-F]{64}$' -or [long]$entry.Value.bytes -lt 0 -or (Get-Item -LiteralPath $file).Length -ne [long]$entry.Value.bytes -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ine $entry.Value.sha256) { throw "El archivo no coincide con su SHA-256: $name" }
-    }
-    foreach ($file in Get-ChildItem -LiteralPath $payload -Recurse -File -Force) {
-        $name = $file.FullName.Substring($payload.Length + 1).Replace('\','/')
-        Assert-NoLinks $file.FullName
-        if ($name -ne 'package-files.json' -and !$names.Contains($name)) { throw 'El paquete contiene archivos que no figuran en el índice.' }
-    }
-    foreach ($name in @('NotDiscord.exe','NotDiscord.Media.node','version.json','runtime.json','media-runtime/resources/app/main.cjs','media-runtime/resources/app/package.json')) {
-        if (!$names.Contains($name)) { throw "Falta un componente imprescindible: $name" }
-    }
-    $runtime = Get-Content -LiteralPath (Inside $payload 'runtime.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($runtime.MediaHostExe.Replace('\','/') -cne 'media-runtime/NotDiscord.Media.exe' -or $runtime.NativeRoot.Replace('\','/') -cne 'media-runtime') { throw 'El paquete no utiliza la estructura de runtime admitida.' }
-    # Third-party engines are not distributed in application updates. Reuse only
-    # the compatible installed files declared by the publisher; never download
-    # or replace an engine as a side effect of this updater.
-    $runtimeNames = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-    if (@($catalog.runtime.PSObject.Properties).Count -gt 10000) { throw 'El índice del runtime es demasiado grande.' }
-    foreach ($entry in $catalog.runtime.PSObject.Properties) {
-        $name = $entry.Name.Replace('\','/')
-        if (!$name.StartsWith('media-runtime/') -or $name.StartsWith('media-runtime/resources/app/') -or !$runtimeNames.Add($name)) { throw 'Ruta de runtime incompatible en el paquete.' }
-        $file = Inside $target $name
-        if (!(Test-Path -LiteralPath $file -PathType Leaf) -or $entry.Value.sha256 -notmatch '^[0-9a-fA-F]{64}$' -or [long]$entry.Value.bytes -lt 0 -or (Get-Item -LiteralPath $file).Length -ne [long]$entry.Value.bytes -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ine $entry.Value.sha256) { throw "El motor multimedia instalado no es compatible con esta actualización: $name. Instala un paquete completo compatible." }
-    }
-    foreach ($name in @('media-runtime/NotDiscord.Media.exe','media-runtime/resources/standalone_modules/discord_voice/discord_voice.node')) {
-        if (!$runtimeNames.Contains($name)) { throw 'El índice no identifica el motor multimedia compatible.' }
-    }
-    return $catalog
+function Verify-Installer {
+    Assert-NoLinks $setup
+    if([long]$plan.bytes -le 0 -or [long]$plan.bytes -gt 1GB -or $plan.sha256 -notmatch '^[a-fA-F0-9]{64}$' -or (Get-Item -LiteralPath $setup).Length -ne [long]$plan.bytes -or (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash -ine $plan.sha256){throw 'El instalador no coincide con el tamaño y SHA-256 publicados.'}
+    if($plan.executable_sha256 -notmatch '^[a-fA-F0-9]{64}$'){throw 'El manifiesto no identifica el ejecutable que se instalará.'}
+    $stream=[IO.File]::OpenRead($setup)
+    try{if($stream.ReadByte() -ne 77 -or $stream.ReadByte() -ne 90){throw 'La descarga no contiene un instalador de Windows.'}}finally{$stream.Dispose()}
 }
 function Start-Client {
-    $start = New-Object Diagnostics.ProcessStartInfo
-    $start.FileName = [string]$plan.executable
-    $start.Arguments = [string]$plan.arguments
-    $start.WorkingDirectory = $target
-    $start.UseShellExecute = $false
-    [Diagnostics.Process]::Start($start) | Out-Null
+    $start=New-Object Diagnostics.ProcessStartInfo
+    $start.FileName=[string]$plan.executable
+    $start.Arguments=[string]$plan.arguments
+    $start.WorkingDirectory=$target
+    $start.UseShellExecute=$false
+    [Diagnostics.Process]::Start($start)|Out-Null
+}
+function Runtime-Fingerprint {
+    # Snapshot only installed program components, never user data or caches.
+    $paths=New-Object 'System.Collections.Generic.List[string]'
+    foreach($name in @('NotDiscord.exe','NotDiscord.Media.node','runtime.json','version.json','discord.ico')) {
+        $file=Join-Path $target $name
+        Assert-NoLinks $file
+        if(!(Test-Path -LiteralPath $file -PathType Leaf)){throw 'Falta un componente de la instalación anterior.'}
+        $paths.Add($file)
+    }
+    $directories=New-Object 'System.Collections.Generic.Stack[string]'
+    $directories.Push((Join-Path $target 'media-runtime'))
+    [long]$bytes=0
+    while($directories.Count) {
+        $directory=$directories.Pop()
+        Assert-NoLinks $directory
+        foreach($entry in Get-ChildItem -LiteralPath $directory -Force) {
+            if($entry.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'El runtime contiene enlaces.'}
+            if($entry.PSIsContainer){$directories.Push($entry.FullName)}else{$paths.Add($entry.FullName);$bytes+=$entry.Length}
+            if($paths.Count -gt 10000 -or $bytes -gt 5GB){throw 'El runtime instalado supera los límites de verificación.'}
+        }
+    }
+    $lines=foreach($path in $paths|Sort-Object) {
+        $relative=$path.Substring($target.Length+1)
+        $relative+'|'+(Get-Item -LiteralPath $path).Length+'|'+(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    }
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try{return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(($lines -join [Environment]::NewLine))))).Replace('-','')}
+    finally{$sha.Dispose()}
+}
+function Quote-Argument([string]$Value) {
+    if($Value.Contains('"') -or $Value.Contains([char]13) -or $Value.Contains([char]10)){throw 'Argumento de instalador no válido.'}
+    return '"'+$Value.TrimEnd('\')+'"'
+}
+function Need-Elevation {
+    $probe=Join-Path $target ('.notdiscord-write-'+[IO.Path]::GetFileName($work))
+    try {
+        $file=[IO.File]::Open($probe,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        $file.Dispose()
+        Remove-Item -LiteralPath $probe -Force
+        return $false
+    }catch [UnauthorizedAccessException]{return $true}
+}
+function Install-Scope {
+    # Preserve an existing uninstall registration at this exact install path.
+    # A protected per-user install may elevate without becoming all-users.
+    foreach($hive in @([Microsoft.Win32.RegistryHive]::CurrentUser,[Microsoft.Win32.RegistryHive]::LocalMachine)) {
+        foreach($view in @([Microsoft.Win32.RegistryView]::Registry64,[Microsoft.Win32.RegistryView]::Registry32)) {
+            $registry=$null;$key=$null
+            try {
+                $registry=[Microsoft.Win32.RegistryKey]::OpenBaseKey($hive,$view)
+                $key=$registry.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Uninstall\NotDiscord.Standard_is1')
+                if($key) {
+                    $location=[string]$key.GetValue('InstallLocation','')
+                    if($location -and [IO.Path]::GetFullPath($location).TrimEnd('\') -ieq $target) {
+                        if($hive -eq [Microsoft.Win32.RegistryHive]::LocalMachine){return '/ALLUSERS'}
+                        return '/CURRENTUSER'
+                    }
+                }
+            }catch{}finally{if($key){$key.Dispose()};if($registry){$registry.Dispose()}}
+        }
+    }
+    return '/CURRENTUSER'
 }
 try {
-    $planFile = [IO.Path]::GetFullPath($PlanPath)
+    $planFile=[IO.Path]::GetFullPath($PlanPath)
     Assert-NoLinks $planFile
-    if ((Get-Item -LiteralPath $planFile).Length -gt 64KB) { throw 'El plan de actualización es demasiado grande.' }
-    $plan = Get-Content -LiteralPath $planFile -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($plan.schema -ne 1 -or !(($plan.variant -ceq 'plus' -and $plan.branch -ceq 'codex/notdiscord-plus') -or ($plan.variant -ceq 'standard' -and $plan.branch -ceq 'NotDiscord'))) { throw 'El plan no corresponde a una variante de NotDiscord.' }
-    $target = [IO.Path]::GetFullPath([string]$plan.target_root).TrimEnd('\')
-    $work = [IO.Path]::GetFullPath([string]$plan.work_root).TrimEnd('\')
+    if((Get-Item -LiteralPath $planFile).Length -gt 64KB){throw 'El plan de actualización es demasiado grande.'}
+    $plan=Get-Content -LiteralPath $planFile -Raw -Encoding UTF8|ConvertFrom-Json
+    if($plan.schema -ne 2 -or $plan.variant -cne 'standard' -or $plan.branch -cne 'NotDiscord'){throw 'El plan no corresponde al instalador de NotDiscord estándar.'}
+    $target=[IO.Path]::GetFullPath([string]$plan.target_root).TrimEnd('\')
+    $work=[IO.Path]::GetFullPath([string]$plan.work_root).TrimEnd('\')
+    $updatesRoot=Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'NotDiscord\updates'
     Assert-NoLinks $target
     Assert-NoLinks $work
-    if ($work -ine [IO.Path]::GetDirectoryName($planFile) -or [IO.Path]::GetDirectoryName($work) -ine (Join-Path $target '.notdiscord-update') -or [IO.Path]::GetFileName($work) -notmatch '^[a-f0-9]{32}$') { throw 'La carpeta temporal no pertenece a la instalación.' }
-    if ([IO.Path]::GetFullPath([string]$plan.executable) -ine (Join-Path $target 'NotDiscord.exe') -or [IO.Path]::GetFullPath([string]$plan.archive) -ine (Join-Path $work 'package.zip')) { throw 'El ejecutable o el archivo de descarga no corresponde a esta instalación.' }
-    $workValidated = $true
-    $archive = [string]$plan.archive
-    $payload = Join-Path $work 'payload'
-    $backup = Join-Path $work 'backup'
-    if ([long]$plan.bytes -le 0 -or [long]$plan.bytes -gt 1GB -or $plan.sha256 -notmatch '^[a-f0-9A-F]{64}$' -or (Get-Item -LiteralPath $archive).Length -ne [long]$plan.bytes -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $plan.sha256) { throw 'La descarga no coincide con el tamaño y SHA-256 publicados.' }
-    if ($Mode -eq 'Prepare') {
-        if (Test-Path -LiteralPath $payload) { throw 'La carpeta de preparación ya existe.' }
-        New-Item -ItemType Directory -Path $payload | Out-Null
-        Add-Type -AssemblyName System.IO.Compression
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $stream = [IO.File]::OpenRead($archive)
-        $zip = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Read, $false)
-        try {
-            if ($zip.Entries.Count -gt 10000) { throw 'El paquete contiene demasiadas entradas.' }
-            $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-            [long]$total = 0
-            foreach ($entry in $zip.Entries) {
-                $name = $entry.FullName.Replace('\','/')
-                $isDirectory = $name.EndsWith('/')
-                $name = $name.TrimEnd('/')
-                if (!$name) { continue }
-                $destination = Inside $payload $name
-                if (!$seen.Add($name) -or (($entry.ExternalAttributes -shr 16) -band 0xF000) -eq 0xA000) { throw 'Enlace o entrada duplicada en el paquete.' }
-                if ($isDirectory) {
-                    if ($name -ne 'media-runtime' -and !$name.StartsWith('media-runtime/')) { throw 'Carpeta no permitida en el paquete.' }
-                    New-Item -ItemType Directory -Path $destination -Force | Out-Null
-                    continue
-                }
-                if (!(Allowed $name) -or $entry.Length -lt 0 -or $entry.Length -gt 1GB) { throw 'Archivo no permitido o demasiado grande en el paquete.' }
-                $total += $entry.Length
-                if ($total -gt 2GB) { throw 'El paquete supera el tamaño descomprimido permitido.' }
-                New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($destination)) -Force | Out-Null
-                $input = $entry.Open()
-                $output = [IO.File]::Open($destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
-                try { $input.CopyTo($output) } finally { $output.Dispose(); $input.Dispose() }
-            }
-        } finally { $zip.Dispose(); $stream.Dispose() }
-        $null = Verify-Payload
-        [IO.File]::WriteAllText((Join-Path $work 'prepared'), 'validated')
-    } else {
-        if (!(Test-Path -LiteralPath (Join-Path $work 'prepared') -PathType Leaf)) { throw 'No existe una preparación validada.' }
-        $catalog = Verify-Payload
-        if ($plan.admission_mutex -cnotmatch '^Local\\NotDiscord\.Shared\.[a-f0-9]{24}\.Admission$' -or $plan.owner_mutex -cne $plan.admission_mutex.Replace('.Admission','.Owner')) { throw 'El plan no identifica la coordinación compartida entre variantes.' }
-        # Normal startup takes Admission before Owner. Holding Admission across
-        # this handoff prevents another launch from opening data or this runtime
-        # while files are being replaced or restored.
-        $admissionMutex = New-Object Threading.Mutex($false, [string]$plan.admission_mutex)
-        $admissionHeld = Take-UpdateMutex $admissionMutex
-        if (!$admissionHeld) { throw 'Otra instancia está iniciándose. No se modificó la instalación.' }
-        # Acquire the original process handle before acknowledging readiness. No
-        # process is killed; installation waits for normal controller shutdown.
-        $parentProcess = $null
-        try {
-            $parentProcess = [Diagnostics.Process]::GetProcessById([int]$plan.parent_pid)
-            if ($parentProcess.MainModule.FileName -ine [string]$plan.executable) { throw 'El proceso cambió antes de instalar.' }
-            if ($parentProcess.HasExited) { throw 'La aplicación que solicitó actualizar ya se cerró.' }
-        } catch [ArgumentException] { throw 'La aplicación que solicitó actualizar ya se cerró. No se modificó la instalación.' }
-        [IO.File]::WriteAllText((Join-Path $work 'installer-ready'), 'waiting-for-orderly-exit')
-        $acknowledgement = [Diagnostics.Stopwatch]::StartNew()
-        while (!(Test-Path -LiteralPath (Join-Path $work 'commit-install') -PathType Leaf)) {
-            if (Test-Path -LiteralPath (Join-Path $work 'cancel-install') -PathType Leaf) { $cancelled=$true; throw 'La aplicación canceló la entrega al instalador para conservar sus cambios.' }
-            if ($acknowledgement.Elapsed.TotalSeconds -gt 45) { throw 'La aplicación no confirmó la entrega al instalador. No se modificó la instalación.' }
-            Start-Sleep -Milliseconds 100
-        }
-        if ($parentProcess) {
-            try {
-                $closing = [Diagnostics.Stopwatch]::StartNew()
-                while (!$parentProcess.WaitForExit(100)) {
-                    if (Test-Path -LiteralPath (Join-Path $work 'cancel-install') -PathType Leaf) { $cancelled=$true; throw 'La aplicación canceló el cierre para conservar sus cambios.' }
-                    if ($closing.Elapsed.TotalSeconds -gt 120) { throw 'La aplicación anterior no terminó su cierre. No se modificó la instalación.' }
-                }
-            }
-            finally { $parentProcess.Dispose() }
-        }
-        if (Test-Path -LiteralPath (Join-Path $work 'cancel-install') -PathType Leaf) { $cancelled=$true; throw 'La aplicación canceló la instalación.' }
-        $ownerMutex = New-Object Threading.Mutex($false, [string]$plan.owner_mutex)
-        $ownerHeld = Take-UpdateMutex $ownerMutex
-        if (!$ownerHeld) { throw 'La sesión compartida no quedó disponible. No se modificó la instalación.' }
-        New-Item -ItemType Directory -Path $backup | Out-Null
-        foreach ($entry in $catalog.files.PSObject.Properties) {
-            $name = $entry.Name.Replace('\','/')
-            $source = Inside $payload $name
-            $destination = Inside $target $name
-            $saved = Inside $backup $name
-            $existed = Test-Path -LiteralPath $destination -PathType Leaf
-            if (Test-Path -LiteralPath $destination -PathType Container) { throw 'Una carpeta ocupa la ruta de un archivo de la actualización.' }
-            if ($existed) {
-                New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($saved)) -Force | Out-Null
-                [IO.File]::Copy($destination, $saved, $false)
-            }
-            $rollback += [pscustomobject]@{ Destination=$destination; Saved=$saved; Existed=$existed }
-            New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($destination)) -Force | Out-Null
-            $temporary = $destination + '.update-' + [IO.Path]::GetFileName($work)
-            [IO.File]::Copy($source, $temporary, $false)
-            try {
-                if ($existed) { [IO.File]::Replace($temporary, $destination, $null) }
-                else { [IO.File]::Move($temporary, $destination) }
-            } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
-        }
-        [IO.File]::WriteAllText((Join-Path $work 'installed'), [string]$plan.version)
-        $installationCommitted = $true
-        Release-UpdateLocks
-        Start-Client
+    if($target -eq [IO.Path]::GetPathRoot($target).TrimEnd('\')){throw 'No se puede instalar NotDiscord en la raíz de una unidad.'}
+    if($work -ine [IO.Path]::GetDirectoryName($planFile) -or [IO.Path]::GetDirectoryName($work) -ine $updatesRoot -or [IO.Path]::GetFileName($work) -notmatch '^[a-f0-9]{32}$'){throw 'La carpeta temporal no pertenece al actualizador de este usuario.'}
+    $setup=[IO.Path]::GetFullPath([string]$plan.installer)
+    if($setup -ine (Join-Path $work 'setup.exe') -or [IO.Path]::GetFullPath([string]$plan.executable) -ine (Join-Path $target 'NotDiscord.exe')){throw 'El plan identifica rutas de instalación incompatibles.'}
+    if($plan.admission_mutex -cnotmatch '^Local\\NotDiscord\.Shared\.[a-f0-9]{24}\.Admission$' -or $plan.owner_mutex -cne $plan.admission_mutex.Replace('.Admission','.Owner')){throw 'El plan no identifica la coordinación de instancias.'}
+    $workValidated=$true
+    Verify-Installer
+    if($Mode -eq 'Prepare') {
+        [IO.File]::WriteAllText((Join-Path $work 'prepared'),'verified-windows-installer')
+        exit 0
     }
+    if(!(Test-Path -LiteralPath (Join-Path $work 'prepared') -PathType Leaf)){throw 'No existe una preparación validada.'}
+    $admissionMutex=New-Object Threading.Mutex($false,[string]$plan.admission_mutex)
+    $admissionHeld=Take-UpdateMutex $admissionMutex
+    if(!$admissionHeld){throw 'Otra instancia está iniciándose. No se modificó la instalación.'}
+    try {
+        $parentProcess=[Diagnostics.Process]::GetProcessById([int]$plan.parent_pid)
+        if($parentProcess.MainModule.FileName -ine [string]$plan.executable -or $parentProcess.HasExited){throw 'El proceso cambió antes de instalar.'}
+    }catch [ArgumentException]{throw 'La aplicación que solicitó actualizar ya se cerró. No se modificó la instalación.'}
+    [IO.File]::WriteAllText((Join-Path $work 'installer-ready'),'waiting-for-orderly-exit')
+    $acknowledgement=[Diagnostics.Stopwatch]::StartNew()
+    while(!(Test-Path -LiteralPath (Join-Path $work 'commit-install') -PathType Leaf)) {
+        if(Test-Path -LiteralPath (Join-Path $work 'cancel-install') -PathType Leaf){$cancelled=$true;throw 'La aplicación canceló la entrega para conservar sus cambios.'}
+        if($acknowledgement.Elapsed.TotalSeconds -gt 45){throw 'La aplicación no confirmó la entrega al instalador.'}
+        Start-Sleep -Milliseconds 100
+    }
+    try {
+        $closing=[Diagnostics.Stopwatch]::StartNew()
+        while(!$parentProcess.WaitForExit(100)) {
+            if(Test-Path -LiteralPath (Join-Path $work 'cancel-install') -PathType Leaf){$cancelled=$true;throw 'La aplicación canceló el cierre para conservar sus cambios.'}
+            if($closing.Elapsed.TotalSeconds -gt 120){throw 'La aplicación anterior no terminó su cierre. No se modificó la instalación.'}
+        }
+    }finally{$parentProcess.Dispose()}
+    $parentExited=$true
+    if(Test-Path -LiteralPath (Join-Path $work 'cancel-install') -PathType Leaf){$cancelled=$true;throw 'La aplicación canceló la instalación.'}
+    $ownerMutex=New-Object Threading.Mutex($false,[string]$plan.owner_mutex)
+    $ownerHeld=Take-UpdateMutex $ownerMutex
+    if(!$ownerHeld){throw 'La sesión anterior todavía no liberó sus recursos.'}
+    $oldExecutableHash=(Get-FileHash -LiteralPath ([string]$plan.executable) -Algorithm SHA256).Hash
+    $oldRuntimeFingerprint=Runtime-Fingerprint
+    Verify-Installer
+    $leaseFile=Join-Path $work 'installer-lease.ini'
+    $lease=@('[NotDiscordUpdater]','Schema=1','Variant=standard',('InstallDir='+$target),('HelperPid='+$PID),('AdmissionMutex='+$plan.admission_mutex),('OwnerMutex='+$plan.owner_mutex))-join [Environment]::NewLine
+    [IO.File]::WriteAllText($leaseFile,$lease,[Text.Encoding]::Unicode)
+    $setupArguments='/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /NOTDISCORDUPDATER=1 /NDLEASE='+(Quote-Argument $leaseFile)+' /DIR='+(Quote-Argument $target)+' '+(Install-Scope)
+    $start=New-Object Diagnostics.ProcessStartInfo
+    $start.FileName=$setup
+    $start.WorkingDirectory=$work
+    $start.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
+    if(Need-Elevation) {
+        $start.UseShellExecute=$true
+        $start.Verb='runas'
+    }else{
+        $start.UseShellExecute=$false
+        $start.CreateNoWindow=$true
+    }
+    $start.Arguments=$setupArguments
+    # Hold Admission across the transfer; Inno owns Owner during file changes
+    # and rollback, protecting the transaction even if this helper crashes.
+    $ownerMutex.ReleaseMutex();$ownerHeld=$false
+    $setupProcess=[Diagnostics.Process]::Start($start)
+    if(!$setupProcess){throw 'Windows no inició el instalador.'}
+    $setupStarted=$true
+    try{$setupProcess.WaitForExit();$setupExitCode=$setupProcess.ExitCode}finally{$setupProcess.Dispose()}
+    $ownerHeld=Take-UpdateMutex $ownerMutex
+    if(!$ownerHeld){throw 'El instalador no liberó la coordinación de archivos.'}
+    if($setupExitCode -ne 0){throw "El instalador terminó con código $setupExitCode. Se conserva el registro para revisar el error."}
+    Assert-NoLinks ([string]$plan.executable)
+    if((Get-FileHash -LiteralPath ([string]$plan.executable) -Algorithm SHA256).Hash -ine $plan.executable_sha256){throw 'El ejecutable instalado no coincide con la versión publicada.'}
+    $versionFile=Join-Path $target 'version.json'
+    Assert-NoLinks $versionFile
+    if((Get-Item -LiteralPath $versionFile).Length -gt 64KB){throw 'El manifiesto instalado es demasiado grande.'}
+    $version=Get-Content -LiteralPath $versionFile -Raw -Encoding UTF8|ConvertFrom-Json
+    if($version.schema -ne 2 -or $version.variant -cne $plan.variant -or $version.branch -cne $plan.branch -or $version.version -cne $plan.version){throw 'La versión instalada no coincide con la publicación.'}
+    [IO.File]::WriteAllText((Join-Path $work 'installed'),[string]$plan.version)
+    $installationCommitted=$true
+    Release-UpdateLocks
+    Start-Client
     exit 0
-} catch {
-    $message = $_.Exception.Message
-    for ($index=$(if ($installationCommitted) {-1} else {$rollback.Count-1}); $index -ge 0; $index--) {
-        $entry=$rollback[$index]
-        try {
-            Assert-NoLinks $entry.Destination
-            if ($entry.Existed) { [IO.File]::Copy($entry.Saved, $entry.Destination, $true) }
-            elseif (Test-Path -LiteralPath $entry.Destination -PathType Leaf) { Remove-Item -LiteralPath $entry.Destination -Force }
-        } catch { $message += "`r`nNo se pudo restaurar: $($entry.Destination)" }
+}catch{
+    $message=$_.Exception.Message
+    if($workValidated){try{[IO.File]::WriteAllText((Join-Path $work 'error.txt'),$message)}catch{}}
+    $canReopenOld=$false
+    if($parentExited -and !$installationCommitted -and $oldExecutableHash){
+        try{
+            if(!$ownerHeld -and $ownerMutex){$ownerHeld=Take-UpdateMutex $ownerMutex}
+            if($ownerHeld){
+                $unchangedExe=(Get-FileHash -LiteralPath ([string]$plan.executable) -Algorithm SHA256).Hash -ieq $oldExecutableHash
+                $canReopenOld=$unchangedExe -and (!$setupStarted -or ($oldRuntimeFingerprint -and (Runtime-Fingerprint) -ceq $oldRuntimeFingerprint))
+            }
+        }catch{}
     }
     Release-UpdateLocks
-    if ($workValidated -and $plan -and $work -and (Test-Path -LiteralPath $work -PathType Container)) {
-        try { [IO.File]::WriteAllText((Join-Path $work 'error.txt'), $message) } catch {}
-    }
-    if ($Mode -eq 'Install' -and !$cancelled) {
-        try {
+    if($canReopenOld){try{Start-Client}catch{}}
+    if($Mode -eq 'Install' -and !$cancelled){
+        try{
             Add-Type -AssemblyName System.Windows.Forms
-            $summary = if ($installationCommitted) {'La actualización se instaló, pero no se pudo volver a abrir la aplicación. Ábrela desde su acceso directo.'} else {'No se completó la actualización. Se intentó restaurar la instalación anterior.'}
-            [Windows.Forms.MessageBox]::Show("$summary`r`n$message", 'Actualización de NotDiscord') | Out-Null
-        } catch {}
+            $summary=if($installationCommitted){'La actualización se instaló, pero no se pudo volver a abrir la aplicación. Ábrela desde su acceso directo.'}else{'No se completó la actualización. Revisa el error antes de volver a intentarlo.'}
+            [Windows.Forms.MessageBox]::Show(($summary+[Environment]::NewLine+$message),'Actualización de NotDiscord')|Out-Null
+        }catch{}
     }
     exit 1
-} finally { Release-UpdateLocks }
+}finally{Release-UpdateLocks}

@@ -543,9 +543,12 @@ impl NotDiscordUi {
         state: &AppSnapshot,
         continuation: bool,
     ) -> egui::Response {
-        self.emoji_section(ui, ("chat-message-emojis", &m.channel_id, &m.id), |this, ui| {
+        self.pictures.begin_message_preview(m);
+        let response=self.emoji_section(ui, ("chat-message-emojis", &m.channel_id, &m.id), |this, ui| {
             this.draw_message_contents(ui, m, state, continuation)
-        }).inner
+        }).inner;
+        self.pictures.end_message_preview();
+        response
     }
     fn draw_message_contents(
         &mut self,
@@ -724,9 +727,14 @@ impl NotDiscordUi {
                                             .size(self.prefs.chat_size).color(Color32::from_rgb(242, 63, 67)));
                                         self.draw_deleted_message_rich(ui, m, state);
                                         for attachment in &m.attachments {
+                                            let preview=self.draw_deleted_media_card(ui,&attachment.url,
+                                                attachment.preview_url.as_deref().unwrap_or(&attachment.url),&attachment.name,
+                                                Some((attachment.width.max(0) as u32,attachment.height.max(0) as u32)));
+                                            if preview { continue; }
                                             ui.label(RichText::new(format!("Adjunto conocido: {}", attachment.name))
                                                 .size(self.prefs.chat_size).color(Color32::from_rgb(242, 63, 67)));
                                         }
+                                        self.draw_deleted_text_previews(ui,&m.content,m);
                                     } else {
                                         self.message_text(ui, &m.content, m, state);
                                         self.draw_message_rich(ui, m, state);
@@ -743,6 +751,12 @@ impl NotDiscordUi {
                                             .is_some_and(|t| t.starts_with("image/"))
                                             || a.width > 0 && a.height > 0;
                                         if image {
+                                            if let Some(source) = a.animation_url.as_deref() {
+                                                if resources::remember_source(&a.url, source) {
+                                                    self.pictures.retry(&a.url, 384);
+                                                    self.pictures.retry(&a.url, 1600);
+                                                }
+                                            }
                                             self.media_card(
                                                 ui,
                                                 &a.url,
@@ -1563,6 +1577,42 @@ impl NotDiscordUi {
         self.forward_result = serde_json::json!({"channel_id":m.channel_id,"message_id":m.id});
         self.dialog = Some(Dialog::Forward(m.clone()));
     }
+    /// A deleted row may paint its retained texture, but it must never take
+    /// the live media-card path: that path can fetch, decode, retry or resume.
+    pub(super) fn draw_deleted_media_card(
+        &mut self, ui:&mut egui::Ui, url:&str, poster:&str, name:&str,
+        dimensions:Option<(u32,u32)>,
+    )->bool {
+        let Some(texture)=self.pictures.deleted_message_preview(url,poster) else { return false };
+        let dimensions=dimensions.filter(|(width,height)|*width>0 && *height>0)
+            .unwrap_or((texture.size()[0] as u32,texture.size()[1] as u32));
+        let size=media_slot_size(egui::vec2(ui.available_width().min(360.),220.),Some(dimensions));
+        let (rect,response)=ui.allocate_exact_size(size,egui::Sense::hover());
+        super::autoscroll::exclude(ui,rect);
+        if ui.is_rect_visible(rect) {
+            let natural=texture.size_vec2();
+            let scale=(rect.width()/natural.x).min(rect.height()/natural.y).min(1.);
+            let image=egui::Rect::from_center_size(rect.center(),natural*scale);
+            ui.painter().image(texture.id(),image,
+                egui::Rect::from_min_max(egui::Pos2::ZERO,egui::pos2(1.,1.)),Color32::WHITE);
+        }
+        response.on_hover_text(format!("{name}\nVista previa conservada de esta sesión. Imagen fija; no se vuelve a descargar el contenido eliminado."));
+        true
+    }
+    pub(super) fn draw_deleted_text_previews(&mut self,ui:&mut egui::Ui,text:&str,message:&ChatMessage) {
+        let mut seen=Vec::<&str>::new();
+        for matched in message_rich_pattern().find_iter(text) {
+            let url=matched.as_str();
+            if !super::mentions::plain_text_at(text,matched.start()) || !resources::is_image_url(url)
+                || message.attachments.iter().any(|attachment|notdiscord_core::parsing::same_media_resource(&attachment.url,url)
+                    || attachment.preview_url.as_deref().is_some_and(|poster|notdiscord_core::parsing::same_media_resource(poster,url)))
+                || message.components.iter().any(|component|matches!(component.kind,11..=13)
+                    && notdiscord_core::parsing::same_media_resource(&component.url,url))
+                || seen.iter().any(|known|notdiscord_core::parsing::same_media_resource(known,url)) { continue; }
+            seen.push(url);
+            self.draw_deleted_media_card(ui,url,url,"Imagen conservada",None);
+        }
+    }
     fn media_card(
         &mut self,
         ui: &mut egui::Ui,
@@ -1572,12 +1622,6 @@ impl NotDiscordUi {
         name: &str,
         dimensions: Option<(u32, u32)>,
     ) {
-        if notdiscord_core::parsing::gif_page(url) && notdiscord_core::parsing::direct_gif(poster) {
-            if resources::remember_source(url, poster) {
-                self.pictures.retry(url, 384);
-                self.pictures.retry(url, 1600);
-            }
-        }
         let max = egui::vec2(ui.available_width().min(360.), 220.);
         let size = media_slot_size(max, dimensions);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
@@ -1589,6 +1633,7 @@ impl NotDiscordUi {
                 .or_else(|| (poster != url && self.pictures.image_error(poster, 384).is_some())
                     .then(|| self.pictures.texture(url)).flatten());
             if let Some(texture) = texture {
+                self.pictures.remember_message_preview(url,poster,&texture);
                 let image_size = texture.size_vec2();
                 let scale = (rect.width() / image_size.x)
                     .min(rect.height() / image_size.y)
@@ -1757,9 +1802,20 @@ impl NotDiscordUi {
         }
     }
     fn draw_composer(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
-        self.emoji_section(ui, ("chat-composer-emojis", &state.selected_channel_id), |this, ui| {
+        // Scroll contents may report a wider minimum than the center pane.
+        // The composer belongs to the pane's visible width, never that content
+        // extent or the neighboring member panel.
+        let bounds = ui.available_rect_before_wrap().intersect(ui.clip_rect());
+        let mut composer = ui.new_child(egui::UiBuilder::new()
+            .id_salt("bounded-chat-composer").max_rect(bounds)
+            .layout(egui::Layout::top_down(Align::Min)));
+        composer.set_clip_rect(bounds);
+        self.emoji_section(&mut composer, ("chat-composer-emojis", &state.selected_channel_id), |this, ui| {
             this.draw_composer_contents(ui, state)
         });
+        let bottom = composer.min_rect().bottom();
+        ui.advance_cursor_after_rect(egui::Rect::from_min_max(bounds.min,
+            egui::pos2(bounds.right(), bottom)));
     }
     fn draw_composer_contents(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
         prepare_composer_input(ui.ctx());
@@ -2045,12 +2101,13 @@ impl NotDiscordUi {
                 let old = draft.text.clone();
                 let response = ui
                     .horizontal_top(|ui| {
+                        let controls = composer_control_sizes(ui.ctx(), ui.style());
                         let gaps = ui.spacing().item_spacing.x * 4.;
-                        let width = (ui.available_width() - 28. - 36. - 28. - 32. - gaps).max(30.);
+                        let width = (ui.available_width() - controls.iter().map(|size|size.x).sum::<f32>() - gaps).max(30.);
                         if ui
                             .add_enabled(
                                 allowed && state.channel_access.can_attach,
-                                egui::Button::new("+").min_size(egui::vec2(28., 30.)),
+                                egui::Button::new("+").min_size(controls[0]),
                             )
                             .on_hover_text(format!("Adjuntar archivos\n{}\nDiscord valida el límite definitivo; no se reintenta un rechazo de tamaño.",state.upload_limit.label()))
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -2073,7 +2130,11 @@ impl NotDiscordUi {
                                 let ink = self.theme.ink;
                                 let broadcast = super::mentions::everyone_allowed(state);
                                 let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-                                    ui.fonts_mut(|fonts| fonts.layout_job(super::mentions::editor_job(text.as_str(), &spans, size, ink, broadcast, wrap_width)))
+                                    let mut job = super::mentions::editor_job(text.as_str(), &spans, size, ink, broadcast, wrap_width);
+                                    // A long URL or emoji token must wrap inside
+                                    // its editor instead of moving the controls.
+                                    job.wrap.break_anywhere = true;
+                                    ui.fonts_mut(|fonts| fonts.layout_job(job))
                                 };
                                 ui.add_enabled(
                                     allowed,
@@ -2100,7 +2161,7 @@ impl NotDiscordUi {
                         if ui
                             .add_enabled(
                                 allowed,
-                                egui::Button::new("GIF").min_size(egui::vec2(36., 30.)),
+                                egui::Button::new("GIF").min_size(controls[1]),
                             )
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
@@ -2110,7 +2171,7 @@ impl NotDiscordUi {
                         if ui
                             .add_enabled(
                                 allowed,
-                                egui::Button::new("☺").min_size(egui::vec2(28., 30.)),
+                                egui::Button::new("☺").min_size(controls[2]),
                             )
                             .on_hover_text("Emojis")
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -2122,7 +2183,7 @@ impl NotDiscordUi {
                             .add_enabled(
                                 allowed
                                     && (!draft.text.trim().is_empty() || !draft.paths.is_empty()),
-                                egui::Button::new("➤").min_size(egui::vec2(32., 30.)),
+                                egui::Button::new("➤").min_size(controls[3]),
                             )
                             .on_hover_text("Enviar mensaje")
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -3220,19 +3281,40 @@ fn prepared_file_size(ctx: &egui::Context, path: &std::path::Path) -> String {
         None => "Tamaño no disponible".into(),
     }
 }
+fn composer_control_sizes(ctx: &egui::Context, style: &egui::Style) -> [Vec2; 4] {
+    let font = egui::TextStyle::Button.resolve(style);
+    let padding = style.spacing.button_padding;
+    let labels = [("+", 28.), ("GIF", 36.), ("☺", 28.), ("➤", 32.)];
+    ctx.fonts_mut(|fonts| std::array::from_fn(|index| {
+        let (label, minimum) = labels[index];
+        let text = fonts.layout_no_wrap(label.into(), font.clone(), Color32::WHITE).size();
+        egui::vec2((text.x + padding.x * 2.).ceil().max(minimum),
+            (text.y + padding.y * 2.).ceil().max(style.spacing.interact_size.y).max(30.))
+    }))
+}
+/// Includes the central panel and composer frame padding. The member pane may
+/// appear only when the actual remaining area can keep this entire row usable.
+pub(super) fn minimum_chat_pane_width(ctx: &egui::Context) -> f32 {
+    let style = ctx.style();
+    composer_control_sizes(ctx, &style).iter().map(|size|size.x).sum::<f32>()
+        + style.spacing.item_spacing.x * 4. + 100. + 16. + 32.
+}
 fn composer_text_height(ui: &egui::Ui, text: &str, font_size: f32) -> f32 {
-    let width = (ui.available_width() - 156. - ui.spacing().item_spacing.x * 4.).max(30.);
+    let controls = composer_control_sizes(ui.ctx(), ui.style());
+    let scroll = ui.spacing().scroll;
+    // Predict with the same measured action strip and text margins as the
+    // rendered editor. Reserve its scrollbar so wrapping never steals controls.
+    let width = (ui.available_width() - 16. - controls.iter().map(|size|size.x).sum::<f32>()
+        - ui.spacing().item_spacing.x * 4. - 8.
+        - scroll.bar_width - scroll.bar_inner_margin - scroll.bar_outer_margin).max(24.);
     ui.fonts_mut(|fonts| {
-        fonts.layout(
-            text.into(),
-            egui::FontId::proportional(font_size),
-            Color32::WHITE,
-            width,
-        )
+        let mut job = super::mentions::editor_job(text, &[], font_size, Color32::WHITE, false, width);
+        job.wrap.break_anywhere = true;
+        fonts.layout_job(job)
     })
     .size()
     .y
-    .clamp(font_size + 2., 130.)
+    .clamp(font_size * 1.45, 130.)
         + 10.
 }
 fn composer_height(ui: &egui::Ui, draft: Option<&Draft>, font_size: f32) -> f32 {
@@ -3268,9 +3350,7 @@ fn composer_emoji_preview_height(ui: &egui::Ui, font_size: f32) -> f32 {
     composer_emoji_preview_side(font_size) + scroll.bar_width + scroll.bar_inner_margin + scroll.bar_outer_margin
 }
 fn composer_control_height(ui: &egui::Ui) -> f32 {
-    ui.fonts_mut(|fonts| fonts.row_height(&egui::TextStyle::Button.resolve(ui.style())))
-        .max(ui.spacing().interact_size.y - ui.spacing().button_padding.y * 2.)
-        + ui.spacing().button_padding.y * 2.
+    composer_control_sizes(ui.ctx(), ui.style()).iter().map(|size|size.y).fold(30., f32::max)
 }
 fn paste_gesture(
     focused: bool,

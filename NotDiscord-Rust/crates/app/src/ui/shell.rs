@@ -1086,8 +1086,13 @@ impl NotDiscordUi {
         } else {
             self.prefs.show_server_members
         };
+        let members_width = 222.;
+        // Left panels have already consumed their actual widths. Budget the
+        // remaining space rather than assuming a fixed viewport/rail offset.
+        let fits_members = ctx.available_rect().width() - members_width
+            >= chat::minimum_chat_pane_width(ctx);
         if sidebar_visible
-            && ctx.content_rect().width() - 364. >= 560.
+            && fits_members
             && state.view == "chat"
             && (dm_sidebar
                 || !state.group_members.is_empty()
@@ -1099,7 +1104,7 @@ impl NotDiscordUi {
                     && state.channel_access.can_view_members)
         {
             let members_panel = egui::SidePanel::right("members-sidebar")
-                .exact_width(222.)
+                .exact_width(members_width)
                 .resizable(false)
                 .frame(
                     egui::Frame::new()

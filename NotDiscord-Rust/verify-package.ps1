@@ -1,4 +1,4 @@
-param([string]$Root = (Join-Path $PSScriptRoot 'dist\NotDiscord-0.3.0'))
+param([string]$Root = (Join-Path $PSScriptRoot 'target\installer-payload'))
 $ErrorActionPreference = 'Stop'
 $packageRoot = (Resolve-Path -LiteralPath $Root).Path
 $base = [IO.Path]::GetFullPath($packageRoot).TrimEnd('\')
