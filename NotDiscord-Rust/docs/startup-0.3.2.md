@@ -3,8 +3,9 @@
 El usuario observó una ventana que aparece brevemente y un proceso que permanece
 vivo sin abrir NotDiscord. La lectura de metadatos del proceso instalado 0.3.1
 confirmó una ventana sin título que no responde. El SHA-256 de su ejecutable
-coincide con el payload publicado; no se detectó una copia incompleta. No se
-leyeron credenciales ni memoria del proceso, ni se inició la aplicación.
+coincide con el payload publicado. Esto acredita la copia de ese ejecutable,
+sin verificar el funcionamiento de los demás componentes. No se leyeron
+credenciales ni memoria del proceso, ni se inició la aplicación.
 
 ## Causa en el primer fotograma
 
