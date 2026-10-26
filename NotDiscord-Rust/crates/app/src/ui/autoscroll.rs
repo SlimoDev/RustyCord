@@ -8,13 +8,16 @@ struct Surfaces {
     backgrounds: Vec<Id>,
     excluded: Vec<(egui::LayerId, Rect)>,
 }
-fn surfaces_key(ctx: &egui::Context) -> Id { Id::new(("middle-scroll-surfaces", ctx.viewport_id())) }
+// Resolve viewport IDs and UI metadata before a Context data transaction:
+// accessing Context again from that closure would reacquire its same lock.
+fn surfaces_key(viewport: egui::ViewportId) -> Id { Id::new(("middle-scroll-surfaces", viewport)) }
 fn register_background(ui: &egui::Ui, salt: Id) {
     let ctx=ui.ctx(); let frame=ctx.cumulative_frame_nr();
+    let key=surfaces_key(ctx.viewport_id());
+    let id=ui.make_persistent_id(salt).with("area");
     ctx.data_mut(|data| {
-        let surfaces=data.get_temp_mut_or_default::<Surfaces>(surfaces_key(ctx));
+        let surfaces=data.get_temp_mut_or_default::<Surfaces>(key);
         if surfaces.frame!=frame { *surfaces=Surfaces {frame,..Default::default()}; }
-        let id=ui.make_persistent_id(salt).with("area");
         if !surfaces.backgrounds.contains(&id) { surfaces.backgrounds.push(id); }
     });
 }
@@ -22,10 +25,12 @@ fn register_background(ui: &egui::Ui, salt: Id) {
 /// scrolling. The media caller supplies its exact painted hit rectangle.
 pub(super) fn exclude(ui: &egui::Ui, rect: Rect) {
     let ctx=ui.ctx(); let frame=ctx.cumulative_frame_nr();
+    let key=surfaces_key(ctx.viewport_id());
+    let excluded=(ui.layer_id(),rect.intersect(ui.clip_rect()));
     ctx.data_mut(|data| {
-        let surfaces=data.get_temp_mut_or_default::<Surfaces>(surfaces_key(ctx));
+        let surfaces=data.get_temp_mut_or_default::<Surfaces>(key);
         if surfaces.frame!=frame { *surfaces=Surfaces {frame,..Default::default()}; }
-        surfaces.excluded.push((ui.layer_id(),rect.intersect(ui.clip_rect())));
+        surfaces.excluded.push(excluded);
     });
 }
 
@@ -36,33 +41,38 @@ struct Owner {
     seen: u64,
     changed: Option<u64>,
 }
-fn key(ctx: &egui::Context) -> Id { Id::new(("application-middle-scroll", ctx.viewport_id())) }
+fn key(viewport: egui::ViewportId) -> Id { Id::new(("application-middle-scroll", viewport)) }
 pub(super) fn active(ctx: &egui::Context) -> bool {
-    ctx.data(|data| data.get_temp::<Owner>(key(ctx))).is_some_and(|state|state.id.is_some())
+    let key=key(ctx.viewport_id());
+    ctx.data(|data| data.get_temp::<Owner>(key)).is_some_and(|state|state.id.is_some())
 }
 pub(super) fn origin(ctx: &egui::Context, id: Id) -> Option<Pos2> {
-    ctx.data(|data|data.get_temp::<Owner>(key(ctx)))
+    let key=key(ctx.viewport_id());
+    ctx.data(|data|data.get_temp::<Owner>(key))
         .filter(|state|state.id==Some(id)).and_then(|state|state.origin)
 }
 pub(super) fn cancel(ctx: &egui::Context) {
-    ctx.data_mut(|data|data.remove::<Owner>(key(ctx)));
+    let key=key(ctx.viewport_id());
+    ctx.data_mut(|data|data.remove::<Owner>(key));
 }
 pub(super) fn begin_frame(ctx: &egui::Context) {
     let frame=ctx.cumulative_frame_nr();
+    let key=key(ctx.viewport_id());
     let stop=ctx.input(|input|input.key_pressed(egui::Key::Escape) || !input.focused
         || input.pointer.primary_pressed() || input.pointer.secondary_pressed());
     ctx.data_mut(|data| {
-        if let Some(mut state)=data.get_temp::<Owner>(key(ctx)) {
+        if let Some(mut state)=data.get_temp::<Owner>(key) {
             if stop || frame>state.seen.saturating_add(1) {
                 state.id=None; state.origin=None; state.changed=Some(frame);
-                data.insert_temp(key(ctx),state);
+                data.insert_temp(key,state);
             }
         }
     });
 }
 pub(super) fn end_frame(ctx: &egui::Context) {
     let frame=ctx.cumulative_frame_nr();
-    if ctx.data(|data|data.get_temp::<Owner>(key(ctx)))
+    let key=key(ctx.viewport_id());
+    if ctx.data(|data|data.get_temp::<Owner>(key))
         .is_some_and(|state|state.id.is_some() && state.seen!=frame) { cancel(ctx); }
 }
 
@@ -71,7 +81,8 @@ fn unclaimed(ctx: &egui::Context) -> bool {
     // emoji atoms, links, sliders, rows with actions and all other controls own
     // their complete hit region, even when no click action ran this frame.
     let allowed=ctx.data(|data|data.get_temp::<Vec<Id>>(Id::new("history-middle-allowed"))).unwrap_or_default();
-    let surfaces=ctx.data(|data|data.get_temp::<Surfaces>(surfaces_key(ctx))).unwrap_or_default();
+    let key=surfaces_key(ctx.viewport_id());
+    let surfaces=ctx.data(|data|data.get_temp::<Surfaces>(key)).unwrap_or_default();
     if surfaces.frame==ctx.cumulative_frame_nr()
         && ctx.input(|input|input.pointer.interact_pos()).is_some_and(|point|
             surfaces.excluded.iter().any(|(layer,rect)|rect.contains(point) && ctx.layer_id_at(point)==Some(*layer))) { return false; }
@@ -84,9 +95,10 @@ fn unclaimed(ctx: &egui::Context) -> bool {
 pub(super) fn drive(ui: &egui::Ui, id: Id, viewport: Rect, scrollable: bool) -> f32 {
     let ctx=ui.ctx();
     let frame=ctx.cumulative_frame_nr();
+    let key=key(ctx.viewport_id());
     let (pointer, middle)=ctx.input(|input|(input.pointer.interact_pos(),
         input.pointer.button_clicked(egui::PointerButton::Middle)));
-    let mut state=ctx.data(|data|data.get_temp::<Owner>(key(ctx))).unwrap_or_default();
+    let mut state=ctx.data(|data|data.get_temp::<Owner>(key)).unwrap_or_default();
     if state.id.is_some() && frame>state.seen.saturating_add(1) {
         state.id=None;state.origin=None;
     }
@@ -113,7 +125,7 @@ pub(super) fn drive(ui: &egui::Ui, id: Id, viewport: Rect, scrollable: bool) -> 
             distance.signum()*((distance.abs()-12.).max(0.)/130.).powi(2).min(4.)*1100.
         })
     } else {0.};
-    ctx.data_mut(|data|data.insert_temp(key(ctx),state));
+    ctx.data_mut(|data|data.insert_temp(key,state));
     velocity
 }
 

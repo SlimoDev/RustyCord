@@ -344,6 +344,12 @@ begin
     Link := ExpandConstant('{userdesktop}\NotDiscord Rust.lnk');
     Target := StandardShortcutTarget(Link, Arguments);
     if Target <> '' then DeleteFile(Link);
+    // Inno has committed files, shortcuts, INI, registry and uninstall data
+    // before ssPostInstall. Release manual ownership before the final page or
+    // its postinstall [Run] entry can start the client. ssDone is too late:
+    // Inno calls it after postinstall programs. The updater keeps its lease
+    // through Setup exit so its helper can verify and hand ownership back.
+    if not UpdaterMode then ReleaseLocks;
   end;
 end;
 
