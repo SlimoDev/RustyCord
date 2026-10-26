@@ -22,7 +22,7 @@ pub(super) fn call_chat_hidden(ctx:&egui::Context,state:&AppSnapshot)->bool {
         data.get_temp::<(egui::Id,bool)>(egui::Id::new("call-chat-visibility")))
         .is_some_and(|(stored,shown)|stored==scope&&shown))
 }
-fn media_selector_window<'a>(ctx:&egui::Context,title:&str,id:&str)->egui::Window<'a> {
+fn media_selector_window<'a>(ctx:&egui::Context,title:&str,id:&str)->dialogs::DialogWindow<'a> {
     let width=(ctx.content_rect().width()-40.).clamp(1.,604.);
     // Both selectors use the same width and shrink to their actual contents.
     // Keep the viewport height limit and scrolling for small windows/large text.
@@ -839,7 +839,7 @@ impl NotDiscordUi {
         });
         let is_pending = |channel: &str| {
             pending_call.as_ref().is_some_and(|pending| {
-                pending.0 == channel && pending.1.elapsed() < Duration::from_secs(3)
+                pending.0 == channel && pending.1.elapsed() < Duration::from_secs(30)
             })
         };
         let (body_height, small_height, action_width, button_height) = ctx.fonts_mut(|fonts| {

@@ -150,14 +150,16 @@ pub(super) fn read_bounded(path: &Path, limit: u64) -> Option<Vec<u8>> {
     (data.len() as u64 <= limit).then_some(data)
 }
 pub fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path, limit: u64) -> T {
-    read_bounded(path, limit)
+    crate::shared_state::read_section(path, limit).unwrap_or_else(|| read_bounded(path, limit))
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default()
 }
 pub fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    let value = serde_json::to_value(value).map_err(|_| "Datos no válidos.")?;
+    if let Some(result) = crate::shared_state::write_section(path, value.clone()) { return result; }
     atomic_write(
         path,
-        &serde_json::to_vec(value).map_err(|_| "Datos no válidos.")?,
+        &serde_json::to_vec(&value).map_err(|_| "Datos no válidos.")?,
     )
 }
 pub fn load_session(dir: &Path) -> Option<zeroize::Zeroizing<String>> {

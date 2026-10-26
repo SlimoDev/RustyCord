@@ -222,6 +222,7 @@ pub(super) fn draw_member_voice_flags(ui:&mut egui::Ui,rect:egui::Rect,state:&Ap
 }
 fn left_footer_height(state: &AppSnapshot, compact: bool) -> f32 {
     (if state.signed_in { 78. } else { 110. })
+        + 58.
         + if own_game(state).is_some() { if compact { 42. } else { 64. } } else { 0. }
         + if state.voice_connected || state.voice_connecting { 64. } else { 0. }
         + if !state.voice_error.is_empty() { if compact { 86. } else { 122. } } else { 0. }
@@ -600,14 +601,15 @@ impl NotDiscordUi {
     }
     pub(super) fn draw_shell(&mut self, ctx: &egui::Context, state: &AppSnapshot) {
         let title = if state.selected_guild_id.is_empty() {
-            "NotDiscord".to_string()
+            crate::updates::installed_label()
         } else {
             state
                 .guilds
                 .iter()
                 .find(|g| g.id == state.selected_guild_id)
                 .map(|g| g.name.clone())
-                .unwrap_or_else(|| "NotDiscord".into())
+                .map(|name|format!("{} · {}",crate::updates::installed_label(),name))
+                .unwrap_or_else(crate::updates::installed_label)
         };
         if self.window_title != title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
@@ -1993,7 +1995,7 @@ impl NotDiscordUi {
                                 ui.colored_label(Color32::from_rgb(242, 63, 67), "Error de conexión de voz");
                                 if ui.small_button("Cerrar aviso").clicked() { self.simple("dismiss-voice-error"); }
                             });
-                            egui::ScrollArea::vertical().id_salt("voice-error-detail")
+                            theme::vertical_scroll(ui).id_salt("voice-error-detail")
                                 .max_height(if compact { 40. } else { 76. })
                                 .auto_shrink([false, true]).show(ui, |ui| {
                                     ui.add(egui::Label::new(&state.voice_error).wrap());
@@ -2106,6 +2108,8 @@ impl NotDiscordUi {
                         if !state.signed_in && ui.button("Iniciar sesión").clicked() {
                             self.simple("login");
                         }
+                        ui.separator();
+                        self.updater.button(ui);
                     });
             });
         #[cfg(test)] ctx.data_mut(|data| data.insert_temp(egui::Id::new("left-footer-rect"), footer.response.rect));

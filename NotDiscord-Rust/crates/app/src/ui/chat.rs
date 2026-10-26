@@ -305,6 +305,7 @@ impl NotDiscordUi {
         }
         let requested_offset = self.pending_scroll.take();
         let mut area = theme::vertical_scroll(ui)
+            .middle_scroll(false)
             .id_salt(scroll_salt)
             .auto_shrink([false, false])
             .min_scrolled_height(0.)
@@ -432,7 +433,7 @@ impl NotDiscordUi {
                 selection_scroll_velocity(out.inner_rect, pointer, selecting)
             })
         });
-        let middle_velocity = history_middle_scroll(ui, out.inner_rect, scroll_salt,
+        let middle_velocity = history_middle_scroll(ui, out.inner_rect, scroll_salt, out.id,
             self.background_blocked() || egui::Popup::is_any_open(ui.ctx()) || reaction_panel_open(ui.ctx()));
         let velocity = if !advance_motion || wheel_delta != 0. { 0. } else if selecting { selection_velocity } else { middle_velocity };
         if velocity != 0. {
@@ -822,9 +823,16 @@ impl NotDiscordUi {
         context_menu.show(|ui| self.message_menu(ui, m, state));
         let own = state.current_user.as_ref().is_some_and(|person| person.id == m.author.id);
         if shortcuts_allowed && own && !m.deleted && state.view == "chat" && state.signed_in
-            && !state.busy && state.channel_access.can_send {
+            && !state.busy && state.channel_access.can_send && m.channel_id == state.selected_channel_id {
             let delete_click = text_shortcuts.delete_clicked || response.clicked() && ui.ctx().input(|i| i.key_down(egui::Key::Delete));
-            if delete_click {
+            let direct_delete = text_shortcuts.backspace_clicked || response.clicked() && ui.ctx().input(|input|input.key_down(egui::Key::Backspace));
+            let selected_text = ui.ctx().data(|data|data.get_temp::<HistorySelection>(egui::Id::new("history-selection")))
+                .is_some_and(|selection|selection.anchor != selection.focus);
+            if direct_delete && !selected_text && !interaction::cancelling(ui.ctx())
+                && !reaction_panel_open(ui.ctx()) && !super::autoscroll::active(ui.ctx()) {
+                interaction::shortcut_consumed(ui.ctx());
+                self.send("delete", &m.id, "", "", &m.channel_id);
+            } else if delete_click {
                 interaction::shortcut_consumed(ui.ctx());
                 self.confirm_message_delete(m);
             } else if !m.forwarded && (text_shortcuts.double_clicked || response.double_clicked()) {
@@ -1344,8 +1352,7 @@ impl NotDiscordUi {
         let image=self.emoji(ui,emoji,size);
         let active=ui.ctx().data_mut(|data|data.get_temp_mut_or_default::<HistoryFrame>(egui::Id::new("history-frame")).active);
         if !active {return;}
-        let response=ui.interact(image.rect,image.id.with("history-emoji"),egui::Sense::click_and_drag())
-            .on_hover_cursor(egui::CursorIcon::Text);
+        let response=ui.interact(image.rect,image.id.with("history-emoji"),egui::Sense::click_and_drag());
         let galley=ui.painter().layout_no_wrap(" ".into(),egui::FontId::proportional(size),self.theme.ink);
         let label=HistoryLabel {id:response.id,layer:response.layer_id,position:response.rect.min,
             galley,clip:ui.clip_rect(),shape,fallback:self.theme.ink,double_clicked:response.double_clicked(),
@@ -1354,7 +1361,6 @@ impl NotDiscordUi {
             owns_primary:response.enabled()&&(response.is_pointer_button_down_on()
                 ||response.drag_started_by(egui::PointerButton::Primary)||response.clicked_by(egui::PointerButton::Primary))};
         ui.ctx().data_mut(|data|data.get_temp_mut_or_default::<HistoryFrame>(egui::Id::new("history-frame")).labels.push(label));
-        record_message_text_gesture(ui.ctx(),&response);
     }
     fn message_menu(&mut self, ui: &mut egui::Ui, m: &ChatMessage, state: &AppSnapshot) {
         let writable = state.view == "chat" && state.signed_in && !state.busy && !m.deleted;
@@ -1736,7 +1742,11 @@ impl NotDiscordUi {
                 continue;
             }
             let mut draft = self.drafts.remove(&pasted.channel).unwrap_or_default();
-            add_attachment(&mut draft, path.clone(), &mut self.error);
+            // An asynchronous paste can finish after navigation. The send path
+            // validates its real destination; never apply another guild's cap.
+            let limit=if pasted.channel==self.state.selected_channel_id {self.state.upload_limit}
+                else {notdiscord_core::uploads::UploadLimit {per_file:notdiscord_core::uploads::LOCAL_BATCH_BYTES,..Default::default()}};
+            add_attachment(&mut draft, path.clone(), &mut self.error, limit);
             if !draft.paths.contains(&path) {
                 self.cleanup_temporary(&[path]);
             }
@@ -2042,13 +2052,13 @@ impl NotDiscordUi {
                                 allowed && state.channel_access.can_attach,
                                 egui::Button::new("+").min_size(egui::vec2(28., 30.)),
                             )
-                            .on_hover_text("Adjuntar archivos")
+                            .on_hover_text(format!("Adjuntar archivos\n{}\nDiscord valida el límite definitivo; no se reintenta un rechazo de tamaño.",state.upload_limit.label()))
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
                         {
                             if let Some(paths) = rfd::FileDialog::new().pick_files() {
                                 for path in paths {
-                                    add_attachment(&mut draft, path, &mut self.error);
+                                    add_attachment(&mut draft, path, &mut self.error, state.upload_limit);
                                 }
                             }
                         }
@@ -2262,7 +2272,7 @@ impl NotDiscordUi {
             }
         }) {
             if let Some(path) = dropped.path {
-                add_attachment(&mut draft, path, &mut self.error);
+                add_attachment(&mut draft, path, &mut self.error, state.upload_limit);
             }
         }
         if paste {
@@ -2581,7 +2591,7 @@ struct HistoryLabel {
     atom: Option<(egui::Rect, String)>,
 }
 #[derive(Clone, Default)]
-struct MessageTextGesture { double_clicked: bool, delete_clicked: bool, secondary_clicked: bool }
+struct MessageTextGesture { double_clicked: bool, delete_clicked: bool, backspace_clicked: bool, secondary_clicked: bool }
 #[derive(Clone, Default)]
 struct HistoryFrame {
     active: bool,
@@ -2749,7 +2759,7 @@ fn history_selection_finish(ctx: &egui::Context, viewport: egui::Rect, scope: eg
         // Keep only two stable endpoints between frames, never the layout
         // galleys, textures or a full copy of the message page.
         data.insert_temp(egui::Id::new("history-selection"), selection);
-        data.insert_temp(egui::Id::new("history-middle-allowed"), frame.rows.into_iter().chain(frame.labels.iter().filter(|label| !label.link).map(|label| label.id)).collect::<Vec<_>>());
+        data.insert_temp(egui::Id::new("history-middle-allowed"), frame.rows.into_iter().chain(frame.labels.iter().filter(|label| !label.link && label.atom.is_none()).map(|label| label.id)).collect::<Vec<_>>());
     });
     dragging
 }
@@ -2760,35 +2770,17 @@ fn middle_scroll_velocity(origin: egui::Pos2, pointer: egui::Pos2) -> f32 {
     let distance = pointer.y - origin.y;
     distance.signum() * ((distance.abs() - 12.).max(0.) / 130.).powi(2).min(1.) * 1100.
 }
-fn history_middle_scroll(ui: &mut egui::Ui, viewport: egui::Rect, scope: egui::Id, blocked: bool) -> f32 {
+fn history_middle_scroll(ui: &mut egui::Ui, viewport: egui::Rect, scope: egui::Id, area_id: egui::Id, blocked: bool) -> f32 {
     let ctx = ui.ctx();
     let current_frame = ctx.cumulative_frame_nr();
-    let mut state = ctx.data(|data| data.get_temp::<HistoryMiddleScroll>(egui::Id::new("history-middle-scroll"))).unwrap_or_default();
-    let (pointer, middle, cancel) = ctx.input(|input| (input.pointer.interact_pos(), input.pointer.button_clicked(egui::PointerButton::Middle),
-        input.key_pressed(egui::Key::Escape) || input.pointer.primary_pressed() || input.pointer.secondary_pressed()
-            || input.raw_scroll_delta != egui::Vec2::ZERO || !input.focused));
-    if blocked || state.scope != Some(scope) || cancel || current_frame > state.last_frame.saturating_add(1) {
-        state = HistoryMiddleScroll { scope: Some(scope), origin: None, last_frame: current_frame };
+    if (blocked || interaction::selecting(ctx)) && super::autoscroll::origin(ctx,area_id).is_some() {
+        super::autoscroll::cancel(ctx);
     }
-    state.last_frame = current_frame;
-    if middle && state.origin.is_some() { state.origin = None; }
-    else if middle && !blocked && !cancel && !interaction::cancelling(ctx)
-        && !interaction::selecting(ctx) && pointer.is_some_and(|pointer|
-            viewport.contains(pointer) && interaction::owns_surface(ctx, pointer, ui.layer_id())) {
-        let clicked = ctx.interaction_snapshot(|snapshot| snapshot.clicked);
-        let allowed = ctx.data(|data| data.get_temp::<Vec<egui::Id>>(egui::Id::new("history-middle-allowed"))).unwrap_or_default();
-        // Links, avatars, media, buttons and sliders own their input. Only
-        // blank history or its selectable plain text starts this mode.
-        if clicked.is_none_or(|id| allowed.contains(&id)) { state.origin = pointer; }
-    }
-    let velocity = state.origin.zip(pointer).map_or(0., |(origin, pointer)| {
-        let painter = ui.painter().with_clip_rect(viewport);
-        painter.circle_stroke(origin, 9., egui::Stroke::new(1_f32, ui.visuals().text_color()));
-        painter.line_segment([origin - egui::vec2(0., 5.), origin + egui::vec2(0., 5.)], egui::Stroke::new(1_f32, ui.visuals().text_color()));
-        ctx.set_cursor_icon(egui::CursorIcon::AllScroll);
-        middle_scroll_velocity(origin, pointer)
-    });
-    ctx.data_mut(|data| data.insert_temp(egui::Id::new("history-middle-scroll"), state));
+    let velocity=super::autoscroll::drive(ui,area_id,viewport,!blocked && !interaction::selecting(ctx));
+    let origin=super::autoscroll::origin(ctx,area_id);
+    ctx.data_mut(|data|data.insert_temp(egui::Id::new("history-middle-scroll"),HistoryMiddleScroll {
+        scope:Some(scope),origin,last_frame:current_frame,
+    }));
     velocity
 }
 
@@ -2802,10 +2794,11 @@ fn selectable_message_label(ui: &mut egui::Ui, text: RichText) -> egui::Response
             ui.visuals().text_color(), egui::Stroke::NONE);
     }
     record_message_text_gesture(ui.ctx(),&response);
-    response
+    response.on_hover_cursor(egui::CursorIcon::Text)
 }
 fn record_message_text_gesture(ctx:&egui::Context,response:&egui::Response) {
     let delete_down = ctx.input(|input| input.key_down(egui::Key::Delete));
+    let backspace_down = ctx.input(|input| input.key_down(egui::Key::Backspace));
     let double_clicked = response.double_clicked();
     let delete_clicked = response.clicked() && delete_down;
     let secondary_clicked = response.secondary_clicked();
@@ -2814,6 +2807,7 @@ fn record_message_text_gesture(ctx:&egui::Context,response:&egui::Response) {
         let mut actions = data.get_temp::<MessageTextGesture>(key).unwrap_or_default();
         actions.double_clicked |= double_clicked;
         actions.delete_clicked |= delete_clicked;
+        actions.backspace_clicked |= response.clicked() && backspace_down;
         actions.secondary_clicked |= secondary_clicked;
         data.insert_temp(key, actions);
     });
@@ -3299,7 +3293,7 @@ fn previewable_path(path: &std::path::Path) -> bool {
         )
     })
 }
-fn add_attachment(d: &mut Draft, path: PathBuf, error: &mut String) {
+fn add_attachment(d: &mut Draft, path: PathBuf, error: &mut String, limit:notdiscord_core::uploads::UploadLimit) {
     if d.paths.contains(&path) {
         return;
     }
@@ -3315,12 +3309,12 @@ fn add_attachment(d: &mut Draft, path: PathBuf, error: &mut String) {
         .sum();
     if !meta.is_file()
         || d.paths.len() >= 10
-        || meta.len() > 25 * 1024 * 1024
-        || total + meta.len() > 100 * 1024 * 1024
+        || total.saturating_add(meta.len()) > notdiscord_core::uploads::LOCAL_BATCH_BYTES
     {
-        *error = "Máximo diez adjuntos, 25 MiB por archivo y 100 MiB por mensaje.".into();
+        *error = "Máximo diez adjuntos y 1 GiB por envío (límite local). El borrador se conserva.".into();
         return;
     }
+    if let Err(message)=limit.validate_file(meta.len()) { *error=message;return; }
     d.paths.push(path);
     d.revision += 1;
 }
@@ -4572,9 +4566,10 @@ mod tests {
         message.content = ":MoniChibiSpin:".into();
         let known = known_named_emoji("MoniChibiSpin", &message, &state).unwrap();
         assert_eq!((known.id.as_str(), known.animated), ("401", true));
+        let duplicate_emoji = state.emojis[0].clone();
         state.emojis.push(CustomEmoji {
             id: "403".into(),
-            ..state.emojis[0].clone()
+            ..duplicate_emoji
         });
         assert!(known_named_emoji("MoniChibiSpin", &message, &state).is_none());
         state.selected_guild_id = "11".into();

@@ -735,7 +735,7 @@ impl Pictures {
     }
     #[cfg(any(test, feature = "offline-probes"))]
     pub(super) fn custom_animation_metrics(&self) -> serde_json::Value { self.custom_animations.metrics() }
-    #[cfg(any(debug_assertions, feature = "offline-probes"))]
+    #[cfg(any(test, debug_assertions, feature = "offline-probes"))]
     pub(super) fn seed_fixture(&mut self, ctx: &egui::Context, url: &str) {
         let pixels = ColorImage::from_rgba_unmultiplied(
             [2, 2],
@@ -1045,6 +1045,7 @@ impl Pictures {
         if !ui.is_rect_visible(rect) {
             return;
         }
+        super::autoscroll::exclude(ui,rect);
         let canonical = ui.ctx().data_mut(|data| {
             data.get_temp_mut_or_default::<HashMap<String, Option<String>>>(egui::Id::new(
                 "canonical-avatar-urls",
@@ -1213,6 +1214,13 @@ impl Pictures {
         size: Vec2,
         round: bool,
     ) -> egui::Response {
+        let response=self.image_inner(ui,url,size,round);
+        super::autoscroll::exclude(ui,response.rect);
+        response
+    }
+    fn image_inner(
+        &mut self, ui:&mut egui::Ui, url:&str, size:Vec2, round:bool,
+    )->egui::Response {
         if !ui.is_rect_visible(egui::Rect::from_min_size(ui.cursor().min, size)) {
             return ui.allocate_exact_size(size, egui::Sense::click()).1;
         }
@@ -1738,9 +1746,10 @@ mod tests {
         let (send, receive) = mpsc::channel();
         pictures.ready = receive;
         for index in 0..300 {
+            let key = format!("fixture-{index}");
             send.send((
                 0,
-                format!("fixture-{index}"),
+                key,
                 Ok((1, 1, vec![10, 20, 30, 255])),
                 Arc::new(DecodeGate::default()).acquire(|| false).unwrap(),
             ))

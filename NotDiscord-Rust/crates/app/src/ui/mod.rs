@@ -1,4 +1,6 @@
 mod chat;
+mod autoscroll;
+mod overlay;
 mod appearance;
 mod custom_text;
 mod mentions;
@@ -253,6 +255,7 @@ pub struct NotDiscordUi {
     state: AppSnapshot,
     command: tokio::sync::mpsc::UnboundedSender<UiAction>,
     updates: Receiver<UiUpdate>,
+    updater: crate::updates::UpdateManager,
     latest_snapshot: Option<std::sync::Arc<std::sync::Mutex<Option<AppSnapshot>>>>,
     data_dir: PathBuf,
     ctx: egui::Context,
@@ -430,6 +433,7 @@ impl NotDiscordUi {
             state: AppSnapshot::welcome(),
             command,
             updates,
+            updater: Default::default(),
             latest_snapshot: None,
             data_dir,
             ctx: ctx.clone(),
@@ -1389,6 +1393,11 @@ impl NotDiscordUi {
         self.emoji_at_resolution(ui,emoji,size,32)
     }
     fn emoji_at_resolution(&mut self, ui: &mut egui::Ui, emoji: &StatusEmoji, size: f32, source_side: u32) -> egui::Response {
+        let response=self.emoji_at_resolution_inner(ui,emoji,size,source_side);
+        autoscroll::exclude(ui,response.rect);
+        response
+    }
+    fn emoji_at_resolution_inner(&mut self, ui: &mut egui::Ui, emoji: &StatusEmoji, size: f32, source_side: u32) -> egui::Response {
         if !ui.is_rect_visible(egui::Rect::from_min_size(
             ui.cursor().min,
             egui::Vec2::splat(size),
@@ -1467,6 +1476,13 @@ impl NotDiscordUi {
 }
 impl eframe::App for NotDiscordUi {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.updater.poll(ctx,self.preview.is_none());
+        if self.updater.take_shutdown_request() {
+            match self.prepare_orderly_close() {
+                Ok(())=>ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                Err(error)=>self.updater.cancel_prepared(error),
+            }
+        }
         crate::platform::remember_root_window(ctx, frame);
         let minimized = ctx.input(|input| input.viewport().minimized.unwrap_or(false));
         let suspension_changed = self.pictures.visuals_suspended() != minimized;
@@ -1603,7 +1619,9 @@ impl eframe::App for NotDiscordUi {
             )
         });
         member_demand::begin_frame(ctx);
+        autoscroll::begin_frame(ctx);
         if !minimized {
+            self.dismiss_outside_overlays(ctx);
             self.draw_modal_barrier(ctx);
             self.draw_shell(ctx, &state);
             self.draw_dialog(ctx, &state);
@@ -1615,6 +1633,7 @@ impl eframe::App for NotDiscordUi {
         // Incoming-call windows and their sounds remain useful while the main
         // window is minimized; only its ordinary visual surfaces are suspended.
         self.draw_incoming_popup(ctx, &state);
+        autoscroll::end_frame(ctx);
         self.sync_ring_sound(&state);
         self.backdrop.update(
             frame,

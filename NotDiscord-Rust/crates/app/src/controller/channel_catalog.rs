@@ -29,7 +29,7 @@ impl GuildLoad {
         let clean=match kind {
             "CHANNEL_CREATE"|"CHANNEL_UPDATE"|"CHANNEL_DELETE" if parsing::valid_id(&s(value,"id"))=>channel_delta(value),
             "GUILD_CREATE"|"GUILD_UPDATE"=>{
-                let mut clean=fields(value,&["id","name","owner_id","roles"]);
+                let mut clean=fields(value,&["id","name","owner_id","roles","premium_tier"]);
                 if let Some(channels)=value.get("channels").and_then(Value::as_array) {
                     clean["channels"]=Value::Array(channels.iter().take(2001).map(channel_delta).collect());
                 }

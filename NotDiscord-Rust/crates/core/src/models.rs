@@ -455,6 +455,7 @@ pub struct CallVideo {
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct AppSnapshot {
+    pub upload_limit: crate::uploads::UploadLimit,
     pub network_safety: crate::safety::SafetyState,
     pub network_safety_message: String,
     pub latest_messages_version: u64,

@@ -30,13 +30,13 @@ fn center_scrollbar_in_frame(ui: &mut egui::Ui, horizontal: bool) {
     style.bar_inner_margin = 3. + padding * 0.5;
     style.bar_outer_margin = 3. - padding * 0.5;
 }
-pub(super) fn vertical_scroll(ui: &mut egui::Ui) -> egui::ScrollArea {
+pub(super) fn vertical_scroll(ui: &mut egui::Ui) -> super::autoscroll::ScrollArea {
     center_scrollbar_in_frame(ui, false);
-    egui::ScrollArea::vertical()
+    super::autoscroll::ScrollArea::vertical()
 }
-pub(super) fn horizontal_scroll(ui: &mut egui::Ui) -> egui::ScrollArea {
+pub(super) fn horizontal_scroll(ui: &mut egui::Ui) -> super::autoscroll::ScrollArea {
     center_scrollbar_in_frame(ui, true);
-    egui::ScrollArea::horizontal()
+    super::autoscroll::ScrollArea::horizontal()
 }
 
 pub(super) fn apply_interactive_cursor(ctx: &egui::Context) {
@@ -106,15 +106,9 @@ impl Preferences {
         self.blur = if amount.is_finite() { (amount.clamp(0., 1.) * 100.).round() } else { 0. };
     }
     pub fn load(directory: &Path) -> Self {
-        std::fs::read(directory.join("ui-settings.json"))
-            .ok()
-            .filter(|b| b.len() < 16384)
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .map(|mut preferences: Self| {
-                preferences.normalize();
-                preferences
-            })
-            .unwrap_or_default()
+        let mut preferences: Self = crate::storage::read_json(&directory.join("ui-settings.json"), 16384);
+        preferences.normalize();
+        preferences
     }
     fn normalize(&mut self) {
         self.image_download_limit_mib = self.image_download_limit_mib.clamp(1, super::media_limit::MAX_MIB);

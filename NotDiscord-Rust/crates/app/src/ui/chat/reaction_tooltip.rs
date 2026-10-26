@@ -288,14 +288,14 @@ impl NotDiscordUi {
                         match result {
                             None|Some(ResultState::Loading)=>{ui.horizontal(|ui|{ui.spinner();ui.label("Cargando usuarios…");});}
                             Some(ResultState::Error(error))=>{
-                                let scrolled=egui::ScrollArea::vertical().id_salt(("reaction-error",panel_id))
+                                let scrolled=theme::vertical_scroll(ui).id_salt(("reaction-error",panel_id))
                                     .max_height(error_height).show(ui,|ui| {ui.label(error);});
                                 scrollable=scrolled.content_size.y>scrolled.inner_rect.height()+0.5;
                                 retry=ui.button("Reintentar").clicked();
                             }
                             Some(ResultState::Ready{users,more})=>{
                                 if users.is_empty(){ui.label("Sin usuarios disponibles para este tipo de reacción.");}
-                                let scrolled=egui::ScrollArea::vertical().id_salt(("reaction-people",&key.channel,&key.message,&key.emoji,key.kind))
+                                let scrolled=theme::vertical_scroll(ui).id_salt(("reaction-people",&key.channel,&key.message,&key.emoji,key.kind))
                                     .max_height(list_height).show(ui,|ui| {
                                         for person in users {
                                             let name=if message.channel_id==state.selected_channel_id {state.guild_display_name(person)}

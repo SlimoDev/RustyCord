@@ -337,7 +337,9 @@ fn fields(data: &[u8]) -> Result<Vec<Field<'_>>, String> {
     Ok(result)
 }
 
-pub fn prepare_outgoing(text: &str, allow: impl Fn(&str) -> bool) -> String {
+/// Preserve Discord's emoji token and metadata. An unavailable emoji is an
+/// actionable send error, never an invented CDN link with a second preview.
+pub fn prepare_outgoing(text: &str, allow: impl Fn(&str) -> bool) -> Result<String, String> {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let (mut start, mut cursor) = (0, 0);
@@ -346,7 +348,7 @@ pub fn prepare_outgoing(text: &str, allow: impl Fn(&str) -> bool) -> String {
             cursor += 1;
             continue;
         }
-        out.push_str(&transform_plain(&text[start..cursor], &allow));
+        out.push_str(&transform_plain(&text[start..cursor], &allow)?);
         let mut ticks = 1;
         while cursor + ticks < bytes.len() && bytes[cursor + ticks] == b'`' {
             ticks += 1
@@ -372,9 +374,9 @@ pub fn prepare_outgoing(text: &str, allow: impl Fn(&str) -> bool) -> String {
         start = close;
     }
     if start < text.len() {
-        out.push_str(&transform_plain(&text[start..], &allow))
+        out.push_str(&transform_plain(&text[start..], &allow)?)
     }
-    out
+    Ok(out)
 }
 fn escaped(bytes: &[u8], index: usize) -> bool {
     bytes[..index]
@@ -385,12 +387,13 @@ fn escaped(bytes: &[u8], index: usize) -> bool {
         % 2
         == 1
 }
-fn transform_plain(text: &str, allow: &impl Fn(&str) -> bool) -> String {
+fn transform_plain(text: &str, allow: &impl Fn(&str) -> bool) -> Result<String, String> {
     use std::sync::LazyLock;
     static TOKEN: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(r#"https?://[^\s<>`"\x00-\x1F]+|<(?P<animated>a?):(?P<name>[^:\s<>]{1,64}):(?P<id>[0-9]{1,20})>"#).unwrap()
     });
-    TOKEN
+    let mut unavailable = None;
+    let output = TOKEN
         .replace_all(text, |c: &regex::Captures| {
             let m = c.get(0).unwrap();
             if m.as_str().starts_with("http") {
@@ -398,15 +401,14 @@ fn transform_plain(text: &str, allow: &impl Fn(&str) -> bool) -> String {
             } else if text[..m.start()].ends_with('\\') || allow(&c["id"]) {
                 m.as_str().into()
             } else {
-                format!(
-                    "https://cdn.discordapp.com/emojis/{}.{}?size=48&name={}",
-                    &c["id"],
-                    if &c["animated"] == "a" { "gif" } else { "png" },
-                    url::form_urlencoded::byte_serialize(c["name"].as_bytes()).collect::<String>()
-                )
+                unavailable.get_or_insert_with(|| c["name"].to_owned());
+                m.as_str().into()
             }
         })
-        .into_owned()
+        .into_owned();
+    if let Some(name) = unavailable {
+        Err(format!("El emoji :{name}: no está disponible con tus permisos o suscripción, o faltan datos recientes de su servidor. Abre su selector o servidor para actualizarlo. El borrador se conserva."))
+    } else { Ok(output) }
 }
 fn clean_url(token: &str) -> String {
     let mut end = token.len();
@@ -481,18 +483,18 @@ mod tests {
     #[test]
     fn tracking_and_signatures() {
         assert_eq!(
-            prepare_outgoing("https://a.com/p?utm_source=x&ok=1.", |_| false),
+            prepare_outgoing("https://a.com/p?utm_source=x&ok=1.", |_| false).unwrap(),
             "https://a.com/p?ok=1."
         );
         assert_eq!(
-            prepare_outgoing("https://a.com/p?sig=x&utm_source=y", |_| false),
+            prepare_outgoing("https://a.com/p?sig=x&utm_source=y", |_| false).unwrap(),
             "https://a.com/p?sig=x&utm_source=y"
         );
     }
     #[test]
-    fn fake_nitro_keeps_allowed() {
-        assert_eq!(prepare_outgoing("<:a:123>", |_| true), "<:a:123>");
-        assert!(prepare_outgoing("<a:a:123>", |_| false).contains("123.gif"));
+    fn emoji_tokens_keep_metadata_and_unavailable_tokens_do_not_become_urls() {
+        assert_eq!(prepare_outgoing("<:a:123>", |_| true).unwrap(), "<:a:123>");
+        assert!(prepare_outgoing("<a:a:123>", |_| false).is_err());
     }
     #[test]
     fn host_validation() {
@@ -507,13 +509,10 @@ mod tests {
             "```rs\n<:a:123>\n```",
             "`unfinished <:a:123>",
         ] {
-            assert_eq!(prepare_outgoing(source, |_| false), source);
+            assert_eq!(prepare_outgoing(source, |_| false).unwrap(), source);
         }
-        assert_eq!(
-            prepare_outgoing("😀 `<:a:123>` <:b:456>", |_| false),
-            "😀 `<:a:123>` https://cdn.discordapp.com/emojis/456.png?size=48&name=b"
-        );
-        assert_eq!(prepare_outgoing(r"\<:a:123>", |_| false), r"\<:a:123>");
+        assert!(prepare_outgoing("😀 `<:a:123>` <:b:456>", |_| false).is_err());
+        assert_eq!(prepare_outgoing(r"\<:a:123>", |_| false).unwrap(), r"\<:a:123>");
     }
     #[test]
     fn invalid_preview_does_not_become_animation() {

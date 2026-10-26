@@ -13,6 +13,7 @@ use reqwest::{
 use serde_json::{Value, json};
 use std::{fmt, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::{Semaphore, SemaphorePermit};
+use tokio::io::AsyncReadExt;
 use url::Url;
 use zeroize::Zeroizing;
 
@@ -273,6 +274,9 @@ impl Api {
         if status == 429 {
             return Err(self.rate_error(route));
         }
+        if status==413 || data.as_ref().is_some_and(|value|value["code"].as_u64()==Some(40005)) {
+            return Err(ServiceError::status("Discord rechazó el tamaño del archivo o del envío. No se reintentará automáticamente; reduce el tamaño. El borrador se conserva.",status));
+        }
         if !(200..300).contains(&status) {
             return Err(status_error(status));
         }
@@ -408,6 +412,12 @@ impl Api {
         &self, channel: &str, paths: &[PathBuf], content: &str, reply_id: &str, nonce: &str,
         mention_everyone: bool,
     ) -> Result<Value, ServiceError> {
+        self.upload_many_with_limits(channel,paths,content,reply_id,nonce,mention_everyone,crate::uploads::UploadLimit::default()).await
+    }
+    pub async fn upload_many_with_limits(
+        &self, channel:&str,paths:&[PathBuf],content:&str,reply_id:&str,nonce:&str,
+        mention_everyone:bool,limit:crate::uploads::UploadLimit,
+    )->Result<Value,ServiceError> {
         if !crate::parsing::valid_id(channel)
             || paths.is_empty()
             || paths.len() > 10
@@ -422,21 +432,25 @@ impl Api {
         let endpoint = self.endpoint(&path)?;
         let route = Route::new(&Method::POST, &path);
         let mut total = 0u64;
+        let mut prepared=Vec::with_capacity(paths.len());
         for path in paths {
-            let metadata = tokio::fs::metadata(path).await.map_err(|_| {
+            let file=tokio::fs::File::open(path).await.map_err(|_|ServiceError::new("No se pudo abrir un adjunto. El borrador se conserva."))?;
+            let metadata = file.metadata().await.map_err(|_| {
                 ServiceError::new(
                     "Uno de los archivos ya no está disponible. El borrador se conserva.",
                 )
             })?;
-            if !path.is_absolute() || !metadata.is_file() || metadata.len() > 25 * 1024 * 1024 {
+            if !path.is_absolute() || !metadata.is_file() {
                 return Err(ServiceError::new(
-                    "Uno de los archivos supera 25 MiB o no existe. El borrador se conserva.",
+                    "Uno de los archivos no existe o no es un archivo válido. El borrador se conserva.",
                 ));
             }
-            total = total.saturating_add(metadata.len())
+            limit.validate_file(metadata.len()).map_err(ServiceError::new)?;
+            total = total.saturating_add(metadata.len());
+            prepared.push((file,metadata.len(),path.file_name().unwrap_or_default().to_string_lossy().into_owned()));
         }
-        if total > 100 * 1024 * 1024 {
-            return Err(ServiceError::new("Los adjuntos del envío superan 100 MiB."));
+        if total > crate::uploads::LOCAL_BATCH_BYTES {
+            return Err(ServiceError::new("Este envío supera el máximo local de 1 GiB. Divide los adjuntos en mensajes separados."));
         }
         let mut body = json!({"content":content,"nonce":nonce,"enforce_nonce":true,"allowed_mentions":{"parse":["users","roles"],"replied_user":false},"attachments":paths.iter().enumerate().map(|(index,path)|json!({"id":index.to_string(),"filename":path.file_name().unwrap_or_default().to_string_lossy()})).collect::<Vec<_>>()});
         body["allowed_mentions"] = crate::mentions::allowed_mentions(content, mention_everyone);
@@ -451,10 +465,11 @@ impl Api {
         let _permits = self.begin().await?;
         self.wait_route(&route).await?;
         let mut form = Form::new().text("payload_json", body.to_string());
-        for (index, path) in paths.iter().enumerate() {
-            let part = Part::file(path).await.map_err(|_| {
-                ServiceError::new("No se pudo leer el adjunto. El borrador se conserva.")
-            })?;
+        for (index,(file,length,name)) in prepared.into_iter().enumerate() {
+            // Keep the validated handle, and bound the actual stream even if
+            // the source changes while waiting for a rate-limit permit.
+            let stream=tokio_util::io::ReaderStream::new(file.take(length));
+            let part=Part::stream_with_length(reqwest::Body::wrap_stream(stream),length).file_name(name);
             form = form.part(format!("files[{index}]"), part)
         }
         // Uploads are never retried: a lost acknowledgement must not duplicate a send.

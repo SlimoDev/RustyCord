@@ -17,6 +17,7 @@ pub mod safety;
 pub mod search;
 pub mod settings_proto;
 pub mod video;
+pub mod uploads;
 
 pub use api::{Api, ServiceError};
 pub use models::*;

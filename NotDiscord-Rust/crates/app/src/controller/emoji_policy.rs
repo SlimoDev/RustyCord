@@ -2,12 +2,42 @@ use super::*;
 
 impl Controller {
     pub(super) fn can_send_emoji(&self,emoji:&CustomEmoji)->bool {
-        emoji.available && !emoji.guild_id.is_empty() && emoji.guild_id==self.state.selected_guild_id
-            && self.guild_acl.as_ref().is_some_and(|acl|acl.guild_id==emoji.guild_id && !acl.timed_out
-                && (emoji.roles.is_empty()||emoji.roles.iter().any(|role|role==&emoji.guild_id||acl.has_role(role))))
-            // Preserve the existing entitlement boundary, never infer Nitro
-            // from a received animated image or grant use in other guilds.
-            && (!emoji.animated||matches!(self.premium,1..=3))
+        if !emoji.available || emoji.guild_id.is_empty() { return false; }
+        let premium = matches!(self.premium,1..=3);
+        if emoji.animated && !premium { return false; }
+        if emoji.guild_id == self.state.selected_guild_id {
+            return self.guild_acl.as_ref().is_some_and(|acl|
+                acl.guild_id == emoji.guild_id && !acl.timed_out
+                && (emoji.roles.is_empty() || emoji.roles.iter().any(|role|
+                    role == &emoji.guild_id || acl.has_role(role))));
+        }
+        // Nitro, Classic and Basic permit external emoji, but cannot override
+        // a destination channel's USE_EXTERNAL_EMOJIS permission or a source
+        // emoji's role restrictions. A received image alone grants nothing.
+        if !premium || !self.state.guilds.iter().any(|guild|guild.id == emoji.guild_id) { return false; }
+        if !emoji.roles.is_empty() && !emoji.roles.iter().any(|role| role == &emoji.guild_id) {
+            // The standard edition only retains validated member roles for
+            // its current guild. Do not infer access in a different source
+            // guild from an old emoji catalogue or issue a new request here.
+            // Unknown external role restrictions remain denied.
+            return false;
+        }
+        if self.state.selected_guild_id.is_empty() {
+            return matches!(self.state.selected_channel_kind.as_str(),"dm"|"group");
+        }
+        let Some(acl) = self.guild_acl.as_ref().filter(|acl|
+            acl.guild_id == self.state.selected_guild_id && !acl.timed_out) else { return false; };
+        let Some(channel) = self.channels.get(&self.state.selected_channel_id) else { return false; };
+        let effective = if matches!(i(channel,"type"),10..=12) {
+            let Some(parent) = self.channels.get(&s(channel,"parent_id")) else { return false; };
+            parent
+        } else { channel };
+        acl.channel_permissions(effective) & (1 << 18) != 0
+    }
+    pub(super) fn emoji_by_id_allowed(&self, id: &str) -> bool {
+        self.state.emojis.iter().any(|emoji|emoji.id == id && self.can_send_emoji(emoji))
+            || self.emoji_cache.values().filter(|(at,_)| at.elapsed() < Duration::from_secs(300))
+                .flat_map(|(_,list)|list).any(|emoji|emoji.id == id && self.can_send_emoji(emoji))
     }
     pub(super) fn refresh_emoji_access(&mut self) {
         let mut emojis=std::mem::take(&mut self.state.emojis);
@@ -44,13 +74,13 @@ mod tests {
         let list=c.store_emoji_catalog("50",&[json!({"id":"401","name":"Free"}),json!({"id":"402","name":"Locked","roles":["9"]}),
             json!({"id":"403","name":"Unavailable","available":false}),json!({"id":"404","name":"Animated","animated":true})]);
         assert_eq!(list.iter().map(|emoji|emoji.usable).collect::<Vec<_>>(),[true,true,false,false]);
-        assert_eq!(c.content("<:Locked:402>"),"<:Locked:402>");
+        assert_eq!(c.checked_content("<:Locked:402>").unwrap(),"<:Locked:402>");
         c.dispatch("GUILD_MEMBER_UPDATE",json!({"guild_id":"50","user":{"id":"1"},"roles":[]})).await.unwrap();
         assert!(!c.state.emojis.iter().find(|emoji|emoji.id=="402").unwrap().usable);
-        assert_eq!(c.content("<:Locked:402>"),"https://cdn.discordapp.com/emojis/402.png?size=48&name=Locked");
+        assert!(c.checked_content("<:Locked:402>").is_err());
         c.premium=2;c.refresh_emoji_access();assert!(c.state.emojis.iter().find(|emoji|emoji.id=="404").unwrap().usable);
         c.state.selected_guild_id="51".into();c.refresh_emoji_access();assert!(c.state.emojis.iter().all(|emoji|!emoji.usable));
-        assert_eq!(c.content("<:Free:401>"),"https://cdn.discordapp.com/emojis/401.png?size=48&name=Free");assert!(c.api.is_none());
+        assert!(c.checked_content("<:Free:401>").is_err());assert!(c.api.is_none());
     }
     #[tokio::test]
     async fn gateway_unavailability_cannot_be_undone_by_a_late_emoji_catalog_reply() {

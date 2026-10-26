@@ -507,7 +507,11 @@ impl Controller {
     async fn switch_voice(&mut self,id:&str,video:bool,join_only:bool,instance:u64)->Result<(),String> {
         // Validate before leaving a working call. No destination acquires audio
         // until the Gateway confirms the old membership has been removed.
-        let (item,_)=self.checked_voice_destination(id,video,join_only,instance)?;
+        let (item,is_dm)=self.checked_voice_destination(id,video,join_only,instance)?;
+        // Explicit acceptance owns the invitation before any asynchronous
+        // teardown/preflight. Its ten-second no-answer task must not race a
+        // user who is switching from an existing call.
+        if join_only && is_dm { self.end_incoming_invitation(id,instance,true); }
         if self.voice_channel==id {
             if video {self.data("camera-request",json!(true));}
             return Ok(());

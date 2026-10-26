@@ -6,13 +6,56 @@ struct DesktopApp {
     ui: ui::NotDiscordUi,
     readiness: Option<PathBuf>,
     last: std::time::Instant,
+    instance_signal: Option<std::sync::Arc<notdiscord::instance::ShutdownSignal>>,
+    replacement_notice: bool,
+    closing_for_replacement: bool,
+    replacement_close_error: Option<String>,
+    shutdown: tokio::sync::mpsc::UnboundedSender<notdiscord_core::models::UiAction>,
 }
 impl eframe::App for DesktopApp {
     fn clear_color(&self, _visuals: &eframe::egui::Visuals) -> [f32; 4] {
         [0., 0., 0., 0.]
     }
     fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
+        if !self.closing_for_replacement
+            && self.replacement_close_error.is_none()
+            && self.instance_signal.as_ref().is_some_and(|signal| signal.requested()) {
+            match self.ui.prepare_orderly_close() {
+                Ok(())=>{
+                    self.closing_for_replacement = true;
+                    let _ = self.shutdown.send(notdiscord_core::models::UiAction::new("shutdown"));
+                    ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+                }
+                Err(error)=>self.replacement_close_error=Some(error),
+            }
+        }
+        if self.instance_signal.is_some() {
+            // Remains responsive even while the root viewport is minimized.
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
         eframe::App::update(&mut self.ui, ctx, frame);
+        if let Some(error)=self.replacement_close_error.clone() {
+            eframe::egui::Window::new("No se pudo guardar antes de cambiar de versión")
+                .id(eframe::egui::Id::new("instance-close-error"))
+                .collapsible(false).resizable(false)
+                .anchor(eframe::egui::Align2::CENTER_CENTER,[0.,0.])
+                .show(ctx,|ui|{
+                    ui.label(error);
+                    ui.label("Esta ventana se mantendrá abierta para conservar los ajustes. La nueva instancia espera a que termine el cierre.");
+                    if ui.button("Reintentar cierre").clicked() { self.replacement_close_error=None; }
+                });
+        }
+        if self.replacement_notice {
+            eframe::egui::Window::new("Cambio de versión de NotDiscord")
+                .id(eframe::egui::Id::new("instance-replaced-notice"))
+                .collapsible(false).resizable(false)
+                .anchor(eframe::egui::Align2::CENTER_TOP, [0., 64.])
+                .show(ctx, |ui| {
+                    ui.label("La instancia anterior se cerró porque abriste otra versión de NotDiscord.");
+                    ui.label("La configuración y la sesión se comparten entre ambas versiones.");
+                    if ui.button("Entendido").clicked() { self.replacement_notice = false; }
+                });
+        }
         if let Some(path) = &self.readiness {
             if self.last.elapsed() >= std::time::Duration::from_secs(1) {
                 let _ = notdiscord::storage::save_json(path, &self.ui.readiness());
@@ -36,11 +79,32 @@ fn main() -> eframe::Result {
             .map(PathBuf::from)
     };
     let absolute = |p: PathBuf| std::path::absolute(&p).unwrap_or(p);
-    let data = absolute(arg("--data-dir").unwrap_or_else(|| root.join("data")));
     if args.iter().any(|a| a == "--login") {
+        let data = absolute(arg("--data-dir").unwrap_or_else(|| root.join(notdiscord::brand::DATA_DIRECTORY)));
         authentication::login_process(&data);
         return Ok(());
     }
+    let preview = arg("--preview").map(absolute);
+    let legacy_sources = notdiscord::shared_state::legacy_directories(&root, arg("--data-dir").map(absolute));
+    let (data, desktop_instance) = if preview.is_some() {
+        // Explicit offline fixtures keep their own files and never migrate or
+        // replace a running signed-in desktop application.
+        (absolute(arg("--data-dir").unwrap_or_else(|| root.join(notdiscord::brand::DATA_DIRECTORY))), None)
+    } else {
+        let initialized = (|| -> Result<_, String> {
+            let data = notdiscord::shared_state::directory(arg("--shared-data-dir").map(absolute))?;
+            let instance = notdiscord::instance::InstanceGuard::acquire(&data, &root)?;
+            notdiscord::shared_state::initialize(&data, &legacy_sources)?;
+            let data = std::fs::canonicalize(&data).map_err(|_| "No se pudo abrir la carpeta compartida.")?;
+            Ok((data, Some(instance)))
+        })();
+        match initialized {
+            Ok(value) => value,
+            Err(error) => { notdiscord::instance::show_startup_error(&error); return Ok(()); }
+        }
+    };
+    let instance_signal = desktop_instance.as_ref().map(|instance| instance.signal());
+    let replacement_notice = desktop_instance.as_ref().is_some_and(|instance| instance.replaced_previous());
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(3)
         .enable_all()
@@ -51,9 +115,9 @@ fn main() -> eframe::Result {
     let controller_data = data.clone();
     let controller_root = absolute(arg("--runtime-root").unwrap_or(root.clone()));
     let runtime_handle = runtime.handle().clone();
-    let preview = arg("--preview").map(absolute);
     let fixture = arg("--fixture").map(absolute);
     let shutdown = commands.clone();
+    let app_shutdown = commands.clone();
     let task = std::sync::Arc::new(std::sync::Mutex::new(None));
     let task_created = task.clone();
     let readiness = arg("--readiness-file").map(absolute);
@@ -81,7 +145,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     let result = eframe::run_native(
-        "NotDiscord",
+        notdiscord::brand::NAME,
         options,
         Box::new(move |cc| {
             let ctx = cc.egui_ctx.clone();
@@ -119,14 +183,23 @@ fn main() -> eframe::Result {
                 ui: app,
                 readiness,
                 last: std::time::Instant::now(),
+                instance_signal,
+                replacement_notice,
+                closing_for_replacement: false,
+                replacement_close_error: None,
+                shutdown: app_shutdown,
             }))
         }),
     );
     let _ = shutdown.send(notdiscord_core::models::UiAction::new("shutdown"));
     if let Some(task) = task.lock().unwrap().take() {
         runtime.block_on(async {
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(8), task).await;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(30), task).await;
         });
     }
+    // Releasing ownership before controller/runtime teardown would let the new
+    // edition read stale preferences or contend for still-open media files.
+    drop(runtime);
+    drop(desktop_instance);
     result
 }

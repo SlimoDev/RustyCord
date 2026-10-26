@@ -1,4 +1,5 @@
 pub mod authentication;
+pub mod brand;
 pub mod backdrop;
 pub mod controller;
 pub mod game_rpc;
@@ -8,5 +9,8 @@ pub mod notification_identity;
 pub mod pickers;
 pub mod platform;
 pub mod storage;
+pub mod shared_state;
+pub mod instance;
 pub mod sounds;
 pub mod ui;
+pub mod updates;

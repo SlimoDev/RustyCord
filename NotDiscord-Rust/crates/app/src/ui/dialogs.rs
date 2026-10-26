@@ -115,29 +115,60 @@ fn remap_cursor(old: &str, new: &str, index: usize) -> usize {
     else if index >= a.len() - suffix { (index as isize + b.len() as isize - a.len() as isize).max(0) as usize }
     else { b.len() - suffix }
 }
+/// Shared window shell. The app's scroll adapter owns the content scrollbar,
+/// so dialog bodies support the same middle-button interaction as other lists.
+/// Fixed-footer layouts opt out with vscroll(false) and own their body scroll.
+pub(super) struct DialogWindow<'a> {
+    window: egui::Window<'a>,
+    scroll: bool,
+    scroll_id: egui::Id,
+}
+impl<'a> DialogWindow<'a> {
+    pub(super) fn open(mut self, open: &'a mut bool) -> Self { self.window = self.window.open(open); self }
+    pub(super) fn vscroll(mut self, enabled: bool) -> Self { self.scroll = enabled; self }
+    pub(super) fn auto_sized(mut self) -> Self { self.window = self.window.auto_sized(); self }
+    pub(super) fn min_width(mut self, width: f32) -> Self { self.window = self.window.min_width(width); self }
+    pub(super) fn max_width(mut self, width: f32) -> Self { self.window = self.window.max_width(width); self }
+    pub(super) fn order(mut self, order: egui::Order) -> Self { self.window = self.window.order(order); self }
+    pub(super) fn resizable(mut self, enabled: bool) -> Self { self.window = self.window.resizable(enabled); self }
+    pub(super) fn collapsible(mut self, enabled: bool) -> Self { self.window = self.window.collapsible(enabled); self }
+    pub(super) fn show<R>(self, ctx: &egui::Context, contents: impl FnOnce(&mut egui::Ui) -> R)
+        -> Option<egui::InnerResponse<Option<R>>> {
+        self.window.vscroll(false).show(ctx, |ui| {
+            if self.scroll {
+                let height = ui.available_height().max(1.);
+                theme::vertical_scroll(ui).id_salt(self.scroll_id).max_height(height)
+                    .min_scrolled_height(0.).auto_shrink([false, true]).show(ui, contents).inner
+            } else { contents(ui) }
+        })
+    }
+}
+
 pub(super) fn centered_dialog<'a>(
     ctx: &egui::Context,
     title: impl Into<egui::WidgetText>,
     id: impl std::hash::Hash,
     size: Vec2,
-) -> egui::Window<'a> {
+) -> DialogWindow<'a> {
     let rect = centered_rect(ctx.content_rect(), size);
     let inner = (rect.size() - egui::vec2(16., 40.)).max(Vec2::splat(1.));
     let mut frame = egui::Frame::window(&ctx.style());
-    // The window's built-in scroll area already owns its right-hand gutter.
-    // Avoid another right padding outside that scrollbar (and nested rails).
+    // The shared content scroll area already owns its right-hand gutter.
+    // Avoid another right padding outside that scrollbar.
     frame.inner_margin.right = 0;
-    egui::Window::new(title)
+    let id = egui::Id::new(id);
+    let window = egui::Window::new(title)
         .order(egui::Order::Foreground)
         .frame(frame)
-        .id(egui::Id::new(id))
+        .id(id)
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
         .constrain_to(ctx.content_rect().shrink(8.))
         .default_size(inner)
         .max_size(inner)
         .min_size(inner.min(egui::vec2(280., 140.)))
         .collapsible(false)
-        .vscroll(true)
+        .vscroll(false);
+    DialogWindow { window, scroll: true, scroll_id: id.with("dialog-content-scroll") }
 }
 fn search_popup_rect(screen: egui::Rect, search: egui::Rect) -> egui::Rect {
     let screen = screen.shrink(8.);
@@ -399,7 +430,7 @@ mod tests {
         let output=frame(&mut app,vec![]);
         let position=output.shapes.iter().find_map(|shape|match &shape.shape {egui::Shape::Mesh(mesh) if mesh.texture_id==poster=>Some(mesh.calc_bounds().center()),_=>None}).unwrap();
         for pressed in [true,false] {frame(&mut app,click_at(position,pressed));}
-        assert!(app.picker.is_none());
+        assert!(app.picker.is_some());
         assert_eq!(app.drafts["20"].text,"<a:Synthetic:401>");
         assert_eq!(app.pictures.pending_fixture_requests(),0);
         assert_eq!(app.pictures.custom_animation_metrics()["worker"],false);
@@ -757,6 +788,8 @@ fn media_file_name(url: &str, suggested: &str) -> String {
 impl NotDiscordUi {
     pub(super) fn background_blocked(&self) -> bool {
         self.dialog.is_some() || self.picker.is_some() || self.viewer.is_some() || self.search_open
+            || self.ctx.data(|data|data.get_temp::<u64>(egui::Id::new("overlay-dismissal-block")))
+                == Some(self.ctx.cumulative_frame_nr())
     }
     pub(super) fn draw_modal_barrier(&self, ctx: &egui::Context) {
         if !self.background_blocked() { return; }
@@ -1620,13 +1653,7 @@ impl NotDiscordUi {
             .join(format!("{}.json", &hash[..24]))
     }
     pub(super) fn read_picker_history(&self) -> PickerHistory {
-        let Ok(bytes) = std::fs::read(self.history_path()) else {
-            return PickerHistory::default();
-        };
-        if bytes.len() > 256 * 1024 {
-            return PickerHistory::default();
-        }
-        let mut h: PickerHistory = serde_json::from_slice(&bytes).unwrap_or_default();
+        let mut h: PickerHistory = crate::storage::read_json(&self.history_path(), 256 * 1024);
         h.emoji_recent.truncate(10);
         h.gif_favorites.truncate(100);
         h.gif_recent.truncate(32);
@@ -1669,14 +1696,33 @@ impl NotDiscordUi {
         if let Some((channel, message)) = react {
             self.send("react-toggle", message, &value.value, "", &channel);
         } else {
+            let editor_id = egui::Id::new(("composer", &state.selected_channel_id));
+            let selection = egui::TextEdit::load_state(&self.ctx, editor_id)
+                .and_then(|editor| editor.cursor.char_range())
+                .map(|range| (range.primary.index.min(range.secondary.index),
+                    range.primary.index.max(range.secondary.index)));
+            let fallback = self.composer_cursor;
             let Some(draft) = self.draft(&state.selected_channel_id) else {
                 return;
             };
-            if !draft.text.is_empty() && !draft.text.ends_with(char::is_whitespace) {
-                draft.text.push(' ');
-            }
-            draft.text.push_str(&value.value);
+            let mut chars: Vec<_> = draft.text.chars().collect();
+            let (start, end) = selection.unwrap_or((fallback, fallback));
+            let start = start.min(chars.len());
+            let end = end.min(chars.len()).max(start);
+            let mut insertion = String::new();
+            if gif && start > 0 && !chars[start - 1].is_whitespace() { insertion.push(' '); }
+            insertion.push_str(&value.value);
+            if gif && end < chars.len() && !chars[end].is_whitespace() { insertion.push(' '); }
+            let cursor = start + insertion.chars().count();
+            chars.splice(start..end, insertion.chars());
+            let previous = std::mem::replace(&mut draft.text, chars.into_iter().collect());
+            super::mentions::adjust(&previous, &draft.text, &mut draft.mentions);
             draft.revision += 1;
+            self.composer_cursor = cursor;
+            let mut editor = egui::TextEdit::load_state(&self.ctx, editor_id).unwrap_or_default();
+            editor.cursor.set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(cursor))));
+            editor.store(&self.ctx, editor_id);
         }
         let list = if gif {
             &mut self.picker_history.gif_recent
@@ -1693,7 +1739,7 @@ impl NotDiscordUi {
             self.emojis = Vec::new();
             return;
         };
-        let mut open = true;
+        let mut open = !ctx.input(|input| input.key_pressed(egui::Key::Escape));
         let mut choice = None;
         let mut request = false;
         egui::Window::new(if picker.gif { "GIF" } else { "Emojis" })
@@ -2063,8 +2109,9 @@ impl NotDiscordUi {
             );
         }
         if let Some(choice) = choice {
+            let closes = picker.gif || picker.react.is_some();
             self.pick(choice, picker.gif, state, picker.react.clone());
-            open = false;
+            if closes { open = false; }
         }
         if open {
             self.picker = Some(picker);

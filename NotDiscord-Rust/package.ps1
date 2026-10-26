@@ -1,5 +1,5 @@
 param(
-    [string]$Destination = (Join-Path $PSScriptRoot 'dist\NotDiscord-Rust'),
+    [string]$Destination = (Join-Path $PSScriptRoot 'dist\NotDiscord-0.3.0'),
     [Parameter(Mandatory = $true)][string]$RuntimeRoot
 )
 $ErrorActionPreference = 'Stop'
@@ -22,6 +22,7 @@ function Copy-PlusFile([string]$Source, [string]$Relative) {
 }
 Copy-PlusFile $exe 'NotDiscord.exe'
 Copy-PlusFile $addon 'NotDiscord.Media.node'
+Copy-PlusFile (Join-Path $PSScriptRoot 'version.json') 'version.json'
 foreach ($item in $runtimeEntries | Where-Object { !$_.PSIsContainer }) {
     $relative = [IO.Path]::GetRelativePath($runtimeBase, $item.FullName)
     Copy-PlusFile $item.FullName (Join-Path 'media-runtime' $relative)
@@ -32,7 +33,7 @@ Copy-PlusFile (Join-Path $PSScriptRoot 'crates\media-addon\host\package.json') '
 foreach ($asset in @('discord.ico','UNICODE-LICENSE.txt','SYMPHONIA-LICENSE-MPL-2.0.txt')) { Copy-PlusFile (Join-Path $PSScriptRoot ('assets\' + $asset)) $asset }
 $utf8 = [Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText((Join-Path $packageRoot 'runtime.json'), "{`r`n  `"MediaHostExe`": `"media-runtime/NotDiscord.Media.exe`",`r`n  `"NativeRoot`": `"media-runtime`"`r`n}`r`n", $utf8)
-[IO.File]::WriteAllText((Join-Path $packageRoot 'ABRIR_NOTDISCORD.cmd'), "@echo off`r`nstart `"`" `"%~dp0NotDiscord.exe`" --runtime-root `"%~dp0.`" --data-dir `"%~dp0data`"`r`n", $utf8)
+[IO.File]::WriteAllText((Join-Path $packageRoot 'ABRIR_NOTDISCORD_RUST.cmd'), "@echo off`r`nstart `"`" `"%~dp0NotDiscord.exe`" --runtime-root `"%~dp0.`" --data-dir `"%~dp0data`"`r`n", $utf8)
 [pscustomobject]@{
     Package = $packageRoot
     Files = @(Get-ChildItem -LiteralPath $packageRoot -Recurse -File).Count

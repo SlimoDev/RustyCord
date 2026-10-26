@@ -1,26 +1,29 @@
-# NotDiscord Rust
+# NotDiscord Rust 0.3.0
 
-Versión principal mantenida del cliente Windows en Rust. NotDiscord+ se desarrolla por separado en `codex/notdiscord-plus`; las fuentes C# retiradas están archivadas en `legacy`.
+Versión principal para Windows en Rust, rama `NotDiscord`. NotDiscord+ conserva su versión anterior en `codex/notdiscord-plus`; esta entrega no actualiza su rama ni su paquete.
 
-## Compilar
+## Compilación y paquete
 
-Requiere Rust estable para Windows x64 MSVC, herramientas C++/SDK de Windows y WebView2 Evergreen para iniciar sesión. Desde esta carpeta:
+Requiere Rust estable Windows x64 MSVC, herramientas C++ y SDK de Windows, y WebView2 para el inicio de sesión. Desde esta carpeta:
 
 ```powershell
 cargo build --workspace --release --locked -j1
-```
-
-También se puede usar `build.ps1 -Release`; `-Offline` es opcional si las dependencias están disponibles. La compilación no necesita ejecutar la aplicación.
-
-## Paquete
-
-Los motores multimedia de terceros no están incluidos en Git. El preparador `crates/media-addon/Prepare-Host.ps1` utiliza el runtime local existente de `media-host/runtime` o rutas explícitas `-ReferenceRuntime` y `-ReferenceNativeRoot` de un runtime compatible; no depende del antiguo proyecto C#.
-
-```powershell
 .\package.ps1 -RuntimeRoot .\media-host\runtime
-.\verify-package.ps1 -Root .\dist\NotDiscord-Rust
+.\verify-package.ps1 -Root .\dist\NotDiscord-0.3.0
 ```
 
-El empaquetador comprueba las copias por SHA256, no sustituye destinos existentes ni recoge informes de versiones anteriores. El verificador sólo comprueba archivos y rutas: no inicia aplicaciones, dispositivos ni pruebas funcionales.
+El runtime multimedia se prepara por separado mediante `crates/media-addon/Prepare-Host.ps1`. No se publica en Git ni se obtiene de las versiones C# retiradas. El empaquetador comprueba hashes, rechaza destinos existentes y no ejecuta el cliente.
 
-El lanzador del proyecto `ABRIR_NOTDISCORD_RUST.cmd` conserva la entrega actual `dist/NotDiscord-Rust-20261023-ui20` y los datos en `data/`. NotDiscord+ utiliza `data-plus/`. No se publican sesiones, credenciales, datos de usuario, cachés, herramientas locales ni motores binarios.
+## Datos y entrega
+
+NotDiscord utiliza `%LOCALAPPDATA%/NotDiscord/shared/configuration.json` y una sesión protegida con DPAPI. La primera apertura migra los ajustes anteriores con respaldo. Los antiguos argumentos `--data-dir` identifican fuentes de migración; `--shared-data-dir` selecciona una ubicación compartida explícita. No se migran datos durante la compilación.
+
+Plus continúa usando sus archivos anteriores. La sincronización continua y la exclusión bidireccional con Plus quedan pendientes hasta que se autorice actualizar esa variante. NotDiscord puede solicitar el cierre ordenado de una instancia anterior de su instalación y muestra el motivo.
+
+El manifiesto `version.json` identifica versión y rama. El actualizador descarga únicamente componentes propios y verifica tamaño, hashes y compatibilidad con el motor local. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
+
+- [Interacción, inventario de scroll y organización de datos](docs/interaction-and-shared-state.md)
+- [Versiones y actualizaciones](docs/updates.md)
+- [Adjuntos, suscripciones y límites](docs/uploads.md)
+
+La entrega se comprueba mediante revisión de código y compilación de producción y destinos auxiliares. No se ejecutan pruebas funcionales, dispositivos, llamadas ni cuentas. La confirmación del comportamiento corresponde al usuario.

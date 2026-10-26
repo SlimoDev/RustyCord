@@ -37,6 +37,53 @@ struct CredentialMarker {
     state: SafetyState,
 }
 
+/// Merge stop markers when the editions first adopt their common data store.
+/// Restrictive states are never weakened by selecting the newest preference
+/// file or by switching edition. All files remain DPAPI-protected on disk.
+pub(crate) fn migrate_shared_markers(directory: &Path, sources: &[PathBuf]) -> Result<(), String> {
+    if sources.is_empty() { return Ok(()); }
+    let priority = |state: SafetyState| match state {
+        SafetyState::Allowed => 0,
+        SafetyState::SynchronizationRequired => 1,
+        SafetyState::AuthenticationRequired => 2,
+        SafetyState::ProtocolUnsupported => 3,
+        SafetyState::VerificationRequired => 4,
+    };
+    let mut merged = Markers { version: 1, ..Default::default() };
+    let mut seen = false;
+    for source in std::iter::once(directory).chain(sources.iter().map(PathBuf::as_path)) {
+        if source.join("network-safety.pending").exists() {
+            storage::atomic_write(&directory.join("network-safety.pending"), b"migration")?;
+        }
+        let path = source.join("network-safety.dpapi");
+        if !path.exists() { continue; }
+        let bytes = storage::read_bounded(&path, MAX_BYTES).ok_or(STORE_ERROR)?;
+        let plain = zeroize::Zeroizing::new(storage::protect(&bytes, true, false).map_err(|_| STORE_ERROR)?);
+        let next: Markers = serde_json::from_slice(&plain).map_err(|_| STORE_ERROR)?;
+        if next.version != 1 { return Err(STORE_ERROR.into()); }
+        seen = true;
+        merged.verification_accounts.extend(next.verification_accounts);
+        for (key, marker) in next.credentials {
+            match merged.credentials.get_mut(&key) {
+                Some(current) => {
+                    if priority(marker.state) > priority(current.state) { current.state = marker.state; }
+                    if current.account.is_none() { current.account = marker.account; }
+                }
+                None => { merged.credentials.insert(key, marker); }
+            }
+        }
+    }
+    if merged.verification_accounts.len() > MAX_ACCOUNTS || merged.credentials.len() > MAX_CREDENTIALS {
+        return Err(STORE_ERROR.into());
+    }
+    if seen {
+        let plain = zeroize::Zeroizing::new(serde_json::to_vec(&merged).map_err(|_| STORE_ERROR)?);
+        let encrypted = storage::protect(&plain, true, true).map_err(|_| STORE_ERROR)?;
+        storage::atomic_write(&directory.join("network-safety.dpapi"), &encrypted)?;
+    }
+    Ok(())
+}
+
 pub(crate) struct SafetyStore {
     // Kernel sharing restrictions serialize independent processes and path
     // aliases, not merely Arc clones of this in-memory registry.

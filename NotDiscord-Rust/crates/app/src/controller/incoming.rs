@@ -435,7 +435,7 @@ impl Controller {
                     self.thread_catalog.replace(&guild, &threads);
                 }
                 if kind != "GUILD_DELETE" && guild == self.state.selected_guild_id {
-                    for key in ["id","name","owner_id","roles"] {
+                    for key in ["id","name","owner_id","roles","premium_tier"] {
                         if let Some(field)=value.get(key) {
                             if key!="roles"||field.is_array() {self.guild_raw[key]=field.clone();}
                         }
@@ -535,7 +535,7 @@ impl Controller {
                 if p.id == self.me() {
                     self.state.current_user = Some(p);
                     if let Some(premium)=value.get("premium_type").and_then(Value::as_i64).filter(|premium|(0..=3).contains(premium)).and_then(|premium|i32::try_from(premium).ok()) {
-                        self.premium=premium;self.refresh_emoji_access();
+                        self.premium=premium;self.state.upload_limit.premium_type=Some(premium);self.refresh_emoji_access();
                     }
                 }
                 self.decorate_dms();

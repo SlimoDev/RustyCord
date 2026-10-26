@@ -431,6 +431,7 @@ pub(super) struct IncomingPopup {
     allow_demo: bool,
     wait_closed: bool,
     active_on_create: bool,
+    initial_position: Option<egui::Pos2>,
 }
 impl IncomingPopup {
     pub(super) fn audible_call<'a>(&self, state: &'a AppSnapshot) -> Option<&'a IncomingCall> {
@@ -447,11 +448,12 @@ impl IncomingPopup {
         self.active = None;
         self.pending = None;
         self.active_on_create = false;
+        self.initial_position = None;
     }
     fn pending(&self, key: &RingKey) -> Option<Choice> {
         self.pending
             .as_ref()
-            .filter(|p| &p.key == key && p.since.elapsed() < Duration::from_secs(3))
+            .filter(|p| &p.key == key && p.since.elapsed() < Duration::from_secs(30))
             .map(|p| p.choice)
     }
 }
@@ -474,6 +476,7 @@ impl NotDiscordUi {
         self.incoming_popup.active = None;
         self.incoming_popup.pending = None;
         self.incoming_popup.active_on_create = false;
+        self.incoming_popup.initial_position = None;
         self.incoming_popup.wait_closed = true;
         ctx.send_viewport_cmd_to(viewport_id(), egui::ViewportCommand::Close);
         ctx.request_repaint();
@@ -561,12 +564,19 @@ impl NotDiscordUi {
             self.incoming_popup.active = Some(key.clone());
             self.incoming_popup.active_on_create = focus_now;
             self.incoming_popup.pending = None;
+            self.incoming_popup.initial_position = ctx.input(|input| {
+                (!input.viewport().minimized.unwrap_or(false))
+                    .then_some(input.viewport().outer_rect.or(input.viewport().inner_rect))
+                    .flatten()
+                    .filter(|rect| rect.is_finite() && rect.is_positive())
+                    .map(|rect| rect.center() - egui::vec2(230., 210.))
+            });
         }
         if self
             .incoming_popup
             .pending
             .as_ref()
-            .is_some_and(|p| p.since.elapsed() >= Duration::from_secs(3))
+            .is_some_and(|p| p.since.elapsed() >= Duration::from_secs(30))
         {
             self.incoming_popup.pending = None;
         }
@@ -575,7 +585,7 @@ impl NotDiscordUi {
                 data.get_temp::<(String, Instant)>(egui::Id::new("incoming-call-pending"))
             })
             .filter(|(channel, since)| {
-                channel == &call.channel_id && since.elapsed() < Duration::from_secs(3)
+                channel == &call.channel_id && since.elapsed() < Duration::from_secs(30)
             })
             .map(|_| Choice::Accept)
         });
@@ -590,19 +600,14 @@ impl NotDiscordUi {
             // Changing this builder property every frame recreates a winit
             // window. Retain the initial value for this window's lifetime.
             .with_active(self.incoming_popup.active_on_create);
-        if focus_now {
-            if let Some(parent) = ctx.input(|i| {
-                (!i.viewport().minimized.unwrap_or(false))
-                    .then_some(i.viewport().outer_rect.or(i.viewport().inner_rect))
-                    .flatten()
-            }) {
-                if parent.is_finite() && parent.is_positive() {
-                    builder = builder.with_position(parent.center() - egui::vec2(230., 210.));
-                }
-            }
+        if let Some(position) = self.incoming_popup.initial_position {
+            // Keep initial placement stable across layout passes. egui emits
+            // a position command only when this builder value changes.
+            builder = builder.with_position(position);
         }
         let mut choice = None;
         ctx.show_viewport_immediate(viewport_id(), builder, |popup_ctx, class| {
+            if class != egui::ViewportClass::Embedded { super::autoscroll::begin_frame(popup_ctx); }
             if focus_now && class != egui::ViewportClass::Embedded {
                 popup_ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 focus_now = false;
@@ -610,7 +615,8 @@ impl NotDiscordUi {
             if popup_ctx.input(|input| {
                 input.viewport().close_requested() || input.key_pressed(egui::Key::Escape)
             }) {
-                choice = Some(Choice::Ignore);
+                choice.get_or_insert(Choice::Ignore);
+                if class != egui::ViewportClass::Embedded { super::autoscroll::end_frame(popup_ctx); }
                 return;
             }
             if class == egui::ViewportClass::Embedded {
@@ -631,16 +637,18 @@ impl NotDiscordUi {
                         ),
                         |ui| self.incoming_popup_body(ui, &call),
                     );
-                    choice = self.incoming_popup_actions(ui, pending);
+                    choice = self.incoming_popup_actions(ui, pending).or(choice);
                 });
                 if !open {
-                    choice = Some(Choice::Ignore);
+                    choice.get_or_insert(Choice::Ignore);
                 }
             } else {
                 egui::TopBottomPanel::bottom("incoming-popup-actions")
                     .frame(egui::Frame::new().fill(self.theme.panel).inner_margin(12.))
                     .show(popup_ctx, |ui| {
-                        choice = self.incoming_popup_actions(ui, pending);
+                        // Native viewports may perform another egui layout
+                        // pass. Never erase a click detected by an earlier pass.
+                        choice = self.incoming_popup_actions(ui, pending).or(choice);
                     });
                 egui::CentralPanel::default()
                     .frame(egui::Frame::new().fill(self.theme.panel).inner_margin(16.))
@@ -649,6 +657,7 @@ impl NotDiscordUi {
             if pending.is_some() {
                 popup_ctx.request_repaint_after(Duration::from_millis(100));
             }
+            if class != egui::ViewportClass::Embedded { super::autoscroll::end_frame(popup_ctx); }
         });
         if let Some(choice) = choice {
             if choice == Choice::Ignore {

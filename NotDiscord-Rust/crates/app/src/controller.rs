@@ -507,7 +507,9 @@ impl Controller {
             return;
         }
         if let Ok(mut slot) = self.latest_snapshot.lock() {
-            *slot = Some(self.state.clone());
+            let mut snapshot=self.state.clone();
+            snapshot.upload_limit=self.upload_limit();
+            *slot = Some(snapshot);
             self.snapshot_dirty.store(false, Ordering::Relaxed);
             *self.snapshot_at.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
             self.ctx.request_repaint();
@@ -517,6 +519,13 @@ impl Controller {
         let version = self.request_versions.entry(name.into()).or_default();
         *version = version.wrapping_add(1);
         *version
+    }
+    fn upload_limit(&self)->notdiscord_core::uploads::UploadLimit {
+        let tier=(!self.state.selected_guild_id.is_empty()
+            && s(&self.guild_raw,"id")==self.state.selected_guild_id)
+            .then(||self.guild_raw["premium_tier"].as_i64()).flatten()
+            .and_then(|tier|i32::try_from(tier).ok()).filter(|tier|(0..=3).contains(tier));
+        notdiscord_core::uploads::UploadLimit::from_entitlements(self.state.upload_limit.premium_type,tier)
     }
     fn request_current(&self, name: &str, version: u64) -> bool {
         self.request_versions.get(name) == Some(&version)
@@ -1264,9 +1273,9 @@ impl Controller {
             },
         );
     }
-    fn content(&self, text: &str) -> String {
+    fn checked_content(&self, text: &str) -> Result<String, String> {
         pickers::prepare_outgoing(text, |id| {
-            self.state.emojis.iter().any(|emoji|emoji.id==id&&self.can_send_emoji(emoji))
+            self.emoji_by_id_allowed(id)
         })
     }
     fn refresh_messages(&mut self) {
@@ -1676,7 +1685,7 @@ impl Controller {
                 if !paths.is_empty() {
                     self.require("attach")?;
                 }
-                let text = self.content(&action.text);
+                let text = self.checked_content(&action.text)?;
                 if text.encode_utf16().count() > 4000 || text.trim().is_empty() && paths.is_empty()
                 {
                     return Err(
@@ -1699,7 +1708,8 @@ impl Controller {
                 action.kind = "__sent".into();
                 action.channel_id = channel.clone();
                 let mention_everyone = notdiscord_core::mentions::everyone_allowed(&self.state.selected_guild_id,&self.state.channel_access);
-                self.launch(action,None,async move{if paths.is_empty(){let mut body=json!({"content":text,"nonce":nonce,"enforce_nonce":true,"allowed_mentions":notdiscord_core::mentions::allowed_mentions(&text,mention_everyone)});if !reply.is_empty(){body["message_reference"]=json!({"message_id":reply,"channel_id":channel,"fail_if_not_exists":true})}api.request(Method::POST,&format!("channels/{channel}/messages"),Some(body)).await.map_err(|e|e.to_string())}else{api.upload_many_with_everyone(&channel,&paths,&text,&reply,&nonce,mention_everyone).await.map_err(|e|e.to_string())}});
+                let upload_limit=self.upload_limit();
+                self.launch(action,None,async move{if paths.is_empty(){let mut body=json!({"content":text,"nonce":nonce,"enforce_nonce":true,"allowed_mentions":notdiscord_core::mentions::allowed_mentions(&text,mention_everyone)});if !reply.is_empty(){body["message_reference"]=json!({"message_id":reply,"channel_id":channel,"fail_if_not_exists":true})}api.request(Method::POST,&format!("channels/{channel}/messages"),Some(body)).await.map_err(|e|e.to_string())}else{api.upload_many_with_limits(&channel,&paths,&text,&reply,&nonce,mention_everyone,upload_limit).await.map_err(|e|e.to_string())}});
             }
             "edit" | "delete" => {
                 self.require("send")?;
@@ -1725,7 +1735,7 @@ impl Controller {
                 };
                 let body = if action.kind == "edit" {
                     let everyone = notdiscord_core::mentions::everyone_allowed(&self.state.selected_guild_id,&self.state.channel_access);
-                    let content=self.content(&action.text); Some(json!({"content":content, "allowed_mentions":notdiscord_core::mentions::allowed_mentions(&content,everyone)}))
+                    let content=self.checked_content(&action.text)?; Some(json!({"content":content, "allowed_mentions":notdiscord_core::mentions::allowed_mentions(&content,everyone)}))
                 } else {
                     None
                 };
@@ -1857,6 +1867,8 @@ impl Controller {
                     storage::save_session(&self.data, &token)?;
                 }
                 self.premium = i(&value["user"], "premium_type");
+                self.state.upload_limit.premium_type=value["user"]["premium_type"].as_i64()
+                    .and_then(|premium|i32::try_from(premium).ok()).filter(|premium|(0..=3).contains(premium));
                 let person = parsing::person(&value["user"]);
                 self.remember(person.clone());
                 self.state.current_user = Some(person);
