@@ -1,0 +1,39 @@
+NotDiscord desktop notifications — 2026-10-19
+
+Implementation: src/DesktopNotifications.cs only. No network dependency, telemetry,
+disk logging, WinRT package or registry registration. Native Shell_NotifyIconW v4.
+
+Public integration:
+new DesktopNotifications(Window owner, Action<string> onOpenChannel)
+bool Show(string channelId, string title, string body, bool isCall = false)
+void DismissChannel(string channelId)
+bool IsAvailable; string Status; Dispose()
+
+Controller must filter mute preferences, own messages, focused visible channel,
+unread/mention policy, calls already answered and calls already ended. This class
+does not read account state. DismissChannel removes pending/read/cancelled notices.
+Click brings the owner window forward and invokes the destination-channel callback.
+
+One transient tray icon at a time, at most16 queued notice bodies and64 recently
+retired channel destinations. Immutable 16bit IDs prevent late clicks from routing
+to whichever message happened to arrive last. Duplicate activation is suppressed.
+Windows' own accessibility timeout is honored; watchdog bounds lost callbacks.
+Explorer restart restores only the icon, without replaying message content.
+Icon source is local assets/discord.ico or Window.Icon, with Windows fallback.
+
+Windows acceptance does not prove display. Focus Assist/No molestar/system settings
+can suppress banners; IsAvailable reports backend readiness and Status distinguishes
+rejection from acceptance without promising visibility. This is not a live Windows
+notification delivery validation. Activation after process exit is not supported.
+
+Primary documentation consulted:
+https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw
+https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-notifyicondataw
+https://learn.microsoft.com/en-us/windows/win32/shell/notification-area
+
+Synthetic verification: research/DesktopNotifications.Tests.csproj,22 checks.
+No actual notifications, account data, microphone, camera or network were used.
+Tests cover constructor silence, text/surrogate bounds, one-icon queue, immutable
+destinations, late clicks, deduplication, read/cancel dismissal, call prioritization,
+stalled callbacks, queue bounds/coalescing, backend rejection, native struct layout
+and documented HIWORD/LOWORD callback decoding without constructing a native HWND.

@@ -1,0 +1,55 @@
+NotDiscord native permissions/social integration — 20 October 2026
+
+Primary references read:
+https://docs.discord.com/developers/topics/permissions
+https://docs.discord.com/developers/resources/message#create-reaction
+https://docs.discord.com/developers/events/gateway-events
+Permission overwrite order: everyone, aggregate role denies/allows, member denies/allows.
+Owner and ADMINISTRATOR bypass channel overwrites. VIEW_CHANNEL and SEND_MESSAGES
+have implicit restrictions. Threads inherit parent channel permissions and use
+SEND_MESSAGES_IN_THREADS; unconfirmed private-thread membership is denied. Timeout
+retains view/history while preventing sending/new reactions.
+
+The permission object is shared by navigation, the composer, member/search scope,
+reaction actions and forwarding destinations. Every mutation is checked again in
+Controller. Reactions already present do not require ADD_REACTIONS, but creating a
+new bucket does. Existing counts remain visible regardless of that permission.
+Gateway events update reaction counts/current-user state and channel ACL changes
+invalidate old member scope. Partial channel updates merge previous ACL fields.
+
+Original packaged JavaScript evidence, read as inert bounded text:
+E:\DESCARGAS\REA\NotDiscord\evidence\public-web\web.4d4b2f75fdea5470.js
+SHA256 667a771c61ff709e2f0400d395a324f0a5b1b5aa89e11e263289144a12d084ae
+Offsets below are UTF-16 string offsets, not byte addresses.
+- 279265 REACTION_WITH_TYPE(e,t,n,i,r) builds
+  /channels/{e}/messages/{t}/reactions/{n}/{r}/{i}.
+- 7332882 helper C chooses that route when useTypeEndpoint=true.
+- Near 7334250 function v removes own/user reactions with type NORMAL/BURST,
+  userId default @me and query burst. The implementation keeps normal ownership
+  separate from super-reaction ownership; it does not grant super reactions.
+- Parent REA investigation found the member-list id resolver near 8990448:
+  explicit member_list_id first, everyone only when everyone views and no VIEW deny.
+  Other overwrite lists use an external hash module not present in retained files.
+
+Deliberate limits:
+- Member subscription is for the current visible channel, starting at 100 entries
+  and extended only by an explicit More action up to 2000 retained list entries.
+- Membership is not fetched by indiscriminate guild REST enumeration.
+- List packets are accepted only with a matching server member_list_id, a confirmed
+  everyone list, or an explicit matching channel_id. If a private list only exposes
+  an unverified hash, it is left unavailable rather than mixing another channel's
+  members. This coverage limitation must be disclosed, not called full parity.
+- Server search people are current scoped members plus authors of current-channel
+  messages and self; private/group scope is current recipients only. Numeric filter
+  identifiers outside that scope are rejected before REST.
+- Forwarding accepts up to 10 destinations, retains bounded destination metadata
+  across guild switches, and re-fetches effective destination permissions before
+  any POST. Failure after a partial send is reported without automatic replay.
+- Prepared files are not sent on selection. Explicit confirmation can submit up
+  to 10 files, each <=25 MiB and total<=100 MiB; nonce uses24 hex characters while
+  draft acknowledgements retain the full32-character submission id.
+
+Validation harness:
+research/PermissionsSocial.Tests.csproj uses a fake HTTP handler and synthetic
+users/guilds/roles/messages/files. No account content, real network, audio, screen
+capture or Windows notification is used. Final count is emitted by the harness.

@@ -1,0 +1,11 @@
+'use strict';
+const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('assert/strict');
+const root=path.resolve(__dirname,'..'),native=path.join(root,'native-candidate');
+const file=path.join(native,'vencord/dist/preload.js');
+const original=fs.readFileSync(path.join(native,'backups/memory-cache-20261018/vencord/dist/preload.js'),'utf8');
+const next=original+"\n;require(require('node:path').join(__dirname,'..','..','host','renderer-resource-diagnostics.cjs'))({webFrame:t.webFrame,ipcRenderer:t.ipcRenderer,origin:location.origin,isTop:window.top===window.self});\n";
+new vm.Script(next);fs.writeFileSync(file,next);
+const record={utc:new Date().toISOString(),decision:'Automatic resource sweep removed. Cache-clearing benchmarks cannot establish savings without externally triggered memory pressure.',reason:'Electron42.11.11 WebFrameRenderer::ClearCache calls WebCache::Clear then NotifyMemoryPressure(MEMORY_PRESSURE_LEVEL_CRITICAL).',source:'evidence/public-web/electron-web-frame-42.11.11.cc:811',sourceURL:'https://raw.githubusercontent.com/electron/electron/v42.11.11/shell/renderer/api/electron_api_web_frame.cc',rejectedBenchmarks:['memory-resource-sweep-timeline','memory-cache-matched-restarts','memory-v8-page-pool-off','memory-pruned-preload-pool-off','memory-bootstrap-sdk-pruned'],productionCacheClearRemoved:true,manualGC:false,workingSetTrim:false,remainingChanges:['V8 free-page pool disabled without triggering collection','300 inaccessible preload SDK factories removed','656 bootstrap SDK factories and2telemetry capture calls removed'],target25PercentVerified:false};
+fs.writeFileSync(path.join(root,'evidence/native/resource-cache-experiment-rejected.json'),JSON.stringify(record,null,2));
+assert(!next.includes('renderer-cache-policy.cjs'));
+console.log('Automatic cache clearing removed; all affected benchmark claims rejected.');

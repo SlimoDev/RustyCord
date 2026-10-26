@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType><TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>NotDiscord.Terminal</AssemblyName><RootNamespace>NotDiscord.Terminal</RootNamespace>
+    <Version>0.1.0</Version><PlatformTarget>x64</PlatformTarget><AllowUnsafeBlocks>true</AllowUnsafeBlocks><ApplicationIcon>../assets/discord.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup><PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" /></ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../assets/emoji-catalog.tsv" LogicalName="NotDiscord.EmojiCatalog" />
+    <Content Include="../assets/UNICODE-LICENSE.txt" Link="UNICODE-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../native-emoji/bin/NotDiscord.Emoji.dll" Link="NotDiscord.Emoji.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="../assets/discord.ico" Link="assets/discord.ico" />
+    <Content Include="../assets/discord.ico" Link="discord.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="RemoveUnusedWinForms" BeforeTargets="ResolveAssemblyReferences"><ItemGroup><Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.WinForms'" /></ItemGroup></Target>
+</Project>

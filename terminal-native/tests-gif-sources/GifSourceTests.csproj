@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0-windows</TargetFramework><UseWPF>true</UseWPF><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../src/GifSources.cs" Link="GifSources.cs" />
+    <Compile Include="../src/MediaImages.cs" Link="MediaImages.cs" />
+    <Compile Include="../src/UiGifImage.cs" Link="UiGifImage.cs" />
+    <Compile Include="../src/GlobalUsings.cs" Link="GlobalUsings.cs" />
+  </ItemGroup>
+</Project>

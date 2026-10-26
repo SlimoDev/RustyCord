@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0-windows</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="../src/Contracts.cs" Link="Contracts.cs" />
+    <Compile Include="../src/SearchQuery.cs" Link="SearchQuery.cs" />
+    <Compile Include="../src/SearchCompletion.cs" Link="SearchCompletion.cs" />
+  </ItemGroup>
+</Project>

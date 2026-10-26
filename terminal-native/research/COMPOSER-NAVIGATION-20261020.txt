@@ -1,0 +1,53 @@
+Composer, draft navigation and media viewer — 2026-10-20
+
+Implemented in source:
+- ComposerDrafts.cs: per-conversation session-only text, reply and attachment drafts.
+  An unchanged retry keeps its submission ID; ACK identifies the submitted revision
+  and never clears later input or another channel. The backend uses a <=25-character
+  nonce derived from that ID; raw internal IDs remain 32 hexadecimal characters.
+- TerminalWindow.Composer.cs: picker/file drop/bitmap paste/PNG-only paste prepare
+  removable previews. Ctrl+V interception also works when WPF's text-only Paste
+  command is unavailable. Nothing is transmitted until explicit Send/Enter.
+- Prepared attachments are limited to 10 files, 25 MiB each, 100 MiB total. Original
+  selected files are never deleted. Clipboard PNGs live in a private random session
+  folder beneath the application's data directory and are cleared on discard,
+  successful ACK, account change and normal shutdown.
+- Permissions gate preparation and submission. Local removal is still available
+  after attachment/send permissions change, so it cannot trap the retained text.
+- TerminalWindow.NavigationContext.cs: cached channel return and bounded saved
+  viewport positions. A return from an empty/interrupted view cannot leave a stale
+  restoration flag that prevents future position capture.
+- TerminalWindow.MediaViewer.cs: one viewer window, wheel zoom, pointer drag pan,
+  fit/100% controls and bounded scroll offsets. GIF playback is explicit, shares the
+  existing decoder and single-animation coordinator with chat, and stops on close.
+- MediaDownloads.cs streams image/GIF originals to a user-selected destination,
+  at most 25 MiB, with a 32 KiB buffer and at most 2 transfers. It validates supported
+  origins and content types, uses no cookies or credentials, and cleans partial files.
+
+Rendering/resource limits:
+The enlarged static image uses the existing maximum 1600-pixel decoded preview;
+saving retains the source bytes. GIF playback retains the existing 12 MiB download,
+8 MiB decoded frame, 400-frame and native decoder dimension limits. Unsupported or
+oversized animated media can still be opened in the original source. There is only
+one enlarged viewer and one active GIF animation across chat and that viewer.
+Up to 1024 nonempty draft slots are allowed; reaching the limit reports an error
+instead of silently evicting unsent text. Drafts are intentionally not persisted.
+
+Verification:
+- 12 pure draft-model checks passed.
+- 20 WPF UI checks passed against the final build-ui-check assembly.
+-The WPF checks cover independent drafts, preparing files without sending,
+ explicit send/ACK, ACK during another chat, edited input, bitmap/PNG-only staging,
+ safe temporary-file cleanup, permission denial/removal recovery, account cleanup,
+ actual viewport return from profiles, pins opening at top and return to chat offset.
+-No account, real network, real sends, system clipboard reads, microphone, calls,
+ Windows notifications or performance measurements were involved.
+-Evidence: evidence/composer-checks-20261020.json includes the tested assembly hash.
+
+Still requires user interaction verification:
+Actual Ctrl+V from the user's image source, dragging a real local file, OS file
+pickers, downloading from a live media provider, and wheel/drag GIF viewing.
+
+Primary source for nonce semantics:
+https://github.com/discord/discord-api-docs/blob/main/developers/resources/message.mdx
+Create Message documents a nonce of up to 25 characters and enforce_nonce reuse.

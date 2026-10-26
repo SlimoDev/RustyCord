@@ -1,0 +1,39 @@
+NotDiscord native — social backend reference scope, 2026-10-19
+
+Primary local artifact:
+E:/DESCARGAS/REA/NotDiscord/evidence/public-web/web.4d4b2f75fdea5470.js
+SHA-256: 667a771c61ff709e2f0400d395a324f0a5b1b5aa89e11e263289144a12d084ae
+
+REA retained parent evidence:
+ev_98860cea18caa3e1c891ff9f05e9968f331c7b45e04bb583e6f9848cd37dde70
+Summary: ev_c41784421a47112c3c9589a28bfbac348a5aae1c5e06b0ed9ced1d5eee66fd2f
+Directory artifact digest: ccd8fb532ac465d8cc51cf947677e3b38d1e143039665810b8144f485b17e054
+Only the exact named bundle was selected; 36 inventoried files were not analyzed.
+The isolated parser exhausted its bounded 256 MiB heap. No AST or endpoint extraction
+was recovered, and the partial graph must not be interpreted as proof of absence.
+The bundle was read as inert text; it was not executed.
+
+Focused manual text observations from that exact artifact (JavaScript string offsets,
+UTF-16 code units, not byte offsets):
+- Near 258986: USER_PROFILE:e=>`/users/${e}/profile`.
+- Near 719581: USER_PROFILE request query includes with_mutual_guilds and with_mutual_friends.
+- Near 270063: PINS:e=>`/channels/${e}/messages/pins`;
+  PIN:(e,t)=>`/channels/${e}/messages/pins/${t}`;
+  CHANNEL_RECIPIENT:(e,t)=>`/channels/${e}/recipients/${t}`.
+- Near 11786940: PIN_MESSAGES:x.vI(51).
+- Native forward reference type 1 and message_snapshots rendering follow the already
+  reconstructed message model; forwarding has not been sent against the account by tests.
+
+Search UI reference: Discord Help, How to Use Search on Discord,
+https://support.discord.com/hc/en-us/articles/115000468588-How-to-Use-Search-on-Discord
+This confirms from, in, mentions, has and date/author-type filters as user-facing features.
+The exact server author-type parameter was not established from the selected artifact.
+Therefore author:user/bot/webhook is explicitly a LOCAL filter over the returned page;
+the status bar discloses that limit and the REST request omits unverified parameters.
+
+Functional scope:
+- Profile, pins, recipient and forward REST operations are executed only after their
+  corresponding human UI actions. All code tests use synthetic objects or fake HTTP.
+- No credentials, account message contents, call/audio/video or live request payloads
+  were read by this investigation.
+- Compilation plus transport and controller tests passed with realNetworkUsed=false.

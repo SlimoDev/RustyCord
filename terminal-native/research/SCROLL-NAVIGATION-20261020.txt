@@ -1,0 +1,53 @@
+NotDiscord — chat viewport and reply navigation, 2026-10-20
+
+Observed problems in the earlier implementation
+- The first snapshot of a selected channel could contain no messages. The later
+  loaded snapshot was no longer considered a changed channel, so the initial
+  jump to the newest message was skipped.
+- A bare pixel offset drifted when older messages were prepended or virtualised
+  row heights changed. A queued initial scroll could override later user input.
+
+Implemented behaviour
+- An unseen conversation follows the end by default, including empty-to-loaded
+  transitions. A revisited conversation restores its previous reading position.
+- Saved positions retain a visible message ID and its viewport position, plus a
+  pixel fallback and an explicit follow-end state. Only realised containers are
+  inspected; the history remains virtualised. There are at most 1024 saved views.
+- An explicit user scroll invalidates previously queued navigation by epoch.
+  Wheel, navigation keys and scrollbar input all use this path.
+- Image/layout extent changes preserve the reading anchor or follow the end.
+- Pins still opens at the top, with its callback guarded by the same epoch; leaving
+  pins or a profile restores the chat context instead of reopening the latest page.
+- Explicit reply jumps consume FocusMessageVersion once, take priority over the
+  normal restore and temporarily highlight the target for two seconds. There is
+  one short-lived timer; it stops after highlighting or when the window closes.
+- Backend channel refresh retains already cached history while merging latest
+  messages and subsequent Gateway deltas. The existing cache remains bounded.
+- A manually scrolled chat supplies its saved anchor when it is reopened. The
+  backend can load the bounded page around it even after that channel's message
+  cache was evicted. No new explicit reply-focus event is generated for this.
+- Ir al presente explicitly reloads the newest page and clears the old reading
+  anchor, so a page loaded around an older reply does not trap the user there.
+
+Verification
+Composer.UiChecks has 36 WPF checks. The original composer/draft checks
+remain present, with new regressions for asynchronous initial loading, following
+new messages, a remembered chat with an empty loading snapshot, prepend stability,
+manual input cancellation, explicit reply focus/version behaviour, follow-end
+anchor hints and remembered anchors across more than three conversations.
+The wheel-input completion also survives an incoming refresh before dispatcher idle.
+A first callback before initial visual layout is retried when the viewport appears.
+Ir al presente is checked from a manually scrolled older context through the
+latest-messages action to the final newest-message viewport.
+An unavailable/deleted reading anchor falls back to the newest visible message,
+without applying an obsolete offset to a different latest-history page.
+Manual scroll intent is raised through the actual ListBox PreviewMouseWheel
+event. No system mouse/clipboard, account, HTTP, sends, calls or devices are used.
+
+Limitations
+Positions last only while the application remains open. If the message anchor
+was removed or is no longer accessible, the latest-page fallback opens at its end.
+A pixel fallback is used only for positions that did not have a message anchor.
+Reopening a chat and exact reply navigation can
+load a page around the ID without increasing the 200-message/three-channel cache.
+Actual wheel/scrollbar feel with long live chats and media remains a user check.

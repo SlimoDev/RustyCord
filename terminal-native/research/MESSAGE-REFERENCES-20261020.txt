@@ -1,0 +1,58 @@
+Menciones y respuestas — actualización del 20 de octubre de 2026
+
+Datos transportados
+- ChatMessage conserva menciones (Person), referencia y un preview separado.
+- Se usa el apodo contextual entregado por Discord antes del nombre global.
+- El contenido de transporte se conserva exacto: la presentación resuelve <@id>
+  y <@!id> sin modificar lo que se editará o reenviará después.
+- Los previews no contienen mensajes anidados: sólo autor, canal, id, texto de
+  hasta 500 caracteres y hasta 100 menciones con nombres acotados.
+- referenced_message ausente indica no disponible; null indica eliminado.
+  Una referencia de otro canal no hereda el cuerpo o la identidad del canal actual.
+- Los updates parciales preservan campos no enviados. Un cambio de referencia no
+  reutiliza un preview de otro mensaje/canal.
+
+Cache y navegación
+- Un original ya cargado resuelve el preview sin hacer otra consulta.
+- Los cambios observados del original actualizan el preview; la eliminación
+  observada se conserva como tal y no se reemplaza con una versión vieja.
+- El salto comprueba canal, acceso e historial. Usa la cache si el original está;
+  sólo si falta consulta una página de hasta 50 mensajes alrededor del id.
+- La página debe contener el original. No se sustituye por un mensaje arbitrario.
+- Los eventos Gateway recibidos durante esa consulta se fusionan, para conservar
+  mensajes nuevos y no resucitar un original eliminado mientras llegaba la página.
+- FocusMessageId y FocusMessageVersion identifican cada salto explícito, incluidos
+  saltos repetidos al mismo destino. El helper WPF se encarga del desplazamiento.
+- La selección normal de chat admite un ancla de viewport: consulta directamente
+  la página alrededor del ancla, incluso si fue expulsada de la cache. Mantiene el
+  límite existente de 200 mensajes/tres canales. Un ancla eliminada hace una sola
+  consulta adicional de los mensajes recientes, sin resucitar la versión cacheada.
+- Volver a recientes solicita la última página sin reutilizar un ancla histórica;
+  comprueba el canal actual, visibilidad e historial antes de consultar.
+- Las menciones y previews se contabilizan en el límite de la cache; no se añade
+  un historial sin límite ni consultas globales de usuarios.
+
+Comprobaciones
+56 checks aprobados en MessageReferences.Tests.csproj contra el build compartido.
+Incluyen menciones/contexto, ausencia/null, referencias cruzadas, updates parciales,
+cache de preview, ediciones y eliminación, permisos revocados, navegación cache-first,
+fetch alrededor del id, resultado sin destino y eventos concurrentes durante fetch.
+También se comprueban anclas expulsadas de una cache llena, actualización de páginas
+sin borrar el historial retenido, fallback de ancla eliminada, Volver a recientes y
+solicitudes de amistad con nombres conocidos, bot/self/bloqueo y solicitud existente.
+Sólo datos ficticios y HTTP simulado. No hubo envíos ni conexión a cuenta/Gateway.
+Resultado con hash de DLL: ../evidence/message-references-checks-20261020.json.
+
+Límites
+La disponibilidad del preview depende del contenido original que entregue Discord
+o de un original ya presente en la cache. Mensajes eliminados o no accesibles se
+indican sin inventar texto. La interacción de click y el resaltado se comprueban
+en las pruebas WPF de la interfaz coordinadas por el agente principal.
+
+Solicitudes de amistad
+El menú/perfil pueden enviar una solicitud para una persona identificada usando
+su username ya conocido; no se confía en texto de UI desactualizado. Se revalida
+que no sea el usuario actual, un bot, alguien bloqueado, un amigo existente o una
+solicitud saliente pendiente. El prompt manual conserva su flujo de username.
+Después del POST explícito se refrescan relaciones para reflejar el estado sin
+esperar un evento Gateway. Las pruebas usan un POST simulado, nunca una cuenta real.

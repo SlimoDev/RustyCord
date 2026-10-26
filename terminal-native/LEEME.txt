@@ -1,0 +1,168 @@
+NotDiscord nativo — actualización del 20 de octubre de 2026
+
+Abrir: ABRIR_TERMINAL.cmd o el acceso directo NotDiscord del escritorio.
+La interfaz usa WPF; el chat no carga el cliente web de Discord.
+
+NUEVO
+- Voz en solitario: diferencia transporte listo y grupo cifrado establecido. Una
+  llamada con sólo tú muestra Conectado / esperando participantes y permite audio,
+  silencio, ensordecer y detección local de voz. No espera indefinidamente a otro
+  participante para habilitar esos controles. El envío sigue silenciado hasta que
+  se confirme el cifrado real; no hay degradación a un protocolo sin cifrado.
+- La pantalla pausa su captura si debe reconstruirse el grupo cifrado. Sólo retoma
+  la misma selección tras completar esa conexión; Cancelar o salir impide retomarla.
+- Icono de llamada vectorial con el mismo trazo y encuadre cuadrado que la cámara,
+  incluyendo el diseño compacto. Los reenvíos propios no muestran Editar y la
+  ejecución también rechaza esa operación; los mensajes originales siguen editables.
+
+INTERACCION
+- Las menciones se muestran con nombre/apodo en lugar de <@id>. Al escribir @,
+  aparece un selector de hasta ocho participantes del contexto actual. Enter/Tab
+  elige una persona; Shift+Enter mantiene el salto de línea. El editor conserva
+  @nombre legible y sólo convierte la selección intacta al formato de envío.
+- Respuestas con autor y preview del mensaje original. Pulsar la preview, incluida
+  la del compositor, sube o baja al original y lo resalta dos segundos. Si falta en
+  caché, se consulta una página acotada; no se carga todo el historial.
+- Scroll por mensaje visible y posición, incluso con cargas asíncronas. Un chat
+  nuevo abre al final; después de desplazarse conserva ese punto. Se puede recuperar
+  una posición antigua aunque su página haya salido de caché. Ir al presente vuelve
+  explícitamente a los mensajes recientes. Las posiciones no persisten al cerrar.
+- Actividad de conversaciones, amigos y miembros: veinte elementos visibles como
+  máximo, una sola línea y puntos suspensivos. El tooltip y el perfil conservan los
+  detalles completos disponibles. El icono de actividad tiene raya roja al ocultarla.
+- La cabecera muestra el servidor seleccionado y vuelve a NotDiscord fuera de él.
+  La confirmación de eliminar mensajes, incluidos sus bordes y título, usa el tema.
+- Copiar imagen en el menú contextual y visor: coloca una imagen fija con formatos
+  Bitmap y PNG en el portapapeles; PNG conserva transparencia. Usa la imagen nativa
+  acotada a 1600 píxeles. Para conservar el GIF animado/original utiliza Guardar.
+- Menú propio de miembros con Ver perfil, Enviar mensaje, Añadir amigo cuando
+  corresponda y Copiar ID. No incluye ajustes de conversación. El perfil ofrece
+  Añadir amigo o Aceptar solicitud, y muestra Solicitud enviada sin repetirla.
+
+CAMBIOS ANTERIORES
+- Fijados abre al principio, con el más recientemente fijado primero. Al volver al
+  chat o regresar desde un perfil recupera la posición anterior. Clic derecho abre
+  el menú de una conversación sin seleccionarla. Icono de Inicio sin recorte.
+- Permisos efectivos compartidos entre navegación, compositor, reacciones y
+  reenvíos: roles, administrador, excepciones de canal y restricciones aplicables.
+  Se comprueban también al ejecutar. Los controles deshabilitados explican por qué.
+- Miembros de servidor por canal, agrupados por roles, con colores, apodos y
+  presencia disponible. El perfil conserva el contexto del servidor y sus roles.
+  La carga es incremental, sin descargar todos los miembros al entrar.
+- Reacciones existentes con emoji, contador y selección propia, actualizadas por
+  eventos. Se puede usar una reacción existente cuando Discord lo permite aunque
+  no se tenga permiso para crear una reacción con otro emoji.
+- Borradores independientes en memoria: texto, respuesta y adjuntos. Cambiar de
+  chat o abrir perfiles no los borra. Sólo se vacían al confirmar el envío o con
+  Borrar borrador; una respuesta tardía no borra texto escrito después.
+- Seleccionar, arrastrar o pegar imágenes con Ctrl+V prepara adjuntos con vista
+  previa y opción de quitar. No se envían hasta pulsar Enviar o Enter.
+- Reenvío a varios destinos (máximo diez), con iconos/avatares y selección entre
+  servidores. Sólo aparecen canales visibles; los destinos sin permiso suficiente
+  quedan deshabilitados. Los permisos se vuelven a validar antes del envío.
+- Personas sugeridas por from:/mentions: limitadas al contexto del chat/canal,
+  participantes y autores visibles. No se mezcla la lista global de amistades.
+- GIFs: proveedor actual Klipy, populares, búsqueda, categorías y Cargar más
+  corregidos. Lectura de favoritos existentes reparada; importación local desde
+  un archivo de texto o lista de enlaces. Elegir un GIF conserva el borrador.
+- Visor: rueda para zoom, arrastre para mover, Ajustar/100%, guardar original y
+  copiar enlace. Estas acciones también están en los menús de imágenes y GIFs.
+- Avisos con avatar, remitente/origen y vista previa de unos cincuenta caracteres.
+  Registro por usuario de Windows para identificar la aplicación como NotDiscord.
+
+FUNCIONES CONSERVADAS
+- El botón de fijados alterna entre fijados y el mismo chat sin descargar de nuevo
+  la conversación. El menú de tu foto incluye Ver mi perfil y conserva los estados.
+- Accesos a chats privados sin leer sobre los servidores, con contadores; llamadas
+  directas/grupos primero tanto en esa barra como en la navegación principal.
+- Avisos nativos de Windows para mensajes privados, menciones de servidor y
+  llamadas entrantes. Un clic abre el canal correcto sin aceptar la llamada.
+  Respeta silenciados/No molestar y se puede desactivar desde Ajustes.
+- Filtros visibles al enfocar o pulsar la búsqueda, sin Alt+Tab. Sugerencias
+  combinables para from:, has:, mentions:, in:, fechas y pinned:, con completado
+  del token actual sin borrar el resto. También admite alias como :from Ana.
+- Iconos en servidores en común, logo de Discord y barra de título del color base,
+  incluyendo controles de minimizar, maximizar/restaurar y cerrar. Las pestañas
+  del perfil comparten el color base y distinguen la selección con una línea.
+- GIF: búsqueda, categorías, populares, recientes y guardados. Lee los favoritos
+  existentes de Discord. Las nuevas estrellas se guardan localmente por cuenta;
+  todavía no se sincronizan hacia Discord.
+- Emojis: catálogo Unicode con nombres en español e inglés, categorías y emojis
+  de servidor bajo demanda. USADOS RECIENTEMENTE va arriba, con diez elementos
+  como máximo y sin duplicados. No hay favoritos de emojis.
+- Los emojis Unicode se dibujan con los colores de la fuente instalada de Windows
+  mediante DirectWrite. Su cobertura depende de la versión de esa fuente.
+  Los emojis de servidor conservan las imágenes del servidor.
+- Separadores diarios en el chat; avatares visibles también en modo compacto.
+- Estados con texto, emoji, juegos/programas y detalles de Spotify cuando Discord
+  entrega esos datos. No se inventa un estado para usuarios sin datos disponibles.
+- Perfil: display name, username, fecha de creación, fecha de amistad si existe,
+  estado, bio, actividad y listas de amigos/servidores en común disponibles.
+- Miembros de grupos con estado, actividad y opción de añadir amigos.
+- Mensajes fijados y salto al mensaje; fijar/desfijar comprueba permisos.
+- Reenvío nativo con destino elegido y confirmación antes de enviarlo.
+- Búsqueda con personas, menciones, datos, canales, fechas y fijados. Tipo de autor
+  filtra los resultados cargados y se indica; no es un índice completo separado.
+- Barra inferior ampliada; sin ajustes en la esquina superior derecha.
+  La fila Voz/Pantalla sólo aparece durante una llamada o al conectarse.
+- Configuración de entrada/salida/cámara persistente, volúmenes, supresión estándar,
+  eco y pulsar para hablar con tecla configurable. El micrófono se puede probar
+  localmente, sin grabar ni enviar a una llamada, con corte a los treinta segundos.
+- Videollamada desde el botón junto al de voz en conversaciones directas/grupos.
+
+OPTIMIZACION
+Catálogos y perfiles bajo demanda; listas virtualizadas; una sola cola de dibujo
+para emojis y una caché de dos MiB. Miniaturas estáticas en los selectores; los GIF
+sólo se animan al pedirlo. Caché de imágenes de ocho MiB y caché de mensajes acotada.
+Las consultas de servidores para emojis guardan sólo tres catálogos; los catálogos
+GIF tienen límites, cancelación y caché de cuatro respuestas. No se carga Discord
+completo como una interfaz oculta. No se hicieron nuevas comparaciones RAM/CPU;
+el usuario las realizará al final.
+Los avisos de Windows tienen una cola de dieciséis y un único icono transitorio;
+las imágenes de la barra izquierda usan la misma caché de miniaturas del chat.
+No se sondean mensajes o llamadas; se reciben mediante el Gateway existente.
+Los borradores y posiciones tienen límite de 1024 conversaciones. Los adjuntos se
+preparan como archivos, sin cargarlos completos en RAM: diez por mensaje, hasta
+25 MiB cada uno y 100 MiB en total; también se aplican los límites de Discord.
+Hay un solo visor y una sola animación GIF activa compartida con el chat. El visor
+usa una previsualización de hasta 1600 píxeles; Guardar conserva los bytes originales
+(hasta 25 MiB). La carga incremental de miembros y los destinos se limitan a 2000.
+
+DATOS Y FUNCIONES CONSERVADAS
+La sesión usa DPAPI para este usuario de Windows. WebView2 sólo se abre para el
+inicio de sesión normal. Chat, voz y pantalla siguen integrados. FakeNitro usa
+alternativas de enlaces para emojis; no concede Nitro real ni quita límites de
+archivos del servidor. Historial local cifrado de cambios observados, ClearURLs,
+privados fijados y ampliación de volumen mantienen implementación propia.
+
+LIMITES ACTUALES
+La cámara saliente necesita comprobación real con un receptor; siguen pendientes
+previsualización local y reproducción del vídeo recibido. La prueba de cámara en
+ajustes requiere estar en una llamada. No se presenta una imagen ficticia.
+No hay catálogo/detector automático de juegos: el botón de actividad controla el
+ajuste de visibilidad real. Escenarios, foros/hilos completos y edición completa
+de roles/servidor siguen pendientes. El perfil depende de permisos y datos que
+Discord proporcione. Los fijados muestran los cincuenta más recientes.
+La lista de miembros de un canal privado sólo se muestra si se puede verificar
+el identificador de su lista. Si falta, se indica indisponible en vez de mostrar
+miembros de otro canal. La lista puede ser parcial y ofrece Cargar más.
+Los GIFs guardados existentes se leen hasta un máximo de 400. Nuevas estrellas e
+importaciones guardan hasta cien enlaces locales y no sincronizan hacia Discord.
+Algunos enlaces históricos dependen de la disponibilidad y metadatos del proveedor.
+Los banners dependen de los permisos de notificaciones y ajustes de Windows.
+
+DEPENDENCIAS Y DISTRIBUCION
+Se requiere .NET Desktop Runtime 9 para Windows x64. NotDiscord.Emoji.dll usa
+DirectWrite/Direct2D del sistema y va junto al ejecutable; catálogo y licencia
+Unicode se incluyen en la compilación. El host multimedia mínimo está en
+media-host/runtime y aún usa componentes de ../native-candidate/runtime.
+No borrar esa dependencia. No incluir data ni perfiles privados en un instalador.
+El instalador previo no contiene este prototipo actualizado.
+
+PRUEBAS
+Las comprobaciones automáticas usan datos ficticios y no inician dispositivos,
+llamadas, capturas ni acciones reales de cuenta. Voz y pantalla fueron confirmadas
+por el usuario antes de estos ajustes. Véase PRUEBAS-PENDIENTES.txt para comprobar
+la nueva versión con uso real.
+También se comprobaron seis lecturas reales del catálogo GIF y favoritos, sin
+enviar mensajes, cambiar la cuenta ni guardar credenciales en los informes.

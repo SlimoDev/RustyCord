@@ -1,0 +1,107 @@
+GIF catalogue and native notifications — 2026-10-20
+
+Scope
+-----
+Fix the existing native picker and Windows notification identity. Preserve the
+composer draft; choosing or importing a GIF never sends a message. No performance
+measurements, outgoing messages, Gateway connection, calls or real Windows test
+notifications were used in these checks.
+
+Original-client evidence
+------------------------
+Retained public bundle:
+E:\DESCARGAS\REA\NotDiscord\evidence\public-web\web.4d4b2f75fdea5470.js
+SHA256: 667A771C61FF709E2F0400D395A324F0A5B1B5AA89E11E263289144A12D084AE
+
+Only selected modules were extracted/parsed. The public bundle was not executed.
+module-336807: offset5027559,150bytes; provider identifier klipy, label Klipy.
+module-497685: offset597838,4360bytes; GET GIF search/trending/categories routes,
+q/locale/media_format/limit parameters, no observed cursor.
+module-821102: offset9462786,1909bytes; GIF result url/src/gif_src fields.
+module-803805: offset11099207,22453bytes; favorite_gifs protobuf field2, map1,
+URL key1 and value2, src2,width3,height4,order5.
+Module998218 allowed-host string set includes static.klipy.com and Tenor/Giphy.
+
+Bounded REA extraction receipt:
+ev_d4c4a86cfc9bb60eae929bbe1aacfa812faf5d3abe9d54c3f32b86eb13180230
+Summary:
+ev_c0038839fc4e83c5ef1ccef8c50a3cfda316499ea8a3853e8ae3ffeeb2c068b2
+Selection:3modules,6473bytes,2093ASTnodes,0parsefailures; graph remains partial.
+
+Primary reference links
+-----------------------
+https://docs.klipy.com/migrate-from-tenor/response-objects/content-formats
+https://discord.com/blog/discord-patch-notes-september-8-2026
+https://support.discord.com/hc/en-us/articles/360021235192-Sending-GIFs-on-Discord
+https://learn.microsoft.com/en-us/windows/win32/shell/enable-desktop-toast-with-appusermodelid
+https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/DesktopToasts/CPP/DesktopToastsSample.cpp
+
+Observed causes and implemented changes
+--------------------------------------
+1. The current provider is Klipy. The old media allowlist omitted it. Added only
+the observed/public media hosts and canonical /gifs share pages. Protocol-relative
+provider sources are normalized to HTTPS; suffix-host tricks remain rejected.
+2. GET GIF catalogue limit12 and24 returned HTTP400. Validated20,50,100 return200.
+Endpoint now normalizes to20/50/100. UI grows20→50→96, retaining max96. The small
+response cache retains a full accepted remote page, then trims local display;
+it cannot cache24 and silently reuse those24 for a48-result request.
+3. Windows WPF needs actual GIF data. media_format=gif with limit20 returned20
+GIF thumbnails for both trending and search. The WebM experiment returned video
+sources instead; the client retains media_format=gif.
+4. Settings protobuf base64 was truncated at4096 characters by a URL helper.
+Read the whole settings string, keeping the existing1MiB decoded size limit.
+5. Existing Discord favorites are read only. New stars remain local per account.
+Added local .txt/pasted-link import as an alternative; max100 saved local links,
+256KiB input,500examined lines. No settings writes or cloud synchronization.
+6. Known catalogue canonical-page→gif_src pairs use a128-entry,15minute cache.
+The metadata fallback does not execute scripts or guess media identifiers.
+7. Windows banners receive sender/group/channel title, ~50-grapheme preview,
+and sender avatar when available. Native48px icon reuses bounded thumbnail cache.
+8. Per-user Start Menu shortcut and AppUserModelId registration set source display
+name NotDiscord and the requested Discord icon, pointing to the actual executable.
+
+Validation
+----------
+tests-pickers:42 assertions pass, synthetic data only.
+DesktopNotifications.Tests:29 checks pass, injected fake backend; no actual banner.
+Includes the x64 NOTIFYICONDATAW and PROPVARIANT ABI sizes and native HICON
+creation from a local synthetic avatar with explicit handle cleanup.
+tests-gif-sources:26 assertions pass, offline sources/resolver checks.
+
+Official public Klipy GIF fixture previously downloaded with authorization:
+evidence/public-klipy-20261020.gif
+97672bytes,11frames,WPFposter220x168.
+SHA256:8FE114219BE0D9AFFD90F1E1F34C5B96895079366C7F865837E638B0E2AA0626
+Origin is the Klipy documentation above. This fixture proves native GIF decoding,
+not authenticated Discord catalogue availability.
+
+Authorized authenticated checks use this app's existing DPAPI credential only
+inside the probe process, call only read-only catalogue/settings endpoints, and
+record status/counts/provider hosts. They do not record credentials, raw URLs,
+message contents, favorite names or settings payloads, and never start Gateway.
+See evidence/gif-catalogue-gif20-live-20261020.json for the successful gif20 probe.
+Final exact-client-endpoint probe after the main rebuild:
+evidence/gif-catalogue-final-live-20261020.json
+evidence/gif-catalogue-final-limits-20261020.json
+Client DLL SHA256:
+59E0A98CAF2178D87DD962CE940FDB4CD713A75A0B2DF15F5753890818CF12E4
+All6GETs returned HTTP200. Trending/search each returned20actualGIF thumbnails;
+categories returned36; favorites parsed400entries(the existing bounded cap).
+Trending with50 returned50GIFs; with100 retained96GIFs at the local display cap.
+No diagnostic endpoint replacement was used. The same client Endpoint/Parse
+methods were called, without Gateway or account writes.
+
+The local favorites cap is400remote entries,100local stars/imports. New local
+stars do not synchronize back to Discord. Not every historical favorite has a
+direct GIF URL: supported share pages use bounded metadata resolution and may
+still depend on provider availability. No promise of complete historical cloud
+favorite enumeration or transcoding is made.
+
+Remaining manual checks
+----------------------
+Open GIF selector: Populares, search, categories, load more, existing Discord
+Guardados, local import; choose into an existing draft, confirm GIF animation
+after the user sends it. Check one real incoming Windows banner for avatar,
+preview, source name and click-through after app registration/restart. Windows
+may suppress banners under notification/quiet-time preferences; backend
+acceptance alone is not evidence that the user saw a banner.

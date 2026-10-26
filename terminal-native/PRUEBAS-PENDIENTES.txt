@@ -1,0 +1,111 @@
+NotDiscord — comprobaciones de uso de la actualización del 20 de octubre de 2026
+
+VOZ EN SOLITARIO, ICONO Y REENVIOS
+- Entra tú solo en una llamada privada/grupo o canal de voz. Después de conectar el
+  transporte debe indicar Conectado / esperando participantes, sin bloquear audio.
+  Habla y revisa el indicador local; silenciar debe quitarlo. No debes oírte en bucle.
+- Espera al menos dos minutos solo. No debe desconectarse por la ausencia legítima
+  de otros participantes. Prueba silenciar/ensordecer y, si lo usas, PTT.
+- Con alguien que espere la prueba, comprueba la transición a Conexión cifrada y
+  audio en ambos sentidos. Antes de esa conexión sólo hay feedback local.
+- Repite entrando con otra persona ya presente y cuando todos los demás se van.
+- Comprueba pantalla compartida durante una llamada cifrada. Si se reconstruye el
+  cifrado debe pausar y retomar sólo la misma selección. Cancelar una pausa o salir
+  debe impedir cualquier reanudación. Cámara y pantalla no arrancan sin cifrado listo.
+- Revisa los iconos de llamada/cámara con ventana normal y estrecha: mismo tamaño,
+  trazo y encuadre. En un reenvío propio no debe existir Editar ni al pasar el ratón
+  ni al hacer clic derecho; un mensaje original propio sí conserva esa opción.
+
+ULTIMAS CORRECCIONES DE INTERACCION
+- Escribe @ en un privado, grupo y canal de servidor. Comprueba que las sugerencias
+  corresponden a ese contexto; filtra por nombre/usuario, elige con ratón o Enter/Tab.
+  Elegir no envía. Shift+Enter crea otra línea. Esc cierra; navegar no pierde borrador.
+- Selecciona una mención y cambia de chat: debe conservar @nombre legible. Si editas
+  manualmente ese nombre, deja de ser una mención seleccionada. Envía sólo en un chat
+  de prueba donde quieras hacerlo; el mensaje recibido debe mostrar el nombre.
+- Revisa un mensaje que responde a otro. Su preview debe mostrar autor y texto.
+  Púlsala con el original por encima y por debajo: debe ir al original y resaltarlo.
+- Revisa scroll: entrar por primera vez al final, desplazarte, cambiar entre varios
+  chats y volver. Repite con una parte antigua. Pulsa Ir al presente para volver abajo.
+- Una actividad larga de Spotify/juego no debe hacer crecer las filas de miembros,
+  amigos o conversaciones. Debe abreviarse y mostrar detalles al pasar el ratón.
+- Oculta/muestra actividad: raya roja sólo cuando está oculta. Comprueba que sigue
+  cambiando la visibilidad real, sin iniciar un detector de juegos.
+- Abre Eliminar en un mensaje propio de prueba y cancela: la confirmación y su título
+  deben seguir tus colores. No hace falta borrar nada para verificar el diseño.
+- Entra y sal de un servidor: cabecera y título deben pasar entre servidor/NotDiscord.
+- Clic derecho sobre una imagen y elige Copiar imagen. Pégala en Paint o en un borrador,
+  sin enviar. Comprueba también transparencia PNG y el visor. Los GIFs se copian fijos.
+- Clic derecho en un miembro: perfil, chat y amistad según su relación, sin opciones
+  de fijar/silenciar/cerrar conversación. En el perfil de un no amigo debe aparecer
+  Añadir amigo; en una solicitud pendiente debe indicarse su estado. Sólo pulsa
+  Añadir amigo si realmente quieres enviar esa solicitud.
+
+1. FIJADOS Y NAVEGACION
+- En un chat largo, desplázate hacia arriba y abre fijados: debe abrir arriba y
+  mostrar primero el más recientemente fijado, aunque su mensaje original sea viejo.
+- Vuelve a pulsar fijados: debe recuperar el mismo chat y posición anterior.
+  Repite con fijados vacíos y al entrar de nuevo después de bajar por sus resultados.
+- Abre un perfil desde privado, grupo y servidor; Atrás debe conservar el contexto,
+  el borrador y el scroll. El perfil de servidor debe mostrar apodo y roles con color.
+- Clic derecho en otra conversación: sólo abre su menú, sin navegar ni leerla.
+- Comprueba que el icono de Inicio ya no se recorta.
+
+2. BORRADORES Y ADJUNTOS
+- Escribe en dos chats y cambia entre ellos: cada texto y respuesta deben conservarse.
+- Pega una captura con Ctrl+V, selecciona varios archivos y arrastra otro al chat.
+  Deben quedar en vista previa, sin enviarse. Quita uno, añade texto y cancela otro.
+- Envía sólo un mensaje de prueba a un destino que elijas. Al confirmarse, se limpia
+  ese borrador. Si escribes algo nuevo mientras se envía, no debe borrarse ese texto.
+- Cambia de chat durante el envío: no debe vaciarse el borrador del otro chat.
+- Borrar borrador debe limpiar texto, respuesta y adjuntos. Cerrar la app descarta
+  los borradores: no se guardan entre sesiones.
+
+3. PERMISOS, MIEMBROS Y REACCIONES
+- En canales existentes con distintas restricciones, comprueba ver canal/historial,
+  enviar, adjuntar, reaccionar y fijar. Los botones sin permiso explican la causa;
+  la ejecución también valida permisos. No hace falta cambiar roles para probar.
+- Revisa miembros de un servidor: jerarquía, colores, apodos, estados, emojis y
+  Cargar más. Un canal privado nunca debe mostrar miembros de otro ámbito.
+  Una lista privada sin identificador verificable se indica como indisponible.
+- Comprueba emoji, contador y selección propia en reacciones. En un mensaje de
+  prueba añade/quita tu reacción y verifica un cambio hecho desde otro cliente.
+  Sin ADD_REACTIONS debe seguir siendo posible usar un emoji ya presente si aplica.
+
+4. GIFS Y VISOR
+- Abre Populares, búsqueda, categorías y Cargar más. Revisa Guardados existentes.
+  Importa una pequeña lista de enlaces si lo deseas; nuevos guardados son locales.
+- Elige un GIF con texto ya escrito: debe añadir el enlace conservando el texto,
+  sin enviar nada. Después de enviar tú un GIF, comprueba su reproducción.
+- Amplía imagen/GIF: rueda para zoom, arrastre, Ajustar/100%, guardar y copiar enlace.
+  Comprueba también el menú contextual. Los GIFs se animan bajo demanda, uno a la vez.
+
+5. BUSQUEDA Y REENVIO
+- Combina from:, mentions:, has:image, has:file, in:, fechas y pinned:true.
+  Las personas sugeridas corresponden al chat/canal; un privado no hereda personas
+  o canales del servidor anterior. Las búsquedas no notifican a la persona filtrada.
+- Reenvía un mensaje de prueba a dos destinos elegidos. Comprueba avatares/iconos,
+  cambio entre servidores y selección acumulada; confirma sólo si quieres enviarlo.
+  No aparecen canales ocultos y los visibles sin permiso de envío están deshabilitados.
+- Cancela otro reenvío: no debe enviarse nada. El máximo es diez destinos.
+
+6. NOTIFICACIONES
+- Con NotDiscord sin foco, recibe un mensaje de alguien que colabore contigo.
+  El aviso debe decir NotDiscord, incluir su avatar y una breve vista previa.
+- En grupo o mención de servidor debe identificar también el origen. Al pulsarlo
+  abre el chat correcto; una llamada sólo se acepta mediante Unirse.
+- Comprueba los accesos de chats sin leer, contadores y prioridad de llamadas.
+  Silenciados/No molestar respetan sus ajustes. Windows debe permitir los banners.
+
+7. FUNCIONES CONSERVADAS
+- Revisa tus colores, zoom, emojis recientes (máximo diez), estados y perfiles.
+- Comprueba voz, silenciar, ensordecer, dispositivos, PTT y pantalla compartida con
+  alguien que espere la prueba. No se iniciaron llamadas ni capturas automáticas.
+- Cámara saliente sigue pendiente de confirmar con receptor. Aún no hay preview
+  local ni reproducción de vídeo entrante; no se consideran funciones terminadas.
+
+Las pruebas automáticas de esta entrega usan datos ficticios. Sólo las lecturas
+del catálogo GIF/favoritos se hicieron con conexión real. Quedan por comprobar las
+acciones anteriores con uso real. No se hicieron comparaciones de RAM/CPU, conforme
+a tu indicación de medirlas tú al final. No hace falta bloquear personas, quitar
+amistades ni abandonar servidores para probar esta actualización.

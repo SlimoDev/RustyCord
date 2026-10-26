@@ -1,0 +1,52 @@
+FATAL ERROR: v8::HandleScope::CreateHandle() Cannot create a handle without a HandleScope
+----- Native stack trace -----
+
+ 1: 00007FF693824D9B node::OnFatalError+539
+ 2: 00007FF69244DDAE v8::Function::NewInstance+558
+ 3: 00007FF6922BB555 v8::ResourceConstraints::ResourceConstraints+1141
+ 4: 00007FF692283779 uv_timer_set_repeat+88873
+ 5: 00007FF6922834E3 uv_timer_set_repeat+88211
+ 6: 00007FF6924752F1 v8::ArrayBuffer::New+81
+ 7: 00007FF6938A2C82 napi_create_arraybuffer+210
+ 8: 00007FFEF8A81CDC Discord::ReleaseNativeDesktopVideoSourcePickerStream+31324
+ 9: 00007FFEF8AC5614 napi_register_module_v1+237412
+10: 00007FFEF8A8E67D napi_register_module_v1+12237
+11: 00007FFEF8AFE350 discord::media::IsSpatialAudioAvailable+208560
+12: 00007FF6924B42AB uv_run+1851
+13: 00007FF6924B3E1F uv_run+687
+14: 00007FF69393E37F node::DecodeWrite+351
+15: 00007FF6937B3AA6 node::MultiIsolatePlatform::DisposeIsolate+292070
+16: 00007FF693887939 node::Start+3897
+17: 00007FF693941552 node::AsyncResource::CallbackScope::CallbackScope+610
+18: 00007FF693B514F4 node::AsyncResource::CallbackScope::CallbackScope+2163204
+19: 00007FFFB552DDA7 BaseThreadInitThunk+23
+20: 00007FFFB627EE4C RtlUserThreadStart+44
+FATAL ERROR: v8::HandleScope::CreateHandle() Cannot create a handle without a HandleScope
+----- Native stack trace -----
+
+ 1: 00007FF693824D9B void __cdecl node::OnFatalError(char const * __ptr64,char const * __ptr64)+539
+ 2: 00007FF69244DDAE public: class v8::MaybeLocal<class v8::Object> __cdecl v8::Function::NewInstance(class v8::Local<class v8::Context>,int,class v8::Local<class v8::Value> * __ptr64 const)const __ptr64+558
+ 3: 00007FF6922BB555 public: __cdecl v8::ResourceConstraints::ResourceConstraints(void) __ptr64+1141
+ 4: 00007FF69244EB4D public: __cdecl v8::EscapableHandleScopeBase::EscapableHandleScopeBase(class v8::Isolate * __ptr64) __ptr64+141
+ 5: 00007FF6938225BE public: void __cdecl node::MultiIsolatePlatform::DisposeIsolate(class v8::Isolate * __ptr64) __ptr64+745470
+ 6: 00007FF6938FDF7F void __cdecl node::SetCppgcReference(class v8::Isolate * __ptr64,class v8::Local<class v8::Object>,void * __ptr64)+158703
+ 7: 00007FF693824DAD void __cdecl node::OnFatalError(char const * __ptr64,char const * __ptr64)+557
+ 8: 00007FF69244DDAE public: class v8::MaybeLocal<class v8::Object> __cdecl v8::Function::NewInstance(class v8::Local<class v8::Context>,int,class v8::Local<class v8::Value> * __ptr64 const)const __ptr64+558
+ 9: 00007FF6922BB555 public: __cdecl v8::ResourceConstraints::ResourceConstraints(void) __ptr64+1141
+10: 00007FF692283779 uv_timer_set_repeat+88873
+11: 00007FF6922834E3 uv_timer_set_repeat+88211
+12: 00007FF6924752F1 public: static class v8::Local<class v8::ArrayBuffer> __cdecl v8::ArrayBuffer::New(class v8::Isolate * __ptr64,unsigned __int64,enum v8::BackingStoreInitializationMode)+81
+13: 00007FF6938A2C82 napi_create_arraybuffer+210
+14: 00007FFEF8A81CDC public: bool __cdecl Discord::ReleaseNativeDesktopVideoSourcePickerStream(void) __ptr64+31324
+15: 00007FFEF8AC5614 napi_register_module_v1+237412
+16: 00007FFEF8A8E67D napi_register_module_v1+12237
+17: 00007FFEF8AFE350 public: bool __cdecl discord::media::VideoFrameI420::ok(void)const __ptr64+208560
+18: 00007FF6924B42AB uv_run+1851
+19: 00007FF6924B3E1F uv_run+687
+20: 00007FF69393E37F __int64 __cdecl node::DecodeWrite(class v8::Isolate * __ptr64,char * __ptr64,unsigned __int64,class v8::Local<class v8::Value>,enum node::encoding)+351
+21: 00007FF6937B3AA6 public: void __cdecl node::MultiIsolatePlatform::DisposeIsolate(class v8::Isolate * __ptr64) __ptr64+292070
+22: 00007FF693887939 int __cdecl node::Start(int,char * __ptr64 * __ptr64 const)+3897
+23: 00007FF693941552 public: __cdecl node::AsyncResource::CallbackScope::CallbackScope(class node::AsyncResource * __ptr64) __ptr64+610
+24: 00007FF693B514F4 public: __cdecl node::AsyncResource::CallbackScope::CallbackScope(class node::AsyncResource * __ptr64) __ptr64+2163204
+25: 00007FFFB552DDA7 BaseThreadInitThunk+23
+26: 00007FFFB627EE4C RtlUserThreadStart+44

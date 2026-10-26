@@ -1,0 +1,28 @@
+REA source review, 18 October 2026
+
+Selected artifact:
+../native-candidate/runtime/resources/standalone_modules/discord_voice
+Selected source: index.js (22,447 text bytes parsed; no execution).
+Artifact inventory SHA-256:
+13de73b30e12ff1dc0fa116422028cdd9cb2e42cf264d73530849c3b566a93a3
+
+Root-session REA parent Evidence:
+ev_ecf06f44d297ecb677e3bcbbf6f892601c688de857683f65f8556f5b0e6a6153
+Summary receipt:
+ev_2d8f6ab28aada32a1437e5e158f79367c2e119b136c2ee008773e60aa4a19d61
+
+The older child-session Evidence reference was not retained in the root
+session. A focused source analysis was run here; it does not analyze all
+479 unselected inventoried files or decompile the native addon.
+
+A literal API feature trace for getMLSKeyPackage returned no graph seed
+match (ev_22a6641a96f1fd9ff2c6c4056bd81ac5c888fc66498b2fbf468c486fc7b22388).
+This is an extraction/coverage limit, not evidence that the API is absent.
+
+Runtime evidence comes separately from the synthetic loopback fixtures:
+voice-mls-synthetic-stderr.txt reproduces the Node V8 HandleScope abort;
+media-host-mls.json records successful MLS key generation in the compatible
+Electron main host, without a BrowserWindow or Discord's original UI.
+media-host-ipc.json and ../evidence/media-bridge-check.json cover the private
+pipe and process lifecycle. None of these fixtures establishes live audibility
+or delivery of screen video to a remote receiver.

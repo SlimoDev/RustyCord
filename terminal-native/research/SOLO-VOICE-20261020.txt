@@ -1,0 +1,45 @@
+SOLO VOICE - 2026-10-20
+
+Problem and source-backed cause
+The helper previously treated established DAVE MLS readiness as the prerequisite for local microphone selection and all call controls. A sole member legitimately has only an unestablished local group until the first peer commit/welcome. This could leave the application showing preparation indefinitely or timing out after 30 seconds despite valid UDP/authenticated transport.
+
+Primary protocol sources
+https://daveprotocol.com/#initial-group-creation
+https://daveprotocol.com/#sole-member-reset
+https://docs.discord.com/developers/topics/voice-connections
+
+Inert retained-artifact evidence; no original client code was executed
+Artifact: E:\DESCARGAS\REA\NotDiscord\evidence\public-web\web.4d4b2f75fdea5470.js
+SHA256: 667A771C61FF709E2F0400D395A324F0A5B1B5AA89E11E263289144A12D084AE
+Offsets: 2387473 DAVE join timer excludes time alone; 2513948 initial local epoch/key package; 10804918 native audio setup before MLS readiness; 10828291 speaking-while-muted callback carries no stop state; 10811440 null soundshare source maps to PID 0 and a false loopback setting.
+Native wrapper used read-only: native-candidate/runtime/resources/standalone_modules/discord_voice/index.js.
+REA skill: C:\Users\sssli\.agents\skills\reverse-engineer-anything\SKILL.md. No protected-material extraction, decryption bypass, new target execution, account traffic capture or patch to original artifacts.
+
+Implemented behavior
+1. Separate local transport readiness from encrypted-group readiness. Waiting alone enables authorized local microphone/VAD and mute/deafen/PTT controls. Native send-mute stays true, and no network speaking event is sent until accepted DAVE readiness. Camera and screen send remain unavailable before real DAVE. No version-zero or plaintext fallback.
+2. Stop the initial transport timeout once validated UDP and authenticated session description exist. Arm a separate 30-second encryption timeout only while another participant is present. Cancel it if the peer leaves. Preserve held PTT and chosen input during settings changes while waiting.
+3. Epoch-one reset clears encrypted readiness, rejects stale callbacks, stops the camera and pauses current screen/video/audio capture before resetting the epoch. Resume only the identical previously selected screen and audio choice after real DAVE. Stop/disconnect discards resume selection. Callbacks from an intentional clear while paused cannot reactivate or fail the paused capture.
+4. Desktop VoiceConnected means local call controls are usable; separate VoiceEncryptionReady gates outgoing screen/camera. ScreenPaused keeps Stop available and provides honest pause feedback. Interrupted source selection/startShare cleans the same attempt even if encryption has just dropped, without stopping a replacement attempt.
+5. Stats only gained the fixed waiting-peer state; no native stats or performance measurement was sampled.
+
+Verification on final sources
+Node helper: 31 tests passed, zero failed. Pure synthetic socket, native engine and clocks. Cases cover sole wait for 120 simulated seconds, first peer, nonzero transition ordering, peer departure/timeout, mute/deafen/PTT/local VAD, reset/stale callbacks, same-source screen/audio pause/resume, stop cancels resume, camera reset and existing protocol/downgrade/credential/statistics checks.
+C# readiness: 18 checks passed against build-ui-check/NotDiscord.Terminal.dll. Reflection invokes the production readiness mapper. An in-memory synthetic pipe drives real MediaBridge.CommandAsync serialization/completion during interrupted share and replacement cases; no helper process or device is created by this fixture.
+Legacy MediaJoin: six checks passed with FakeHttp; no real request or call.
+Legacy media recovery: 17 assertions passed with the compatible private-pipe host, capabilities/stats and shutdown only. Native initialization stages zero; no account loaded or window shown, no network, microphone, camera or screen capture.
+Parent reports main build succeeded with zero warnings/errors and 14 phone-icon/forward-edit/UI checks against both checked and published assemblies. Parent owns publication and restart.
+No real call, microphone, camera, screen capture, account action or performance benchmark was initiated for this change. Synthetic results do not establish receiver audibility or delivery. Still validate manually during an explicitly initiated call: remain alone, then have a participant join, talk with mute/deafen/PTT, and test camera/screen rekey when desired. Native source-ended events have no source identity; a very late pre-pause event arriving after resume conservatively stops the stream rather than hiding a potentially real source loss.
+
+Final SHA256 values
+8E9233FDCF1ECF0D69CFD5193A523894C8F806A41940EBAC8F1A56ABD44941B3  E:\DESCARGAS\REA\NotDiscord\terminal-native\media-helper\voice-session.cjs
+8B583D4D0076D68628A9EA5371E6FB05FD5DDFC163F11FF28FCAED013A2AA2A3  E:\DESCARGAS\REA\NotDiscord\terminal-native\media-helper\main.cjs
+F365D78DE3B60AA65D2A5A6EA0AFDB8CE193D00102D4DF1D574CA10959EDDF9A  E:\DESCARGAS\REA\NotDiscord\terminal-native\media-helper\stats.cjs
+3B86927FFE2634768FE2568A0A1686621AC421CD4EFE46128070887143AEDCA3  E:\DESCARGAS\REA\NotDiscord\terminal-native\media-helper\test.cjs
+9ADD731CEC21923B55D2C47DCEEA065E581A2975B94DA939F1E235BB0D99EBB0  E:\DESCARGAS\REA\NotDiscord\terminal-native\src\Controller.Media.cs
+549826FA73C15D21E3E147EFB5E7BE9E989CF624E5AB392808990C2F375017FB  E:\DESCARGAS\REA\NotDiscord\terminal-native\src\Contracts.cs
+F43521130C15BD7D5F322AACCAC769A215A0ACFD3ADC7897D8DA134A70209A86  E:\DESCARGAS\REA\NotDiscord\terminal-native\build-ui-check\NotDiscord.Terminal.dll
+02616B364183A2A395E534934B21452CE6C894B9C641ACE9B309452FED00A07C  E:\DESCARGAS\REA\NotDiscord\terminal-native\research\SoloVoice.Readiness.Tests.cs
+6BFBF6EA72E3A9C7999D633BFE26633CCA4A9D78B4885F58D8A18835F6C8AD5B  E:\DESCARGAS\REA\NotDiscord\terminal-native\research\solo-voice-csharp-tests-20261020.json
+4B7302CFF810B84223F76E33FF6850CEB6652FE8C7046325B1EAB57BD4CAD4F6  E:\DESCARGAS\REA\NotDiscord\terminal-native\research\solo-voice-node-tests-20261020.tap
+70C1A86392B18B8079392CA145AC3AB128F20542D1C0D243675468C87EBE5BE6  E:\DESCARGAS\REA\NotDiscord\terminal-native\tests-media-recovery\result.json
+

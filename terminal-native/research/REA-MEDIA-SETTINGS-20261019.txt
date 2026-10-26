@@ -1,0 +1,27 @@
+NotDiscord media device settings — 2026-10-19
+
+Scoped REA source: native-candidate/runtime/resources/standalone_modules/discord_voice/index.js.
+Root artifact SHA256: 13de73b30e12ff1dc0fa116422028cdd9cb2e42cf264d73530849c3b566a93a3.
+Parent Evidence: ev_ffde5020d9ac507c376064557702b08801f6c07b6f93ca97282f34c659f4d71e.
+Summary Evidence: ev_429feec47267a2b9ff9707736cd254e0a6145a2389bfff2b758c8b05a94bc5e6.
+Trace setPTTActive: ev_61de10ab3c0536acdefef789171fd810471f738856d09ad3ce61bff2c12852a3 returned no match within partial graph, not absence.
+Source selection examines index.js (22447 bytes), leaves479 inventoried files outside source scope.
+
+Additional bounded primary source reads (not runtime observations):
+index.js lines125-175 exports connection setTransportOptions and setPTTActive(active,priority,muteOverride).
+Retained public-web/web.4d4b2f75fdea5470.js:
+offset10815039 native input mode setter uses transport options; mapping near10805800 assigns VAD1, PTT2.
+offset10852938 native setLoopback(enabled,processingOptions), setEmitVADLevel2.
+offset10857743 handleVoiceActivity(level,speaking) callback.
+
+Metadata-only native addon load (no initialize, no device/network use) confirms function exports:
+setLoopback, setOnVoiceCallback, setEmitVADLevel2, getInputDevices, getOutputDevices,
+getVideoInputDevices, setInputDevice, setOutputDevice, setInputVolume, setOutputVolume.
+
+Implemented selections persist locally. No camera device is activated by settings application.
+Local mic test explicitly invokes native loopback and level callback, no VoiceConnection or socket,
+no recording. It stops on close/explicit stop/30second timeout and helper shutdown.
+PTT reads only selected VK every30ms, only during a connected PTT call; native mute overrides remain.
+Camera test is explicitly outgoing within an active call. Local preview and received video are not implemented.
+Synthetic helper tests exercise configuration validation, ratios, PTT mode, microphone stop/timeouts,
+partial failure cleanup and existing encrypted voice/camera lifecycle. They do not prove device behavior.

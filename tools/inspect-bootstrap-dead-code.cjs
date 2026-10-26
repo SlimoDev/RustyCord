@@ -1,0 +1,10 @@
+'use strict';
+const fs=require('fs'),path=require('path'),{unpack}=require('./prepare-native-bootstrap.cjs'),{parse,entryReach}=require('./prepare-native-sentry-imports.cjs');
+const root=path.resolve(__dirname,'..'),s=unpack(fs.readFileSync(path.join(root,'native-candidate/runtime/resources/_app.asar'))).files.get('bundle.js').bytes.toString('utf8');
+const a=require('internal/deps/acorn/acorn/dist/acorn');
+function enhance(s){const g=parse(s);for(const id of [24836,71804,80345]){const m=g.modules.get(id),text=s.slice(m.node.start,m.node.end),match=/var map=(\{[^;]+\});function __rspack_context\(req\)/.exec(text);if(!match)throw Error('Unknown context');const values=Object.values(JSON.parse(match[1])).map(Number);if(!values.every(x=>g.modules.has(x)))throw Error('Unknown target');m.deps.push(...values)}return g}
+const b=enhance(s),p=s.replaceAll('__webpack_require__(65681).captureException(err)','void 0'),g=enhance(p),br=entryReach(b),r=entryReach(g),removed=[...br].filter(x=>!r.has(x));let forms={},odd=[];
+function walk(n,parent){if(!n||typeof n!=='object')return;if(n.type==='Identifier'&&n.name==='__webpack_require__'){let f=parent.type;if(f==='MemberExpression')f+=':'+parent.property.name;if(f==='CallExpression')f+=parent.callee===n?':callee':':argument';forms[f]=(forms[f]||0)+1;if(!['CallExpression','MemberExpression','FunctionExpression','FunctionDeclaration'].includes(parent.type))odd.push({f,source:p.slice(parent.start,parent.end).slice(0,150)})}for(const[k,v]of Object.entries(n)){if(k==='start'||k==='end')continue;if(Array.isArray(v))v.forEach(x=>walk(x,n));else if(v&&typeof v==='object')walk(v,n)}}
+walk(g.ast,null);
+const report={beforeReach:br.size,afterReach:r.size,removed:removed.length,removedBytes:removed.reduce((n,id)=>n+g.modules.get(id).bytes,0),dynamic:g.dynamic.map(x=>({...x,reachable:x.from==='entry'||r.has(x.from)})),forms,odd};
+fs.writeFileSync(path.join(root,'evidence/native/bootstrap-sdk-dead-code-audit.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
