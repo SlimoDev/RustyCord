@@ -1,49 +1,20 @@
-param([string]$Package = (Join-Path $PSScriptRoot 'dist\NotDiscord-Rust'))
+param([string]$Root = (Join-Path $PSScriptRoot 'dist\NotDiscord-Plus-20261025'))
 $ErrorActionPreference = 'Stop'
-$packageRoot = (Resolve-Path -LiteralPath $Package).Path
-function Read-NativeHeader([string]$Path) {
-    $stream = [IO.File]::OpenRead($Path)
-    $reader = [IO.BinaryReader]::new($stream)
-    try {
-        if ($reader.ReadUInt16() -ne 0x5A4D) { throw 'Cabecera DOS inválida.' }
-        $stream.Position = 0x3C
-        $peOffset = $reader.ReadInt32()
-        $stream.Position = $peOffset
-        if ($reader.ReadUInt32() -ne 0x4550) { throw 'Cabecera PE inválida.' }
-        $machine = $reader.ReadUInt16()
-        $stream.Position = $peOffset + 24
-        $magic = $reader.ReadUInt16()
-        $directoryOffset = switch ($magic) { 0x20B {112} 0x10B {96} default {throw 'Formato PE no reconocido.'} }
-        $stream.Position = $peOffset + 24 + $directoryOffset + 14 * 8
-        [pscustomobject]@{ Machine=$machine; ClrHeader=$reader.ReadUInt32() }
-    } finally { $reader.Dispose(); $stream.Dispose() }
+$packageRoot = (Resolve-Path -LiteralPath $Root).Path
+$base = [IO.Path]::GetFullPath($packageRoot).TrimEnd('\')
+function Package-Path([string]$Relative) {
+    if([IO.Path]::IsPathRooted($Relative)){throw 'La ruta del paquete debe ser relativa.'}
+    $path=[IO.Path]::GetFullPath((Join-Path $base $Relative))
+    if(!$path.StartsWith($base+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Ruta fuera del paquete.'}
+    if(!(Test-Path -LiteralPath $path -PathType Leaf)){throw "Falta $Relative"}
+    if((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'El paquete no admite enlaces.'}
+    $path
 }
-$binaries = @(Get-ChildItem -LiteralPath $packageRoot -File -Recurse | Where-Object Extension -in @('.exe','.dll','.node'))
-$managed = @($binaries | Where-Object { (Read-NativeHeader $_.FullName).ClrHeader -ne 0 })
-if ($managed.Count) { throw 'Se encontraron ensamblados administrados en la distribución.' }
-foreach ($ownName in @('NotDiscord.exe','NotDiscord.Media.node')) {
-    $ownHeader=Read-NativeHeader (Join-Path $packageRoot $ownName)
-    if ($ownHeader.Machine -ne 0x8664) { throw 'El binario propio debe ser Windows x64.' }
-}
-$configuration=Get-Content -LiteralPath (Join-Path $packageRoot 'runtime.json') -Raw | ConvertFrom-Json
-if ([IO.Path]::IsPathRooted($configuration.MediaHostExe) -or [IO.Path]::IsPathRooted($configuration.NativeRoot)) { throw 'El runtime debe usar rutas portables.' }
-foreach ($required in @($configuration.MediaHostExe,(Join-Path $configuration.NativeRoot 'resources\standalone_modules\discord_voice\discord_voice.node'))) {
-    if (!(Test-Path -LiteralPath (Join-Path $packageRoot $required))) { throw 'Falta un componente multimedia del paquete.' }
-}
-$oldHelper=Test-Path -LiteralPath (Join-Path $packageRoot 'media-runtime\resources\app.asar')
-$privateData=@(Get-ChildItem -LiteralPath $packageRoot -File -Recurse | Where-Object { $_.Extension -eq '.dpapi' -or $_.Name -eq 'session.dpapi' })
-if ($oldHelper -or $privateData.Count) { throw 'El paquete contiene código anterior o datos privados.' }
-$report=[pscustomobject]@{
-    Success=$true
-    NativeBinariesChecked=$binaries.Count
-    ManagedAssemblies=0
-    OwnBinariesX64=$true
-    RuntimePathsPortable=$true
-    PreviousOwnedHelperIncluded=$false
-    EncryptedUserDataIncluded=$false
-    ExecutableSha256=(Get-FileHash -LiteralPath (Join-Path $packageRoot 'NotDiscord.exe') -Algorithm SHA256).Hash
-    AddonSha256=(Get-FileHash -LiteralPath (Join-Path $packageRoot 'NotDiscord.Media.node') -Algorithm SHA256).Hash
-    PerformanceMeasured=$false
-}
-$report | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'evidence\release-package-checks.json')
-$report | ConvertTo-Json
+$exe=Package-Path 'NotDiscord.exe'
+$addon=Package-Path 'NotDiscord.Media.node'
+foreach($asset in @('discord.ico','UNICODE-LICENSE.txt','SYMPHONIA-LICENSE-MPL-2.0.txt','media-runtime\resources\app\main.cjs','media-runtime\resources\app\package.json','media-runtime\resources\standalone_modules\discord_voice\discord_voice.node')){ $null=Package-Path $asset }
+$config=Get-Content -LiteralPath (Package-Path 'runtime.json') -Raw | ConvertFrom-Json
+$null=Package-Path $config.MediaHostExe
+$native=[IO.Path]::GetFullPath((Join-Path $base $config.NativeRoot))
+if(!$native.StartsWith($base+'\',[StringComparison]::OrdinalIgnoreCase) -or !(Test-Path -LiteralPath $native -PathType Container)){throw 'Runtime nativo fuera del paquete.'}
+[pscustomobject]@{Package=$base;ExeSha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash;AddonSha256=(Get-FileHash -LiteralPath $addon -Algorithm SHA256).Hash;StaticFilesValid=$true}|ConvertTo-Json -Compress

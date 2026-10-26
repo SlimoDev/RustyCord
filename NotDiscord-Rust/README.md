@@ -24,7 +24,7 @@ El motor multimedia de terceros se prepara por separado; no se incluye en Git. `
 
 El paquete nuevo se escribe en `dist/NotDiscord-Plus-20261025` y el script rechaza destinos existentes. `ABRIR_NOTDISCORD_PLUS.cmd` utiliza `data-plus/` del proyecto; el lanzador dentro del paquete utiliza `data-plus/` del paquete. No se copia automáticamente ninguna sesión ni configuración de NotDiscord. La identidad de notificaciones y el acceso del menú Inicio también son independientes.
 
-No se publican datos de usuario, credenciales, cachés, herramientas locales, paquetes compilados ni motores binarios de terceros. Los scripts históricos de empaquetado permanecen como referencia; para esta versión se utiliza `package-plus.ps1`.
+No se publican datos de usuario, credenciales, cachés, herramientas locales, paquetes compilados ni motores binarios de terceros. Para empaquetar esta versión se utiliza `package-plus.ps1` o `package.ps1`; `verify-package.ps1` comprueba solamente archivos y rutas, sin ejecutar el cliente.
 
 ## Cambios de esta rama
 
