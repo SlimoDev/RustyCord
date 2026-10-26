@@ -23,7 +23,7 @@ function Copy-PlusFile([string]$Source, [string]$Relative) {
 Copy-PlusFile $exe 'NotDiscord.exe'
 Copy-PlusFile $addon 'NotDiscord.Media.node'
 Copy-PlusFile (Join-Path $PSScriptRoot 'version.json') 'version.json'
-foreach ($item in $runtimeEntries | Where-Object { !$_.PSIsContainer }) {
+foreach ($item in $runtimeEntries | Where-Object { !$_.PSIsContainer -and $_.Extension -notin @('.log','.dmp','.tmp') }) {
     $relative = [IO.Path]::GetRelativePath($runtimeBase, $item.FullName)
     Copy-PlusFile $item.FullName (Join-Path 'media-runtime' $relative)
 }

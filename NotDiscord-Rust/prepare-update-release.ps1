@@ -26,7 +26,7 @@ $version=Get-Content -LiteralPath (Join-Path $package 'version.json') -Raw -Enco
 if ($version.schema -ne 1 -or !(($version.variant -ceq 'plus' -and $version.branch -ceq 'codex/notdiscord-plus') -or ($version.variant -ceq 'standard' -and $version.branch -ceq 'NotDiscord')) -or $version.version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') { throw 'El paquete no identifica su versión y variante.' }
 $ownNames=@('NotDiscord.exe','NotDiscord.Media.node','runtime.json','version.json','discord.ico','UNICODE-LICENSE.txt','SYMPHONIA-LICENSE-MPL-2.0.txt','media-runtime/resources/app/main.cjs','media-runtime/resources/app/package.json')
 $ownNames += $(if ($version.variant -ceq 'plus') {'ABRIR_NOTDISCORD_PLUS.cmd'} else {'ABRIR_NOTDISCORD_RUST.cmd'})
-$entries=@(Get-ChildItem -LiteralPath (Join-Path $package 'media-runtime') -Recurse -File -Force)
+$entries=@(Get-ChildItem -LiteralPath (Join-Path $package 'media-runtime') -Recurse -File -Force | Where-Object { $_.Extension -notin @('.log','.dmp','.tmp') })
 $files=[ordered]@{}
 $runtime=[ordered]@{}
 foreach($name in $ownNames){
