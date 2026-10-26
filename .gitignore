@@ -1,0 +1,4 @@
+# Only this source project is published from the surrounding local workspace.
+/*
+!/.gitignore
+!/NotDiscord-Rust/

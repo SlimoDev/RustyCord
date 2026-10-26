@@ -1,5 +1,50 @@
 use super::*;
 
+/// Small session-only cache. A Gateway gap or a permission/catalog event
+/// invalidates it; old ACL metadata is never used as an offline fallback.
+#[derive(Default)]
+pub(super) struct GuildCatalogCache {
+    entries: HashMap<String,(Instant,Value)>,
+    revision: u64,
+}
+impl GuildCatalogCache {
+    pub(super) fn clear(&mut self){self.entries.clear();self.revision=self.revision.wrapping_add(1);}
+    pub(super) fn get(&self,guild:&str)->Option<Value>{
+        let (_,value)=self.entries.get(guild).filter(|(at,_)|at.elapsed()<Duration::from_secs(30))?;
+        let mut value=value.clone();value["cachedCatalogRevision"]=json!(self.revision);Some(value)
+    }
+    pub(super) fn current(&self,value:&Value)->bool{
+        value.get("cachedCatalogRevision").is_none_or(|revision|
+            revision.as_u64()==Some(self.revision) && self.entries.get(&s(&value["guild"],"id"))
+                .is_some_and(|(at,_)|at.elapsed()<Duration::from_secs(30)))
+    }
+    pub(super) fn store(&mut self,guild:&str,me:&str,value:&Value){
+        if s(&value["guild"],"id")!=guild || s(&value["member"]["user"],"id")!=me
+            || !value["guild"]["roles"].is_array() || !value["member"]["roles"].is_array()
+            || value["channels"].as_array().is_none_or(|channels|channels.len()>2000)
+            || value.to_string().len()>2*1024*1024{return;}
+        self.entries.remove(guild);
+        while self.entries.len()>=4{
+            let Some(oldest)=self.entries.iter().min_by_key(|(_, (at,_))|*at).map(|(id,_)|id.clone())else{break;};
+            self.entries.remove(&oldest);
+        }
+        let mut value=value.clone();
+        if let Some(object)=value.as_object_mut(){object.remove("cachedCatalogRevision");}
+        self.entries.insert(guild.into(),(Instant::now(),value));
+    }
+    pub(super) fn observe(&mut self,kind:&str,value:&Value,me:&str){
+        let relevant=kind.starts_with("CHANNEL_")||kind.starts_with("THREAD_")||kind.starts_with("GUILD_ROLE_")
+            || matches!(kind,"GUILD_CREATE"|"GUILD_UPDATE"|"GUILD_DELETE")
+            || matches!(kind,"GUILD_MEMBER_UPDATE"|"GUILD_MEMBER_REMOVE")&&s(&value["user"],"id")==me;
+        if !relevant{return;}
+        let guild=if matches!(kind,"GUILD_CREATE"|"GUILD_UPDATE"|"GUILD_DELETE"){s(value,"id")}else{s(value,"guild_id")};
+        // An event without a guild cannot safely be matched against a cache
+        // of another visited server. Prefer a new guarded read in that case.
+        if guild.is_empty(){self.clear();}
+        else{self.entries.remove(&guild);self.revision=self.revision.wrapping_add(1);}
+    }
+}
+
 /// Gateway changes received while the three REST guild reads are in flight.
 /// Replaying them before computing ACL avoids dropping new channels and also
 /// avoids restoring permissions which a newer role/channel event revoked.

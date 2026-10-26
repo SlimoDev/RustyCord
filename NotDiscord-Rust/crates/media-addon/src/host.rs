@@ -289,6 +289,11 @@ fn valid_pipe(pipe: &str) -> bool {
     (id.len() == 32 || id.len() == 36) && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
 }
 impl Host {
+    /// Picker and start share one freshness policy without refreshing it.
+    pub(crate) fn source_is_listed(&self, source: &str) -> bool {
+        self.inventories.get("sources").is_some_and(|(at,ids)|
+            at.elapsed() < Duration::from_secs(600) && ids.contains(source))
+    }
     fn emit(&self, value: Value) {
         let _ = self.output.send(value);
     }
@@ -849,9 +854,7 @@ impl Host {
                     ));
                 }
                 let selection = ShareSelection::parse(p)?;
-                if !self.inventories.get("sources").is_some_and(|(at, ids)| {
-                    at.elapsed() < Duration::from_secs(600) && ids.contains(&selection.source)
-                }) {
+                if !self.source_is_listed(&selection.source) {
                     return Err(MediaError::new(
                         "SOURCE_NOT_LISTED",
                         "Open the source picker again and select an available source.",

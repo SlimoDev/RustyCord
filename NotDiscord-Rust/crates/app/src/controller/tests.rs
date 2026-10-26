@@ -51,7 +51,8 @@ async fn edits_restore_previous_text_after_focus_refresh_without_a_delete_and_un
     c.complete(UiAction::id("__messages","20"),json!({"channel":{"id":"20","type":1},"messages":[{"id":"101","channel_id":"20","content":"Received concurrently with deletion"}]})).await.unwrap();
     assert!(c.state.messages.iter().any(|message|message.id=="101"&&message.deleted&&message.content=="Received concurrently with deletion"));
     let mut again=UiAction::new("__present");again.channel_id="20".into();c.complete(again,json!([])).await.unwrap();
-    assert!(c.state.messages.iter().any(|message|message.id=="101"&&message.deleted));
+    assert!(c.state.messages.is_empty());
+    assert!(c.features.history("20",100).unwrap().iter().any(|message|message.id=="101"&&message.deleted));
 }
 #[tokio::test]
 async fn older_page_request_tokens_finish_on_success_busy_end_wrong_channel_and_error() {
@@ -66,19 +67,19 @@ async fn older_page_request_tokens_finish_on_success_busy_end_wrong_channel_and_
     assert_eq!(completed,vec![("busy-token".into(),"20".into()),("end-token".into(),"20".into()),("cross-token".into(),"21".into()),("success-token".into(),"20".into()),("error-token".into(),"20".into())]);
 }
 #[tokio::test]
-async fn pagination_uses_the_loaded_server_window_even_when_an_older_deleted_row_is_restored() {
+async fn pagination_and_visible_rows_stay_inside_the_loaded_server_interval() {
     let (mut c,_)=Controller::test_fixture();selected(&mut c);
     c.features.record(&message("100"),true).unwrap();
     c.cache.replace("20",(1000..1050).map(|id|{let mut row=message(&id.to_string());row.timestamp=format!("2026-10-23T10:{:02}:{:02}Z",id/60,id%60).parse().unwrap();row}).collect());
     c.refresh_messages();
-    assert_eq!(c.state.messages.first().unwrap().id,"100");
+    assert_eq!(c.state.messages.first().unwrap().id,"1000");
     assert_eq!(c.older_page_route("20"),"channels/20/messages?limit=50&before=1000");
     let page=(950..1000).map(|id|json!({"id":id.to_string(),"channel_id":"20","content":"Known older server row","timestamp":format!("2026-10-23T10:{:02}:{:02}Z",id/60,id%60)})).collect::<Vec<_>>();
     let mut completion=UiAction::id("__older","synthetic-pagination-frontier");completion.channel_id="20".into();
     c.complete(completion,json!(page)).await.unwrap();
     assert_eq!(c.older_page_route("20"),"channels/20/messages?limit=50&before=950");
-    assert!(c.state.messages.iter().any(|message|message.id=="100"&&message.deleted));
-    assert_eq!(c.state.messages.iter().filter(|message|message.id=="100").count(),1);
+    assert!(!c.state.messages.iter().any(|message|message.id=="100"));
+    assert!(c.features.history("20",100).unwrap().iter().any(|message|message.id=="100"&&message.deleted));
     assert!(c.api.is_none()&&c.gateway.is_none());
 }
 #[tokio::test]
@@ -95,9 +96,10 @@ async fn known_pin_and_search_payloads_outside_the_chat_cache_keep_edits_deletio
         assert_eq!(c.older_page_route("20"),"channels/20/messages?limit=50&before=1000");
         c.cache.clear();c.state.view="chat".into();
         let mut refresh=UiAction::new("__present");refresh.channel_id="20".into();c.complete(refresh,json!([])).await.unwrap();
-        assert_eq!(c.state.messages.len(),1);let restored=&c.state.messages[0];
-        assert!(restored.deleted&&restored.edited&&!restored.pinned);assert_eq!(restored.content,"Known latest edit");
-        assert_eq!(restored.previous_contents,vec!["Fixture"]);assert_eq!(restored.author.id,"30");
+        assert!(c.state.messages.is_empty());
+        let history=c.features.history("20",100).unwrap();let restored=history.iter().rev().find(|message|message.id=="100"&&message.deleted).unwrap();
+        assert!(restored.deleted&&restored.edited);assert_eq!(restored.content,"Known latest edit");
+        assert!(history.iter().any(|message|message.id=="100"&&message.content=="Fixture"));assert_eq!(restored.author.id,"30");
         assert_eq!(restored.reply_to.as_deref(),Some("90"));assert_eq!(restored.attachments.len(),1);
         assert!(c.api.is_none()&&c.gateway.is_none());
     }

@@ -6,6 +6,12 @@ mod avatar_cache;
 mod image_spool;
 #[path = "resources/custom_animation.rs"]
 mod custom_animation;
+#[path = "resources/animation_clock.rs"]
+mod animation_clock;
+#[path = "resources/media_demand.rs"]
+mod media_demand;
+#[path = "resources/profile_banner.rs"]
+mod profile_banner;
 use avatar_cache::AvatarCache;
 use image_spool::{DecodeGate, DecodePermit, EncodedSpool};
 use std::{
@@ -40,6 +46,7 @@ enum PictureSource {
 }
 struct PictureRequest {
     generation: u64,
+    lease: u64,
     key: String,
     source: PictureSource,
     side: u32,
@@ -96,6 +103,10 @@ struct EmojiSection {
     external_hover: bool,
 }
 pub struct Pictures {
+    request_admission: bool,
+    provisional_frame: bool,
+    demand: media_demand::Demand,
+    banners: profile_banner::Cache,
     download_limit: Arc<AtomicU64>,
     visual_suspended: Arc<AtomicBool>,
     suspended_animation: Option<String>,
@@ -105,8 +116,8 @@ pub struct Pictures {
     textures: HashMap<String, (TextureHandle, usize, u64)>,
     pending: HashSet<String>,
     failed: HashMap<String, (Instant, String)>,
-    request: mpsc::SyncSender<PictureRequest>,
-    ready: mpsc::Receiver<(u64, String, PictureResult, DecodePermit)>,
+    request: media_demand::Queue<PictureRequest>,
+    ready: mpsc::Receiver<(u64, u64, String, PictureResult, DecodePermit)>,
     local_sources: HashMap<String, PathBuf>,
     paste_request: mpsc::SyncSender<(String, String, PathBuf)>,
     paste_ready: mpsc::Receiver<PastedAttachment>,
@@ -115,7 +126,7 @@ pub struct Pictures {
     used: usize,
     pub animation: Option<Animation>,
     animation_request: mpsc::SyncSender<(u64, String)>,
-    animation_ready: mpsc::Receiver<(u64, String, Result<AnimationFrames, String>)>,
+    animation_ready: mpsc::Receiver<(u64, String, Result<AnimationFrames, String>, DecodePermit)>,
     animation_pending: Option<(u64, String)>,
     animation_failed: Option<(String, String)>,
     animation_generation: Arc<AtomicU64>,
@@ -123,6 +134,7 @@ pub struct Pictures {
     large: Option<(String, TextureHandle)>,
     avatar_sources: HashMap<String, (String, u64)>,
     avatar_cache: Arc<Mutex<Option<Arc<AvatarCache>>>>,
+    animation_clock: Option<animation_clock::AnimationClock>,
     #[cfg(test)]
     decode_gate: Arc<DecodeGate>,
 }
@@ -183,6 +195,8 @@ pub struct Animation {
 impl Drop for Pictures {
     fn drop(&mut self) {
         self.stop();
+        self.demand.clear();
+        self.request.close();
     }
 }
 fn allowed(value: &str) -> bool {
@@ -710,6 +724,8 @@ impl Pictures {
         self.image_generation.fetch_add(1, Ordering::AcqRel);
         self.pending.clear();
         self.failed.clear();
+        self.banners.clear();
+        self.custom_animations.clear();
         self.stop();
     }
     #[cfg(any(test, feature = "offline-probes"))]
@@ -759,6 +775,7 @@ impl Pictures {
         self.failed.remove(&key);
         let request = PictureRequest {
             generation: self.image_generation.load(Ordering::Acquire),
+            lease: self.demand.mark(&key).0,
             key: key.clone(),
             source: PictureSource::Local(path),
             side: 1600,
@@ -769,26 +786,28 @@ impl Pictures {
     }
     pub fn new(ctx: egui::Context) -> Self {
         let download_limit = Arc::new(AtomicU64::new(super::media_limit::bytes(super::media_limit::DEFAULT_MIB)));
-        let (request, rx) = mpsc::sync_channel::<PictureRequest>(64);
+        let request = media_demand::Queue::<PictureRequest>::default();
+        let demand = media_demand::Demand::default();
+        let visible = demand.observer();
         let (done, ready) = mpsc::sync_channel(1);
         let image_generation = Arc::new(AtomicU64::new(0));
         let admission = Arc::new(DecodeGate::default());
         let avatar_cache = Arc::new(Mutex::new(None::<Arc<AvatarCache>>));
-        let rx = Arc::new(Mutex::new(rx));
         for _ in 0..3 {
-            let rx = rx.clone();
+            let rx = request.clone();
             let done = done.clone();
             let ctx = ctx.clone();
             let epoch = image_generation.clone();
             let admission = admission.clone();
             let avatar_cache = avatar_cache.clone();
             let download_limit = download_limit.clone();
+            let visible = visible.clone();
             std::thread::spawn(move || {
                 loop {
-                    let Ok(request) = rx.lock().unwrap().recv() else {
-                        break;
-                    };
-                    if epoch.load(Ordering::Acquire) != request.generation {
+                    let Some(request) = rx.recv() else { break; };
+                    let cancelled = || epoch.load(Ordering::Acquire) != request.generation
+                        || !visible.live(&request.key, request.lease);
+                    if cancelled() {
                         continue;
                     }
                     let cache = avatar_cache
@@ -799,22 +818,22 @@ impl Pictures {
                     // each retaining an encoded body plus a finished bitmap.
                     let prepared = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         prepare_source(&request.source, cache.as_deref(), download_limit.load(Ordering::Acquire), || {
-                            epoch.load(Ordering::Acquire) != request.generation
+                            cancelled()
                         })
                     }))
                     .unwrap_or_else(|_| Err("No se pudo preparar esta imagen.".into()));
                     let Some(permit) =
-                        admission.acquire(|| epoch.load(Ordering::Acquire) != request.generation)
+                        admission.acquire(cancelled)
                     else {
                         continue;
                     };
                     let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||prepared.and_then(|prepared| decode_prepared(prepared, request.side, cache.as_deref()))))
                         .unwrap_or_else(|_|Err("No se pudo decodificar esta imagen. La aplicación puede seguir usándose.".into()));
-                    if epoch.load(Ordering::Acquire) != request.generation {
+                    if cancelled() {
                         continue;
                     }
                     if done
-                        .send((request.generation, request.key, out, permit))
+                        .send((request.generation, request.lease, request.key, out, permit))
                         .is_err()
                     {
                         break;
@@ -829,19 +848,21 @@ impl Pictures {
         let animation_generation = Arc::new(AtomicU64::new(0));
         let epoch = animation_generation.clone();
         let animation_limit = download_limit.clone();
+        let animation_gate = admission.clone();
         std::thread::spawn(move || {
             while let Ok((generation, url)) = rx.recv() {
                 if epoch.load(Ordering::Acquire) != generation {
                     continue;
                 }
-                let frames = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| download_bytes_cancellable(&url, animation_limit.load(Ordering::Acquire), || epoch.load(Ordering::Acquire) != generation)
-                    .and_then(|bytes| {
+                let downloaded = download_bytes_cancellable(&url, animation_limit.load(Ordering::Acquire), || epoch.load(Ordering::Acquire) != generation);
+                let Some(permit) = animation_gate.acquire(|| epoch.load(Ordering::Acquire) != generation) else { continue; };
+                let frames = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| downloaded.and_then(|bytes| {
                         decode_animation_checked(&bytes, || {
                             epoch.load(Ordering::Acquire) != generation
                         })
                     }))).unwrap_or_else(|_|Err("No se pudo decodificar este GIF. Puedes reintentar o abrir el original.".into()));
                 if epoch.load(Ordering::Acquire) != generation { continue; }
-                if done.send((generation, url, frames)).is_err() {
+                if done.send((generation, url, frames, permit)).is_err() {
                     break;
                 }
                 wake.request_repaint();
@@ -867,10 +888,14 @@ impl Pictures {
             }
         });
         Self {
+            request_admission: true,
+            provisional_frame: false,
+            demand,
+            banners: profile_banner::Cache::new(admission.clone(), download_limit.clone()),
             download_limit,
             visual_suspended: Arc::new(AtomicBool::new(false)),
             suspended_animation: None,
-            custom_animations: custom_animation::Cache::default(),
+            custom_animations: custom_animation::Cache::new(admission.clone()),
             message_animation: None,
             emoji_sections: Vec::new(),
             textures: HashMap::new(),
@@ -894,6 +919,7 @@ impl Pictures {
             large: None,
             avatar_sources: HashMap::new(),
             avatar_cache,
+            animation_clock: None,
             #[cfg(test)]
             decode_gate: admission,
         }
@@ -903,11 +929,14 @@ impl Pictures {
             while self.ready.try_recv().is_ok() {}
             while self.animation_ready.try_recv().is_ok() {}
             self.custom_animations.finish_frame(true);
+            self.banners.clear();
             return;
         }
         self.custom_animations.poll(ctx);
-        while let Ok((generation, url, result, _permit)) = self.ready.try_recv() {
-            if generation != self.image_generation.load(Ordering::Acquire) {
+        self.banners.poll(ctx);
+        while let Ok((generation, lease, url, result, _permit)) = self.ready.try_recv() {
+            if generation != self.image_generation.load(Ordering::Acquire)
+                || !self.demand.observer().live(&url, lease) {
                 continue;
             }
             self.pending.remove(&url);
@@ -958,7 +987,7 @@ impl Pictures {
                 self.failed.insert(url, (Instant::now(), error));
             }
         }
-        while let Ok((generation, url, decoded)) = self.animation_ready.try_recv() {
+        while let Ok((generation, url, decoded, _permit)) = self.animation_ready.try_recv() {
             if self.animation_pending.as_ref() != Some(&(generation, url.clone())) {
                 continue;
             }
@@ -990,6 +1019,7 @@ impl Pictures {
                     index: 0,
                     next,
                 });
+                self.animation_clock = Some(animation_clock::AnimationClock::new(Instant::now()));
             }
         }
     }
@@ -1146,6 +1176,7 @@ impl Pictures {
         source: PictureSource,
         side: u32,
     ) -> Option<TextureHandle> {
+        let demand = self.request_admission.then(|| self.demand.mark(&key));
         self.clock += 1;
         if let Some((key_large, texture)) = &self.large {
             if *key_large == key {
@@ -1161,14 +1192,16 @@ impl Pictures {
             && !self.pending.contains(&key)
             && self.pending.len() < 64
             && !self.visuals_suspended()
+            && self.request_admission
         {
             let request = PictureRequest {
                 generation: self.image_generation.load(Ordering::Acquire),
+                lease: demand.unwrap().0,
                 key: key.clone(),
                 source,
                 side,
             };
-            if self.request.try_send(request).is_ok() {
+            if self.request.send(request, demand.unwrap().1).is_ok() {
                 self.pending.insert(key);
             }
         }
@@ -1242,15 +1275,57 @@ impl Pictures {
             response
         }
     }
+    pub(super) fn profile_banner(
+        &mut self, ui: &mut egui::Ui, person: &notdiscord_core::models::Person,
+        details: Option<&notdiscord_core::models::ProfileDetails>, allow_animation: bool,
+    ) {
+        let width = ui.available_width().clamp(1., 780.);
+        let size = egui::vec2(width, (width * 0.4).clamp(80., 220.));
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+        if !ui.is_rect_visible(rect) { return; }
+        let guild = details.filter(|p| !p.guild_banner_hash.is_empty()
+            && !p.guild_id.is_empty() && p.guild_id.bytes().all(|b| b.is_ascii_digit()));
+        let hash = guild.map(|p| p.guild_banner_hash.as_str()).or_else(|| details.map(|p| p.banner_hash.as_str())).unwrap_or("");
+        let color = guild.and_then(|p| p.guild_banner_color).or_else(|| details.and_then(|p| p.banner_color));
+        let fallback = color.map(|n| egui::Color32::from_rgb((n >> 16) as u8, (n >> 8) as u8, n as u8))
+            .unwrap_or_else(|| avatar_color(&person.id));
+        ui.painter().rect_filled(rect, 6., fallback);
+        let body = hash.strip_prefix("a_").unwrap_or(hash);
+        if !self.request_admission || body.len() != 32 || !body.bytes().all(|b| b.is_ascii_hexdigit())
+            || person.id.is_empty() || !person.id.bytes().all(|b| b.is_ascii_digit()) { return; }
+        let prefix = if let Some(profile) = guild {
+            format!("https://cdn.discordapp.com/guilds/{}/users/{}/banners/{hash}", profile.guild_id, person.id)
+        } else { format!("https://cdn.discordapp.com/banners/{}/{hash}", person.id) };
+        let poster = format!("{prefix}.png?size=1024");
+        let mut texture = self.texture_sized(&poster, (width * ui.ctx().pixels_per_point()).ceil() as u32);
+        if hash.starts_with("a_") {
+            let animation = format!("{prefix}.gif?size=1024");
+            if !self.visuals_suspended() {
+                let hovered = allow_animation && response.hovered();
+                if let Some(animated) = self.banners.texture(ui.ctx(), &animation, hovered) { texture = Some(animated); }
+            }
+            if let Some(error) = self.banners.error(&animation) { response.on_hover_text(error); }
+        }
+        if let Some(texture) = texture {
+            let source = texture.size_vec2();
+            let ratio = (size.x / size.y) / (source.x / source.y).max(0.0001);
+            let extent = if ratio > 1. { egui::vec2(1., 1. / ratio) } else { egui::vec2(ratio, 1.) };
+            ui.painter().image(texture.id(), rect, egui::Rect::from_center_size(egui::pos2(0.5, 0.5), extent), egui::Color32::WHITE);
+        }
+    }
     pub fn stop(&mut self) {
         self.image_generation.fetch_add(1, Ordering::AcqRel);
         self.pending.clear();
+        self.stop_animation();
+        self.large = None;
+    }
+    fn stop_animation(&mut self) {
         self.animation_generation.fetch_add(1, Ordering::AcqRel);
         self.animation = None;
+        self.animation_clock = None;
         self.animation_pending = None;
         self.animation_failed = None;
         self.suspended_animation = None;
-        self.large = None;
     }
     pub(super) fn visual_suspension(&self) -> Arc<AtomicBool> { self.visual_suspended.clone() }
     pub(super) fn visuals_suspended(&self) -> bool { self.visual_suspended.load(Ordering::Acquire) }
@@ -1263,6 +1338,7 @@ impl Pictures {
             self.stop();
             self.suspended_animation = resume;
             self.custom_animations.clear();
+            self.banners.clear();
         }
     }
     pub(super) fn release_viewer(&mut self, url: &str, local: Option<&Path>) {
@@ -1280,6 +1356,8 @@ impl Pictures {
     pub fn clear_account(&mut self) {
         self.stop();
         self.custom_animations.clear();
+        self.banners.clear();
+        self.demand.clear();
         self.textures = HashMap::new();
         self.pending = HashSet::new();
         self.failed = HashMap::new();
@@ -1295,7 +1373,9 @@ impl Pictures {
         *self.avatar_cache.lock().unwrap_or_else(|e| e.into_inner()) = cache;
     }
     pub fn play(&mut self, _ctx: &egui::Context, url: String) {
-        self.stop();
+        // The explicit GIF player owns only its animation. Starting it must
+        // not invalidate visible avatars, profile banners or another owner.
+        self.stop_animation();
         if self.visuals_suspended() { self.suspended_animation = Some(url); return; }
         let generation = self.animation_generation.load(Ordering::Acquire);
         if self
@@ -1324,6 +1404,9 @@ impl Pictures {
     }
     pub fn animated(&mut self, ctx: &egui::Context, url: &str) -> Option<TextureHandle> {
         if self.visuals_suspended() { return None; }
+        if !self.request_admission {
+            return self.animation.as_ref().filter(|a| a.url == url).and_then(|a| a.frames.get(a.index)).map(|frame| frame.0.clone());
+        }
         // Only resume a user-selected GIF when its surface is visible again.
         // A removed message or closed viewer must not restart a hidden decode.
         if self.suspended_animation.as_deref() == Some(url) {
@@ -1345,15 +1428,16 @@ impl Pictures {
             return None;
         }
         self.animation_seen = true;
-        if Instant::now() >= a.next {
-            a.index = (a.index + 1) % a.frames.len();
-            a.next = Instant::now() + a.frames[a.index].1;
-        }
-        ctx.request_repaint_after(a.next.saturating_duration_since(Instant::now()));
+        let now = Instant::now();
+        let clock = self.animation_clock.get_or_insert_with(|| animation_clock::AnimationClock::new(now));
+        let (index, after) = clock.frame(now, a.frames.iter().map(|frame| frame.1), 30);
+        a.index = index;
+        a.next = now + after;
+        ctx.request_repaint_after(after);
         Some(a.frames[a.index].0.clone())
     }
     pub fn animated_emoji(&mut self, ctx: &egui::Context, url: &str) -> Option<TextureHandle> {
-        if self.visuals_suspended() { return None; }
+        if self.visuals_suspended() || !self.request_admission { return None; }
         self.custom_animations.texture(ctx, url)
     }
     pub fn custom_emoji_playing(&self) -> bool {
@@ -1373,7 +1457,7 @@ impl Pictures {
         if let Some(parent)=self.emoji_sections.last_mut() { parent.external_hover |= section.external_hover; parent.paints.extend(section.paints); return; }
         let hovered=ui.is_enabled() && !ui.ctx().input(|input|input.viewport().minimized.unwrap_or(false))
             && (section.external_hover || ui.rect_contains_pointer(rect.intersect(ui.clip_rect())));
-        if !hovered {return;}
+        if !hovered || !self.request_admission {return;}
         for painted in section.paints {
             if !painted.rect.intersects(painted.painter.clip_rect()) {continue;}
             if let Some(texture)=self.custom_animations.texture(ui.ctx(),&painted.url) {
@@ -1389,6 +1473,11 @@ impl Pictures {
         self.message_animation = None;
     }
     pub fn begin_frame(&mut self) {
+        self.request_admission = true;
+        self.provisional_frame = false;
+        self.demand.begin();
+        self.demand.owner("ui", 0);
+        self.banners.begin_frame();
         self.animation_seen = false;
         self.message_animation = None;
         self.emoji_sections.clear();
@@ -1396,11 +1485,29 @@ impl Pictures {
     }
     pub fn finish_frame(&mut self, minimized: bool) {
         self.set_visual_suspended(minimized);
+        // A discarded scroll/layout pass did not observe the final viewport.
+        // Its absent demand cannot revoke the previous visible leases or stop
+        // an animation. The next real pass replaces demand atomically.
+        if self.provisional_frame && !minimized { return; }
+        self.demand.finish();
+        let visible = self.demand.observer();
+        self.pending.retain(|key| visible.contains(key));
+        let generation = self.image_generation.load(Ordering::Acquire);
+        self.request.retain(|request| request.generation == generation && visible.live(&request.key, request.lease));
+        self.banners.finish_frame(minimized);
         self.custom_animations.finish_frame(minimized);
         if !minimized && self.animation.is_some() && !self.animation_seen {
-            self.stop();
+            self.stop_animation();
         }
     }
+    /// Measurement and discarded layout passes can reuse decoded textures but
+    /// may not register demand, download, decode or start animations.
+    pub(super) fn set_request_admission(&mut self, enabled: bool) {
+        self.request_admission = enabled;
+        self.provisional_frame |= !enabled;
+    }
+    pub(super) fn request_admitted(&self) -> bool { self.request_admission && !self.visuals_suspended() }
+    pub(super) fn set_media_owner(&mut self, owner: &str, priority: u8) { self.demand.owner(owner, priority); }
 }
 #[cfg(test)]
 fn decode_animation_bytes(bytes: &[u8], cancelled: impl Fn() -> bool) -> AnimationFrames {
@@ -1465,7 +1572,7 @@ fn decode_animation_checked(
         }
         let Ok(f) = frame else { return Err("Decodificación GIF: datos de imagen dañados.".into()) };
         let delay = f.delay().numer_denom_ms();
-        let delay = Duration::from_millis((delay.0 / delay.1.max(1)).clamp(20, 10_000) as u64);
+        let delay = Duration::from_millis((delay.0 / delay.1.max(1)).clamp(10, 10_000) as u64);
         let image = f.into_buffer();
         if image.width() != w || image.height() != h {
             return Err("Decodificación GIF: dimensiones inconsistentes.".into());

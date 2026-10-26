@@ -9,6 +9,7 @@ mod notification_activation;
 mod game_activity;
 mod guild_settings;
 mod member_moderation;
+mod member_list_state;
 mod group_members;
 #[cfg(test)]
 mod network_safety_tests;
@@ -130,6 +131,7 @@ pub struct Controller {
     guild_acl: Option<GuildAccess>,
     guild_raw: Value,
     guild_load: channel_catalog::GuildLoad,
+    guild_catalog_cache: channel_catalog::GuildCatalogCache,
     self_member: Value,
     picker: Option<PickerHistory>,
     premium: i32,
@@ -147,6 +149,7 @@ pub struct Controller {
     guild_member_slots: Vec<Option<ChannelMember>>,
     member_list_id: String,
     member_range: usize,
+    member_range_start: usize,
     media: Option<MediaBridge>,
     media_preferences: MediaPreferences,
     voice_channel: String,
@@ -177,7 +180,7 @@ pub struct Controller {
     login_pending: bool,
     send_typing: bool,
     member_demand: Option<(String, String)>,
-    member_subscription: Option<(String, String, i32)>,
+    member_subscription: Option<(String, String, i32, i32)>,
     read_acks: request_policy::AckBatch,
     sidebar_seed: Value,
     sidebar_wait: Option<Instant>,
@@ -240,7 +243,7 @@ pub async fn run(
         tokio::select! {
             action=actions.recv()=>match action{Some(action)=>{if action.kind=="shutdown"{break}if let Err(error)=c.act(action.clone()).await{c.action_error(&action,error)}},None=>break},
             done=replies.recv()=>if let Some(done)=done{if c.accepts(&done){if let Some(credential)=done.credential {c.login_pending=false;c.disconnect().await;c.connect_secret(credential.into_secret());}else{match done.result{Ok(value)=>if let Err(error)=c.complete(done.action.clone(),value).await{c.complete_failed(&done.action).await;c.completion_error(&done.action,error)},Err(error)=>{c.complete_failed(&done.action).await;c.completion_error(&done.action,error)}}}}},
-            event=async{match &mut c.gateway_rx{Some(rx)=>rx.recv().await,None=>std::future::pending().await}}=>match event{Some(GatewayEvent::Dispatch{kind,data})=>{if let Err(error)=c.dispatch(&kind,data).await{c.error(error)}},Some(GatewayEvent::Status(status))=>{c.state.connection=status;c.publish();},Some(GatewayEvent::Safety(state))=>{if let Some(api)=&c.api {api.safety().block(state);}},None=>{c.gateway_rx=None;}},
+            event=async{match &mut c.gateway_rx{Some(rx)=>rx.recv().await,None=>std::future::pending().await}}=>match event{Some(GatewayEvent::Dispatch{kind,data})=>{if let Err(error)=c.dispatch(&kind,data).await{c.error(error)}},Some(GatewayEvent::Status(status))=>{c.guild_catalog_cache.clear();c.state.connection=status;c.publish();},Some(GatewayEvent::Safety(state))=>{if let Some(api)=&c.api {api.safety().block(state);}},None=>{c.gateway_rx=None;}},
             _=clock.tick()=>{c.tick().await;},
         }
         c.sync_network_safety().await;
@@ -302,6 +305,7 @@ impl Controller {
             guild_acl: None,
             guild_raw: Value::Null,
             guild_load: Default::default(),
+            guild_catalog_cache: Default::default(),
             self_member: Value::Null,
             picker: None,
             premium: 0,
@@ -318,6 +322,7 @@ impl Controller {
             guild_member_slots: Vec::new(),
             member_list_id: String::new(),
             member_range: 99,
+            member_range_start: 0,
             media: None,
             media_preferences: preferences,
             voice_channel: String::new(),
@@ -419,7 +424,7 @@ impl Controller {
         if action.kind == "__marked-read" && action.extra == "automatic" {
             self.read_acks.complete(&action.id);
         }
-        if action.kind == "__messages" {
+        if matches!(action.kind.as_str(), "__messages" | "__older" | "__present" | "__jump-message") {
             self.loading_channel.clear();
             self.pending_deltas.clear();
             self.pending_delta_bytes = 0;
@@ -480,6 +485,7 @@ impl Controller {
         }
         self.reset_navigation();
         self.state.selected_channel_id=channel.into();
+        self.cache.set_active(channel);
         self.last_guild_channels.insert(self.state.selected_guild_id.clone(),channel.into());
         self.state.channel_name=nav.name;
         self.state.selected_channel_kind=nav.kind;
@@ -532,6 +538,7 @@ impl Controller {
         self.pending_delta_bytes = 0;
         self.loading_channel.clear();
         self.state.focus_message_id.clear();
+        self.state.message_window = MessageWindow::default();
     }
     fn data(&self, name: &str, value: Value) {
         let _ = self.updates.send(UiUpdate::Data(name.into(), value));
@@ -698,6 +705,7 @@ impl Controller {
         }
     }
     fn reset_session_view(&mut self) {
+        self.guild_catalog_cache.clear();
         self.last_private_channel.clear();
         self.game_detector.reset();
         self.clear_private_call_state();
@@ -987,32 +995,18 @@ impl Controller {
         self.typing.clear();
         self.state.typing_text.clear();
         self.state.focus_message_id.clear();
-        self.state.guild_members.clear();
+        self.reset_member_list();
         self.state.group_members = Vec::new();
         self.state.group_owner_id.clear();
         self.state.group_member_removal_pending_ids.clear();
         self.state.group_recipient_candidates = Vec::new();
         self.state.pinned_messages = Vec::new();
-        self.state.guild_member_groups = Vec::new();
-        self.state.guild_members_total = 0;
-        self.state.guild_members_note.clear();
         self.state.search_people = Vec::new();
-        self.guild_member_slots = Vec::new();
-        self.member_list_id.clear();
-        self.member_range = 99;
     }
     fn invalidate_member_context(&mut self) {
         self.member_demand = None;
         self.queue_member_subscription();
-        self.state.guild_members.clear();
-        self.guild_member_slots = Vec::new();
-        self.member_list_id.clear();
-        self.state.guild_member_groups = Vec::new();
-        self.state.guild_members_total = 0;
-        self.state.guild_members_partial = false;
-        self.state.guild_members_has_more = false;
-        self.state.guild_members_note.clear();
-        self.member_range = 99;
+        self.reset_member_list();
         // This revision is independent of navigation: ACL changes can retire
         // a binding while account, guild and channel IDs remain unchanged.
         self.state.member_context_version = self.state.member_context_version.wrapping_add(1);
@@ -1065,8 +1059,11 @@ impl Controller {
         let api = self.api()?;
         let id = id.to_owned();
         let me = self.me();
+        let cached=(api.safety().state()==SafetyState::Allowed&&self.gateway.as_ref().is_some_and(|gateway|gateway.is_ready()))
+            .then(||self.guild_catalog_cache.get(&id)).flatten();
         self.guild_load.begin(&id);
         self.launch(UiAction::id("__guild", &id), Some(self.nav), async move {
+            if let Some(cached)=cached{return Ok(cached);}
             let guild = api
                 .get(&format!("guilds/{id}"))
                 .await
@@ -1145,6 +1142,7 @@ impl Controller {
             self.guild_acl = None;
         }
         self.state.selected_channel_id = id.into();
+        self.cache.set_active(id);
         if !is_dm && !self.state.selected_guild_id.is_empty() {
             self.last_guild_channels
                 .insert(self.state.selected_guild_id.clone(), id.into());
@@ -1160,6 +1158,7 @@ impl Controller {
             self.save_navigation();
         }
         self.state.messages = self.features.restore_session(id,self.cache.get(id)).into();
+        self.state.message_window = self.cache.window(id);
         self.state.pinned_messages.clear();
         self.state.profile_user = None;
         self.state.profile_details = None;
@@ -1200,28 +1199,28 @@ impl Controller {
                 };
                 let endpoint = message_page_route(&id, anchor.as_deref());
                 let loaded = api.get(&endpoint).await;
-                let messages = match loaded {
+                let (messages, latest_window) = match loaded {
                     Ok(messages)
                         if anchor
                             .as_ref()
                             .is_none_or(|a| items(&messages).iter().any(|m| s(m, "id") == *a)) =>
                     {
-                        messages
+                        (messages, anchor.is_none())
                     }
-                    Ok(_) => api
+                    Ok(_) => (api
                         .get(&message_page_route(&id, None))
                         .await
-                        .map_err(|e| e.to_string())?,
-                    Err(error) if anchor.is_some() && error.status == Some(404) => api
+                        .map_err(|e| e.to_string())?, true),
+                    Err(error) if anchor.is_some() && error.status == Some(404) => (api
                         .get(&message_page_route(&id, None))
                         .await
-                        .map_err(|e| e.to_string())?,
+                        .map_err(|e| e.to_string())?, true),
                     Err(error) if returning_private && matches!(error.status, Some(403 | 404)) => {
                         return Ok(json!({"privateUnavailable":true}));
                     }
                     Err(error) => return Err(error.to_string()),
                 };
-                Ok(json!({"channel":channel,"messages":messages}))
+                Ok(json!({"channel":channel,"messages":messages,"latestWindow":latest_window}))
             },
         );
         Ok(())
@@ -1271,14 +1270,18 @@ impl Controller {
     }
     fn refresh_messages(&mut self) {
         if self.state.view == "chat" {
-            self.state.messages = (if self.state.channel_access.can_read_history
-                && self.state.channel_access.can_view
-            {
-                parsing::context_messages(self.features.restore_session(&self.state.selected_channel_id,self.cache.get(&self.state.selected_channel_id)))
+            if self.state.channel_access.can_read_history && self.state.channel_access.can_view {
+                let window = self.cache.window(&self.state.selected_channel_id);
+                if window.channel_id != self.state.message_window.channel_id
+                    || window.revision != self.state.message_window.revision {
+                    self.state.messages = parsing::context_messages(self.features.restore_session(
+                        &self.state.selected_channel_id, self.cache.get(&self.state.selected_channel_id))).into();
+                }
+                self.state.message_window = window;
             } else {
-                Vec::new()
-            })
-            .into();
+                self.state.messages.clear();
+                self.state.message_window = MessageWindow::default();
+            }
         }
         self.member_list_fallback();
         self.search_people();
@@ -1289,7 +1292,7 @@ impl Controller {
     fn older_page_route(&self, channel: &str) -> String {
         // Session tombstones can precede the loaded REST window in the UI.
         // They must not move the server pagination frontier past unseen rows.
-        let before=self.cache.get(channel).first().map(|message|message.id.clone()).unwrap_or_default();
+        let before=self.cache.window(channel).oldest_id;
         format!("channels/{channel}/messages?limit=50&before={before}")
     }
     fn record_loaded_delta(&mut self,messages:&[ChatMessage],kind:&str,value:&Value) {
@@ -1299,16 +1302,41 @@ impl Controller {
             }
         }
     }
-    fn apply_message_pin(&mut self, channel: &str, id: &str, pinned: bool) {
-        let mut cached = self.cache.get(channel);
-        if !cached.is_empty() {
-            for message in &mut cached {
-                if message.id == id {
-                    message.pinned = pinned;
-                }
-            }
-            self.cache.replace(channel, cached);
+    fn buffer_message_delta(&mut self, channel: &str, kind: &str, value: &Value) {
+        if self.loading_channel != channel { return; }
+        let bytes = value.to_string().encode_utf16().count() * 2;
+        if self.pending_deltas.len() >= 256
+            || self.pending_delta_bytes.saturating_add(bytes) > 1024 * 1024 {
+            self.cancel_view_requests();
+            self.error("Demasiados cambios durante la carga. Vuelve a abrir el canal; los mensajes recibidos se conservan.".into());
+        } else {
+            self.pending_deltas.push_back((kind.into(), value.clone()));
+            self.pending_delta_bytes += bytes;
         }
+    }
+    fn reconcile_message_page(&mut self, messages: &mut Vec<ChatMessage>, latest_window: bool) {
+        let deltas = self.pending_deltas.drain(..).collect::<Vec<_>>();
+        self.pending_delta_bytes = 0;
+        for (kind, delta) in deltas {
+            if kind.starts_with("MESSAGE_REACTION_") {
+                // An absolute observed counter set is idempotent even if REST
+                // already includes this event. Replaying an increment is not.
+                if let Some(message) = messages.iter_mut().find(|message| message.id == s(&delta, "message_id"))
+                    && let Ok(reactions) = serde_json::from_value::<Vec<MessageReaction>>(delta["observedReactions"].clone()) {
+                    message.reactions = reactions;
+                }
+                continue;
+            }
+            self.record_loaded_delta(messages, &kind, &delta);
+            if latest_window || kind != "MESSAGE_CREATE"
+                || messages.iter().any(|message| message.id == s(&delta, "id")) {
+                apply_delta(messages, &kind, &delta);
+            }
+        }
+        self.loading_channel.clear();
+    }
+    fn apply_message_pin(&mut self, channel: &str, id: &str, pinned: bool) {
+        self.cache.update(channel, id, |message| message.pinned = pinned);
         let source = self
             .state
             .messages
@@ -1383,6 +1411,7 @@ impl Controller {
     async fn act(&mut self, mut action: UiAction) -> Result<(), String> {
         self.sync_network_safety().await;
         action.kind = match action.kind.as_str() {
+            "view" if action.id == "history" => "history",
             "video-call" => "call-dm-video",
             "toggle-mute" => "mute",
             "toggle-deafen" => "deafen",
@@ -1456,6 +1485,7 @@ impl Controller {
                     | "pin-message"
                     | "unpin-message"
                     | "pins"
+                    | "history"
                     | "search"
                     | "forward"
                     | "forward-many"
@@ -1502,6 +1532,19 @@ impl Controller {
                 {
                     self.member_demand = Some((action.extra.clone(), channel.clone()));
                     self.member_list_fallback();
+                    self.queue_member_subscription();
+                }
+            }
+            "member-range" => {
+                if self.member_demand.as_ref().is_some_and(|(guild,channel)|guild==&action.extra&&channel==&action.channel_id)
+                    && self.state.selected_guild_id==action.extra && self.state.selected_channel_id==action.channel_id
+                    && self.state.view=="chat" && self.state.channel_access.known
+                    && self.state.channel_access.can_view && self.state.channel_access.can_view_members
+                    && let Some((start,end))=action.text.split_once(':')
+                    && let (Ok(start),Ok(end))=(start.parse::<usize>(),end.parse::<usize>())
+                    && start<=end && end<2000 {
+                    self.member_range_start=start;
+                    self.member_range=end;
                     self.queue_member_subscription();
                 }
             }
@@ -1598,7 +1641,9 @@ impl Controller {
                 if action.kind=="older" && !action.channel_id.is_empty() && action.channel_id!=self.state.selected_channel_id {
                     return Err("La conversación de la página anterior cambió.".into());
                 }
-                if action.kind == "older" && (self.state.busy || !self.state.has_older_messages) {
+                if action.kind == "older" && (self.state.busy || !self.state.has_older_messages
+                    || self.loading_channel == self.state.selected_channel_id
+                    || self.cache.window(&self.state.selected_channel_id).oldest_id.is_empty()) {
                     self.finish_history_page(&action);
                     return Ok(());
                 }
@@ -1641,8 +1686,13 @@ impl Controller {
                     ),
                     _ => format!("channels/{channel}/messages?limit=50"),
                 };
+                if action.kind == "older" {
+                    self.cache.begin_history(&channel);
+                    self.refresh_messages();
+                }
                 action.kind = format!("__{}", action.kind);
-                action.channel_id = channel;
+                action.channel_id = channel.clone();
+                self.loading_channel = channel;
                 self.state.busy = true;
                 self.publish();
                 self.launch(action, Some(self.nav), async move {
@@ -1756,7 +1806,7 @@ impl Controller {
                     let _ = at;
                     let mut list=list.clone();
                     for emoji in &mut list {emoji.usable=self.can_send_emoji(emoji);}
-                    if id==self.state.selected_guild_id {self.state.emojis=list.clone();self.publish();}
+                    if id==self.state.selected_guild_id {self.state.emojis=list.clone().into();self.publish();}
                     self.data("guild-emojis", serde_json::to_value(list).unwrap());
                 } else {
                     let api = self.api()?;
@@ -1929,7 +1979,16 @@ impl Controller {
             }
             "__guild" => {
                 if self.discard_superseded_notification_guild() { return Ok(()); }
+                if !self.guild_catalog_cache.current(&value)
+                    || value.get("cachedCatalogRevision").is_some()&&self.gateway.as_ref().is_none_or(|gateway|!gateway.is_ready()) {
+                    self.guild_catalog_cache.clear();
+                    self.select_guild(&action.id)?;
+                    return Ok(());
+                }
                 let value=self.guild_load.reconcile(&action.id,value)?;
+                if value.get("cachedCatalogRevision").is_none(){
+                    let me=self.me();self.guild_catalog_cache.store(&action.id,&me,&value);
+                }
                 self.guild_raw = value["guild"].clone();
                 self.self_member = value["member"].clone();
                 self.seed_guild_nicknames();
@@ -2011,7 +2070,7 @@ impl Controller {
                         self.invalidate_member_context();
                     }
                 }
-                if !self.state.channel_access.can_read_history {
+                if !self.state.channel_access.can_view || !self.state.channel_access.can_read_history {
                     return Err("No tienes permiso para leer el historial.".into());
                 }
                 self.recipients(&channel);
@@ -2020,14 +2079,11 @@ impl Controller {
                     .iter()
                     .map(parsing::message)
                     .collect::<Vec<_>>();
-                let deltas=self.pending_deltas.drain(..).collect::<Vec<_>>();
-                self.pending_delta_bytes=0;
-                for (kind, delta) in deltas {
-                    self.record_loaded_delta(&messages,&kind,&delta);
-                    apply_delta(&mut messages, &kind, &delta);
-                }
-                self.cache.replace(&action.id, messages);
-                self.loading_channel.clear();
+                // Older around/anchor pages never absorb unrelated live rows.
+                let latest_window = value.get("latestWindow").and_then(Value::as_bool).unwrap_or(true);
+                self.reconcile_message_page(&mut messages, latest_window);
+                self.cache.replace_window(&action.id, messages,
+                    if latest_window { MessageWindowMode::Latest } else { MessageWindowMode::Jump }, !latest_window);
                 self.refresh_messages();
                 self.state.has_older_messages = items(&value["messages"]).len() == 50;
                 self.save_navigation();
@@ -2041,12 +2097,16 @@ impl Controller {
                     if action.kind=="__older" {self.finish_history_page(&action);}
                     return Ok(());
                 }
+                if !self.state.channel_access.can_view || !self.state.channel_access.can_read_history {
+                    return Err("Ya no tienes permiso para leer el historial de este canal.".into());
+                }
                 self.state.busy = false;
                 for message in items(&value) { self.observe_message_nickname(message); }
                 let mut page = items(&value)
                     .iter()
                     .map(parsing::message)
                     .collect::<Vec<_>>();
+                self.reconcile_message_page(&mut page, action.kind == "__present");
                 if action.kind == "__jump-message"
                     && !page
                         .iter()
@@ -2055,9 +2115,12 @@ impl Controller {
                     return Err("El mensaje original ya no está disponible.".into());
                 }
                 if action.kind == "__older" {
-                    page.extend(self.cache.get(&action.channel_id).into_iter().take(50));
+                    self.cache.prepend(&action.channel_id, page);
+                } else {
+                    self.cache.replace_window(&action.channel_id, page,
+                        if action.kind == "__present" { MessageWindowMode::Latest } else { MessageWindowMode::Jump },
+                        action.kind != "__present");
                 }
-                self.cache.replace(&action.channel_id, page);
                 self.state.view = "chat".into();
                 self.refresh_messages();
                 self.state.has_older_messages = items(&value).len() == 50;
@@ -2082,6 +2145,9 @@ impl Controller {
                     || !self.request_current("pins", action.extra.parse().unwrap_or(0))
                 {
                     return Ok(());
+                }
+                if !self.state.channel_access.can_view || !self.state.channel_access.can_read_history {
+                    return Err("Ya no tienes permiso para leer los mensajes fijados de este canal.".into());
                 }
                 let values = if value.is_array() {
                     &value
@@ -2229,7 +2295,8 @@ impl Controller {
         } else {
             self.member_range as i32
         };
-        let desired = (guild, channel, range);
+        let start=if guild.is_empty(){0}else{self.member_range_start as i32};
+        let desired = (guild, channel, start, range);
         if let Some(g) = &self.gateway {
             request_policy::queue_member_subscription(
                 &mut self.member_subscription,
@@ -2369,19 +2436,55 @@ fn apply_delta(messages: &mut Vec<ChatMessage>, kind: &str, value: &Value) {
             messages.retain(|m| m.id != id);
             messages.push(parsing::message(value));
         }
-        "MESSAGE_UPDATE" => {
-            if let Some(m) = messages.iter_mut().find(|m| m.id == id) {
-                *m = parsing::update_message(m, value);
-            }
-        }
-        "MESSAGE_DELETE" => {
-            if let Some(message) = messages.iter_mut().find(|m| m.id == id) {
-                message.deleted = true;
-                message.pinned = false;
-                message.reactions.clear();
+        "MESSAGE_UPDATE" | "MESSAGE_DELETE" => {
+            if let Some(message) = messages.iter_mut().find(|message| message.id == id) {
+                apply_message_delta(message, kind, value);
             }
         }
         _ => (),
+    }
+}
+fn apply_message_delta(message: &mut ChatMessage, kind: &str, value: &Value) {
+    if kind == "MESSAGE_UPDATE" { *message = parsing::update_message(message, value); }
+    else if kind == "MESSAGE_DELETE" {
+        message.deleted = true;
+        message.pinned = false;
+        message.reactions.clear();
+    }
+}
+fn apply_reaction_delta(message: &mut ChatMessage, kind: &str, value: &Value, own_id: &str) {
+    let e = &value["emoji"];
+    let emoji = StatusEmoji { name: s(e, "name"), id: s(e, "id"), animated: b(e, "animated") };
+    let key = emoji.reaction_key();
+    let me = s(value, "user_id") == own_id;
+    let burst = b(value, "burst") || i(value, "type") == 1;
+    if kind == "MESSAGE_REACTION_REMOVE_ALL" {
+        message.reactions.clear();
+    } else if kind == "MESSAGE_REACTION_REMOVE_EMOJI" {
+        message.reactions.retain(|reaction| reaction.emoji.reaction_key() != key);
+    } else {
+        let existing = message.reactions.iter().position(|reaction| reaction.emoji.reaction_key() == key);
+        if kind == "MESSAGE_REACTION_ADD" {
+            if let Some(index) = existing {
+                let reaction = &mut message.reactions[index];
+                reaction.count = reaction.count.saturating_add(1);
+                if me {
+                    if burst { reaction.burst_me = true; } else { reaction.normal_me = Some(true); }
+                    reaction.me = true;
+                }
+            } else if message.reactions.len() < 100 {
+                message.reactions.push(MessageReaction { emoji, count: 1, me,
+                    normal_me: Some(me && !burst), burst_me: me && burst });
+            }
+        } else if let Some(index) = existing {
+            let reaction = &mut message.reactions[index];
+            reaction.count = reaction.count.saturating_sub(1).max(0);
+            if me {
+                if burst { reaction.burst_me = false; } else { reaction.normal_me = Some(false); }
+                reaction.me = reaction.normal_me.unwrap_or(false) || reaction.burst_me;
+            }
+            message.reactions.retain(|reaction| reaction.count > 0);
+        }
     }
 }
 

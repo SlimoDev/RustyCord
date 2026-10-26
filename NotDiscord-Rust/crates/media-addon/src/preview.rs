@@ -77,9 +77,7 @@ impl Host {
             ));
         }
         let selection = ShareSelection::parse(p)?;
-        if !self.inventories.get("sources").is_some_and(|(at, ids)| {
-            at.elapsed() < Duration::from_secs(600) && ids.contains(&selection.source)
-        }) {
+        if !self.source_is_listed(&selection.source) {
             return Err(MediaError::new(
                 "SOURCE_NOT_LISTED",
                 "Choose an available source again.",

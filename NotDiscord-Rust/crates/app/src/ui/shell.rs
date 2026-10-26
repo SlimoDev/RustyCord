@@ -157,10 +157,12 @@ fn category_key(state: &AppSnapshot) -> egui::Id {
     egui::Id::new(("collapsed-channel-categories", state.current_user.as_ref().map(|user| user.id.as_str()).unwrap_or(""), &state.selected_guild_id))
 }
 fn hidden_by_category(ctx: &egui::Context, state: &AppSnapshot, item: &NavItem) -> bool {
+    if item.parent_id.is_empty() { return false; }
     ctx.data_mut(|data| {
         let collapsed = data.get_temp_mut_or_default::<HashSet<String>>(category_key(state));
         let mut parent = item.parent_id.as_str();
         for _ in 0..16 {
+            if parent.is_empty() { break; }
             if collapsed.contains(parent) { return true; }
             let Some(item) = state.channels.iter().find(|item| item.id == parent) else { break; };
             parent = item.parent_id.as_str();
@@ -188,9 +190,6 @@ pub(super) fn guild_voice_game(state:&AppSnapshot,member:&notdiscord_core::guild
     let presence=live.map(|presence|presence.status.as_str()).or_else(||cached.map(|member|member.presence.as_str())).unwrap_or("");
     let activities=live.map(|presence|presence.activities.as_slice()).or_else(||cached.map(|member|member.activities.as_slice())).unwrap_or(&[]);
     member_game(state,&member.user.id,presence,activities)
-}
-pub(super) fn guild_voice_member_height(state:&AppSnapshot,member:&notdiscord_core::guild_settings::GuildVoiceMember)->f32 {
-    if guild_voice_game(state,member).is_empty(){32.}else{48.}
 }
 pub(super) fn draw_member_voice_flags(ui:&mut egui::Ui,rect:egui::Rect,state:&AppSnapshot,
     guild:&str,user:&str,channel:Option<&str>)->f32 {
@@ -272,67 +271,6 @@ fn hidden_muted_channel(item: &NavItem, index: &HashMap<&str,&NavItem>, protecte
         current = index.get(channel.parent_id.as_str()).copied();
     }
     false
-}
-fn member_group(member: &ChannelMember) -> &str {
-    match member.presence.as_str() {
-        "" => if member.hoist_role_id.is_empty(){"unknown"}else{&member.hoist_role_id},
-        "offline" | "invisible" => "offline",
-        _ => {
-            if member.hoist_role_id.is_empty() {
-                "online"
-            } else {
-                &member.hoist_role_id
-            }
-        }
-    }
-}
-enum MemberListRow<'a> {
-    Section { label: String, color: i32 },
-    Member(&'a ChannelMember),
-}
-fn member_rows<'a>(state: &AppSnapshot, members: &'a [ChannelMember]) -> Vec<MemberListRow<'a>> {
-    if state.selected_guild_id.is_empty() {
-        return members.iter().map(MemberListRow::Member).collect();
-    }
-    let mut groups: Vec<(&str, Vec<&ChannelMember>)> = Vec::new();
-    for member in members {
-        let key = member_group(member);
-        if let Some((_, group)) = groups.iter_mut().find(|(id, _)| *id == key) {
-            group.push(member);
-        } else {
-            groups.push((key, vec![member]));
-        }
-    }
-    groups.sort_by_key(|(key,_)|match *key {
-        "online"=>(1,0),"offline"=>(2,0),"unknown"=>(3,0),
-        _=>(0,state.guild_roles.iter().position(|role|role.id==*key).unwrap_or(usize::MAX)),
-    });
-    let mut rows = Vec::with_capacity(members.len() + groups.len());
-    for (key, group) in groups {
-        let supplied = state.guild_member_groups.iter().find(|g| g.id == key);
-        let role = state.guild_roles.iter().find(|r| r.id == key);
-        let name = supplied
-            .map(|g| g.name.as_str())
-            .filter(|name| !name.is_empty())
-            .or_else(|| role.map(|r| r.name.as_str()))
-            .unwrap_or(match key {
-                "online" => "En línea",
-                "offline" => "Desconectados",
-                _ => "Estado no disponible",
-            });
-        let count = group
-            .len()
-            .max(supplied.map(|g| g.count.max(0) as usize).unwrap_or(0));
-        rows.push(MemberListRow::Section {
-            label: format!("{} — {}", name.to_uppercase(), count),
-            color: role
-                .map(|r| r.color)
-                .or_else(|| supplied.map(|g| g.color))
-                .unwrap_or(0),
-        });
-        rows.extend(group.into_iter().map(MemberListRow::Member));
-    }
-    rows
 }
 #[derive(Clone, Copy)]
 pub(super) enum Icon {
@@ -600,21 +538,20 @@ impl NotDiscordUi {
     }
     pub(super) fn draw_shell(&mut self, ctx: &egui::Context, state: &AppSnapshot) {
         let title = if state.selected_guild_id.is_empty() {
-            "NotDiscord".to_string()
+            crate::brand::NAME.to_string()
         } else {
             state
                 .guilds
                 .iter()
                 .find(|g| g.id == state.selected_guild_id)
                 .map(|g| g.name.clone())
-                .unwrap_or_else(|| "NotDiscord".into())
+                .map(|name|format!("{} · {}",crate::brand::NAME,name))
+                .unwrap_or_else(|| crate::brand::NAME.into())
         };
-        if self.window_title != title {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-                "{} — {}",
-                title, state.channel_name
-            )));
-            self.window_title = title.clone();
+        let window_title=format!("{} — {}",title,state.channel_name);
+        if self.window_title != window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(window_title.clone()));
+            self.window_title = window_title;
         }
         egui::TopBottomPanel::top("window-chrome")
             .exact_height(32.)
@@ -983,6 +920,8 @@ impl NotDiscordUi {
                     );
                 }
                 let rows = navigation_rows(state);
+                let collapsed=ui.ctx().data(|data|data.get_temp::<HashSet<String>>(category_key(state))).unwrap_or_default();
+                let projection=list_projection::navigation(ui.ctx(),state,collapsed);
                 let reserve = 36.;
                 theme::vertical_scroll(ui)
                     .id_salt(("channels", &state.selected_guild_id))
@@ -1016,12 +955,13 @@ impl NotDiscordUi {
                                     content_y += estimate;
                                 }
                                 NavigationRow::Item(item) => {
-                                    if hidden_by_category(ui.ctx(), state, item) { continue; }
+                                    if projection.hidden.contains(&item.id) { continue; }
                                     let (flags, base) = nav_metrics(item);
-                                    let members=state.guild_voice_members.iter().filter(|member|matches!(item.kind.as_str(),"voice"|"stage")&&member.guild_id==state.selected_guild_id&&member.channel_id==item.id).collect::<Vec<_>>();
-                                    let games=members.iter().filter(|member|!guild_voice_game(state,member).is_empty()).count();
-                                    let flags = u64::from(flags) | ((members.len() as u64) << 8) | ((games as u64)<<32);
-                                    let base = base + members.iter().map(|member|guild_voice_member_height(state,member)+ui.spacing().item_spacing.y).sum::<f32>();
+                                    let voices=projection.voice.get(&item.id).filter(|_|matches!(item.kind.as_str(),"voice"|"stage"));
+                                    let count=voices.map(|voices|voices.rows.len()).unwrap_or(0);
+                                    let games=voices.map(|voices|voices.games).unwrap_or(0);
+                                    let flags = u64::from(flags) | ((count as u64) << 8) | ((games as u64)<<32);
+                                    let base=base+voices.map(|voices|voices.height+count as f32*ui.spacing().item_spacing.y).unwrap_or(0.);
                                     let estimate = self
                                         .nav_heights
                                         .get(&item.id)
@@ -1033,7 +973,7 @@ impl NotDiscordUi {
                                     {
                                         let start = ui.cursor().top();
                                         self.nav_row(ui, item, state);
-                                        self.draw_guild_voice_members(ui, item, state);
+                                        if let Some(voices)=voices { self.draw_guild_voice_members(ui, item, state, &voices.rows); }
                                         let height = (ui.cursor().top() - start).max(18.);
                                         self.nav_heights.insert(item.id.clone(), (flags, height));
                                         content_y += height;
@@ -1132,7 +1072,7 @@ impl NotDiscordUi {
                     ui.vertical_centered(|ui| {
                         ui.add_space(80.);
                         self.logo(ui, 64.);
-                        ui.heading("NotDiscord");
+                        ui.heading(crate::brand::NAME);
                         ui.label("Tus conversaciones, con una interfaz nativa.");
                         if ui.button("Iniciar sesión en Discord").clicked() {
                             self.simple("login");
@@ -2169,7 +2109,7 @@ impl NotDiscordUi {
         if !state.guild_members_note.is_empty() {
             ui.add(egui::Label::new(RichText::new(&state.guild_members_note).size(12.).color(self.theme.muted)).wrap());
         }
-        let rows = member_rows(state, members);
+        let projection = list_projection::members(ui.ctx(), state);
         theme::vertical_scroll(ui)
             .id_salt(("members", &state.selected_channel_id))
             .max_height(
@@ -2185,15 +2125,18 @@ impl NotDiscordUi {
             )
             .show_viewport(ui, |ui, viewport| {
                 ui.spacing_mut().item_spacing.y = 0.;
-                let mut y = 0.;
-                for row in &rows {
+                let visible=projection.visible((viewport.min.y-128.).max(0.),viewport.max.y+128.);
+                if state.guild_member_list_bound && !visible.is_empty() {
+                    member_demand::range(ui.ctx(),visible.start,visible.end.saturating_sub(1));
+                }
+                ui.add_space(projection.prefix[visible.start]);
+                for row in &projection.rows[visible.clone()] {
                     let height = match row {
-                        MemberListRow::Section { .. } => 38.,
-                        MemberListRow::Member(_) => 64.,
+                        list_projection::MemberRow::Section { .. } => 38.,
+                        _ => 64.,
                     };
-                    if y + height >= viewport.min.y - 64. && y <= viewport.max.y + 64. {
                         match row {
-                            MemberListRow::Section { label, color } => {
+                            list_projection::MemberRow::Section { label, color } => {
                                 let (rect, _) = ui.allocate_exact_size(
                                     egui::vec2(ui.available_width(), height),
                                     egui::Sense::hover(),
@@ -2209,13 +2152,16 @@ impl NotDiscordUi {
                                     self.readable_role(*color),
                                 );
                             }
-                            MemberListRow::Member(member) => self.member_row(ui, member, state),
+                            list_projection::MemberRow::Member(index) => {
+                                if let Some(member)=members.get(*index){self.member_row(ui, member, state);}else{ui.add_space(height);}
+                            }
+                            list_projection::MemberRow::Missing => {
+                                let (rect,_)=ui.allocate_exact_size(egui::vec2(ui.available_width(),height),egui::Sense::hover());
+                                fitted_text(ui,rect.shrink2(egui::vec2(8.,20.)),"Cargando miembro…",12.,self.theme.muted);
+                            }
                         }
-                    } else {
-                        ui.add_space(height);
-                    }
-                    y += height;
                 }
+                ui.add_space(projection.prefix.last().copied().unwrap_or(0.)-projection.prefix[visible.end]);
             });
         if state.guild_members_partial {
             ui.label(
@@ -2572,6 +2518,8 @@ impl NotDiscordUi {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.add_space(4.);
+                self.pictures.profile_banner(ui, &person, details.as_ref(), self.prefs.allow_gif_playback);
+                ui.add_space(8.);
                 if self.profile_avatar_button(ui, &person, presence,80.).clicked() {
                     self.open_profile_avatar(&person);
                 }
@@ -2717,6 +2665,8 @@ impl NotDiscordUi {
                 ui.add_space(15.);
                 let details = state.profile_details.as_ref();
                 let webhook=details.is_some_and(|details|details.is_webhook);
+                self.pictures.profile_banner(ui, person, details, self.prefs.allow_gif_playback);
+                ui.add_space(10.);
                 ui.horizontal(|ui| {
                     if self.profile_avatar_button(ui,person,details.map(|p|p.presence.as_str()).unwrap_or(""),88.).clicked() {self.open_profile_avatar(person);}
                     ui.vertical(|ui| {
@@ -3510,10 +3460,12 @@ mod shell_tests {
                 ..Default::default()
             },
         ];
-        let rows = member_rows(&state, &members);
+        state.guild_members = members.into();
+        let projection = list_projection::members(&egui::Context::default(), &state);
+        let rows = &projection.rows;
         assert_eq!(rows.len(), 4);
-        assert!(matches!(&rows[0],MemberListRow::Section{label,..}if label=="EQUIPO — 1"));
-        assert!(matches!(&rows[2],MemberListRow::Section{label,..}if label=="DESCONECTADOS — 1"));
+        assert!(matches!(&rows[0],list_projection::MemberRow::Section{label,..}if label=="EQUIPO — 1"));
+        assert!(matches!(&rows[2],list_projection::MemberRow::Section{label,..}if label=="DESCONECTADOS — 1"));
     }
     #[test]
     fn online_filter_contains_online_idle_dnd_and_searches_both_names() {

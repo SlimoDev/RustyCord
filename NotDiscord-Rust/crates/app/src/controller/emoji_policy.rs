@@ -27,7 +27,7 @@ impl Controller {
             if let Some(old)=self.emoji_cache.iter().min_by_key(|(_, (at,_))|*at).map(|(guild,_)|guild.clone()) {self.emoji_cache.remove(&old);}
         }
         self.emoji_cache.insert(guild.into(),(Instant::now(),list.clone()));
-        if guild==self.state.selected_guild_id {self.state.emojis=list.clone();}
+        if guild==self.state.selected_guild_id {self.state.emojis=list.clone().into();}
         list
     }
 }

@@ -209,6 +209,11 @@ pub struct ChannelMember {
 #[serde(default, rename_all = "PascalCase")]
 pub struct ProfileDetails {
     pub user: Person,
+    /// Profile-only CDN metadata. Kept out of people/member snapshots.
+    pub banner_hash: String,
+    pub banner_color: Option<u32>,
+    pub guild_banner_hash: String,
+    pub guild_banner_color: Option<u32>,
     pub is_webhook: bool,
     pub created_at: Option<Timestamp>,
     pub friends_since: Option<Timestamp>,
@@ -452,6 +457,36 @@ pub struct CallVideo {
     pub error: String,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageWindowMode {
+    #[default]
+    Latest,
+    History,
+    Jump,
+}
+/// The REST window, independent of locally retained deletion markers. Cursors
+/// always refer to loaded server rows, so tombstones cannot skip pagination.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct MessageWindow {
+    pub channel_id: String,
+    pub mode: MessageWindowMode,
+    pub oldest_id: String,
+    pub newest_id: String,
+    pub has_newer: bool,
+    pub contiguous: bool,
+    /// Changes only when message payloads change, not on a read/LRU touch.
+    pub revision: u64,
+}
+impl Default for MessageWindow {
+    fn default() -> Self {
+        Self { channel_id: String::new(), mode: MessageWindowMode::Latest,
+            oldest_id: String::new(), newest_id: String::new(), has_newer: false,
+            contiguous: true, revision: 0 }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct AppSnapshot {
@@ -474,8 +509,9 @@ pub struct AppSnapshot {
     pub channels: Vec<NavItem>,
     pub direct_messages: Vec<NavItem>,
     pub messages: SharedList<ChatMessage>,
+    pub message_window: MessageWindow,
     pub relationships: Vec<Relationship>,
-    pub emojis: Vec<CustomEmoji>,
+    pub emojis: SharedList<CustomEmoji>,
     pub voice_available: bool,
     pub screen_available: bool,
     pub has_older_messages: bool,
@@ -532,6 +568,10 @@ pub struct AppSnapshot {
     pub incoming_calls: Vec<IncomingCall>,
     pub channel_access: ChannelAccess,
     pub guild_members: SharedList<ChannelMember>,
+    /// Original member-list protocol positions, parallel to `guild_members`.
+    /// Headers and unloaded slots are deliberately not flattened away.
+    pub guild_member_indices: SharedList<usize>,
+    pub guild_member_list_bound: bool,
     pub guild_roles: Vec<GuildRole>,
     pub guild_member_groups: Vec<GuildMemberGroup>,
     pub guild_settings: Option<crate::guild_settings::GuildSettings>,

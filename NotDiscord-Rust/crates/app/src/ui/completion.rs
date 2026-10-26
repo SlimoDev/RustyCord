@@ -1,6 +1,5 @@
 //! One bounded suggestion presenter; mention and emoji search/insertion stay separate.
 use super::super::*;
-use std::hash::{Hash,Hasher};
 
 #[derive(Clone)]
 pub(in crate::ui) enum Choice {
@@ -51,14 +50,12 @@ pub(in crate::ui) fn choices(query:&str,state:&AppSnapshot,limit:usize)->Vec<Cho
 pub(in crate::ui) fn cached_choices(ctx:&egui::Context,query:&str,state:&AppSnapshot,limit:usize)->Vec<Choice> {
     if !query.starts_with(':') {return choices(query,state,limit);}
     let key=egui::Id::new("composer-emoji-results");
-    let mut hash=std::collections::hash_map::DefaultHasher::new();
-    for emoji in &state.emojis {(&emoji.id,&emoji.name,&emoji.guild_id,emoji.animated,emoji.usable).hash(&mut hash);}
-    let signature=hash.finish();let owner=(state.selected_guild_id.clone(),query.to_owned(),signature,limit.min(8));
-    type Cached=((String,String,u64,usize),Vec<Choice>);
-    if let Some((previous,choices))=ctx.data(|data|data.get_temp::<Cached>(key)) {
-        if previous==owner {return choices;}
+    let owner=(state.selected_guild_id.clone(),query.to_owned(),limit.min(8));
+    type Cached=((String,String,usize),SharedList<CustomEmoji>,Vec<Choice>);
+    if let Some((previous,catalogue,choices))=ctx.data(|data|data.get_temp::<Cached>(key)) {
+        if previous==owner && catalogue.same_storage(&state.emojis) {return choices;}
     }
-    let found=choices(query,state,limit);ctx.data_mut(|data|data.insert_temp(key,(owner,found.clone())));found
+    let found=choices(query,state,limit);ctx.data_mut(|data|data.insert_temp(key,(owner,state.emojis.clone(),found.clone())));found
 }
 fn normalized(query:&str)->String {query.to_lowercase().replace(['_','-']," ")}
 fn emoji_choices(query:&str,state:&AppSnapshot,limit:usize)->Vec<Choice> {
@@ -156,7 +153,7 @@ mod tests {
         let mut state=AppSnapshot::welcome();state.selected_guild_id="50".into();
         state.emojis=vec![CustomEmoji{id:"401".into(),name:"JazzCat".into(),guild_id:"50".into(),available:true,usable:true,..Default::default()},
             CustomEmoji{id:"402".into(),name:"JazzForbidden".into(),guild_id:"50".into(),available:false,usable:false,..Default::default()},
-            CustomEmoji{id:"403".into(),name:"JazzOtherGuild".into(),guild_id:"51".into(),available:true,usable:true,..Default::default()}];
+            CustomEmoji{id:"403".into(),name:"JazzOtherGuild".into(),guild_id:"51".into(),available:true,usable:true,..Default::default()}].into();
         let results=choices(":jazz",&state,100);assert_eq!(results.len(),1);
         let mut draft=Draft{text:"α :jazz tail @Self".into(),mentions:vec![Mention{start:13,end:18,id:"100".into(),label:"@Self".into()}],..Default::default()};
         let cursor=insert(&mut draft,2,7,&results[0]).unwrap();assert_eq!(draft.text,"α <:JazzCat:401>  tail @Self");

@@ -145,11 +145,13 @@ fn resumed_subscription_retains_the_unsubscribe_even_if_the_selection_changed_in
     let open = GatewayCommand::SubscribeGuild {
         guild_id: "1".into(),
         channel_id: "2".into(),
+        range_start: 0,
         range_end: 99,
     };
     let hide = GatewayCommand::SubscribeGuild {
         guild_id: String::new(),
         channel_id: String::new(),
+        range_start: 0,
         range_end: 99,
     };
     wire.payload(&open).unwrap();

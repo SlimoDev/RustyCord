@@ -580,7 +580,7 @@ impl NotDiscordUi {
             .map(|_| Choice::Accept)
         });
         let mut builder = egui::ViewportBuilder::default()
-            .with_title("NotDiscord · Llamada entrante")
+            .with_title(format!("{} · Llamada entrante",crate::brand::NAME))
             .with_inner_size([460., 420.])
             .with_min_inner_size([330., 300.])
             .with_clamp_size_to_monitor_size(true)

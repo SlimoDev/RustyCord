@@ -4,6 +4,7 @@ use reqwest::header::{AGE, CACHE_CONTROL, DATE, EXPIRES, HeaderMap, VARY};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     os::windows::fs::{MetadataExt, OpenOptionsExt},
@@ -21,6 +22,8 @@ const OWNER_RESERVE: u64 = 4096;
 const REPARSE_POINT: u32 = 0x400;
 const OPEN_REPARSE_POINT: u32 = 0x00200000;
 const ERROR: &str = "La caché local de avatares no está disponible.";
+const ACCESS_FLUSH_SECONDS: u64 = 30;
+const ACCESS_FLUSH_BATCH: usize = 32;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,7 +49,13 @@ pub(super) struct AvatarCache {
     directory: PathBuf,
     namespace: String,
     _lease: File,
-    lock: Mutex<()>,
+    lock: Mutex<Index>,
+}
+#[derive(Default)]
+struct Index {
+    entries: HashMap<String, Entry>,
+    dirty_access: HashSet<String>,
+    last_flush: u64,
 }
 /// Keeps the exact cached file immutable while a decoder opens its filename.
 pub(super) struct CachedAvatar {
@@ -278,14 +287,28 @@ impl AvatarCache {
             directory,
             namespace,
             _lease: lease,
-            lock: Mutex::new(()),
+            lock: Mutex::new(Index::default()),
         };
         cache.valid_root()?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| ERROR)?
             .as_secs();
-        cache.entries(now)?;
+        // One bounded recovery scan per account namespace. Subsequent stores
+        // and lookups use this index, while file integrity is still checked.
+        let mut entries = cache.entries(now)?;
+        entries.sort_by_key(|entry| (entry.accessed, entry.stored));
+        let mut bytes = entries.iter().map(|entry| entry.bytes + METADATA_RESERVE).sum::<u64>();
+        while entries.len() > MAX_ENTRIES || bytes.saturating_add(OWNER_RESERVE) > MAX_BYTES {
+            let entry = entries.remove(0);
+            cache.remove(&entry.key)?;
+            bytes = bytes.saturating_sub(entry.bytes + METADATA_RESERVE);
+        }
+        {
+            let mut index = cache.lock.lock().map_err(|_| ERROR)?;
+            index.entries = entries.into_iter().map(|entry| (entry.key.clone(), entry)).collect();
+            index.last_flush = now;
+        }
         Ok(cache)
     }
     fn valid_root(&self) -> Result<(), String> {
@@ -331,19 +354,21 @@ impl AvatarCache {
         Ok(())
     }
     pub(super) fn invalidate(&self, url: &str, now: u64) {
-        let Ok(_lock) = self.lock.lock() else { return };
+        let Ok(mut index) = self.lock.lock() else { return };
         if self.valid_root().is_ok()
             && let Some((key, _)) = avatar_key(url, now)
         {
             let _ = self.remove(&key);
+            index.entries.remove(&key);
+            index.dirty_access.remove(&key);
         }
     }
     pub(super) fn lookup(&self, url: &str, now: u64) -> Option<CachedAvatar> {
-        let _lock = self.lock.lock().ok()?;
+        let mut index = self.lock.lock().ok()?;
         self.valid_root().ok()?;
         let (key, signature) = avatar_key(url, now)?;
         let result = (|| {
-            let mut entry: Entry = read_json(&self.metadata(&key)).ok()?;
+            let mut entry = index.entries.get(&key)?.clone();
             if entry.version != 1
                 || entry.key != key
                 || entry.stored > now
@@ -374,7 +399,11 @@ impl AvatarCache {
             }
             if entry.accessed != now {
                 entry.accessed = now;
-                let _ = atomic_json(&self.metadata(&key), &entry);
+                index.entries.insert(key.clone(), entry.clone());
+                index.dirty_access.insert(key.clone());
+                if now.saturating_sub(index.last_flush) >= ACCESS_FLUSH_SECONDS || index.dirty_access.len() >= ACCESS_FLUSH_BATCH {
+                    self.flush_access(&mut index, now);
+                }
             }
             Some(CachedAvatar {
                 path: self.body(&key),
@@ -385,8 +414,22 @@ impl AvatarCache {
         })();
         if result.is_none() {
             let _ = self.remove(&key);
+            index.entries.remove(&key);
+            index.dirty_access.remove(&key);
         }
         result
+    }
+    fn flush_access(&self, index: &mut Index, now: u64) {
+        // Access times affect eviction only, never freshness or the content
+        // digest. Batch writes avoid rewriting JSON for each thumbnail hit.
+        let dirty = std::mem::take(&mut index.dirty_access);
+        for key in dirty {
+            if let Some(entry) = index.entries.get(&key)
+                && atomic_json(&self.metadata(&key), entry).is_err() {
+                index.dirty_access.insert(key);
+            }
+        }
+        index.last_flush = now;
     }
     fn entries(&self, now: u64) -> Result<Vec<Entry>, String> {
         let mut entries = Vec::new();
@@ -469,14 +512,20 @@ impl AvatarCache {
         let Some((key, _)) = avatar_key(url, now) else {
             return Ok(false);
         };
-        let _lock = self.lock.lock().map_err(|_| ERROR)?;
+        let mut index = self.lock.lock().map_err(|_| ERROR)?;
         self.valid_root()?;
         let mut input = open_plain(source)?;
         let len = input.metadata().map_err(|_| ERROR)?.len();
         if len == 0 || len > MAX_BODY || len > MAX_BYTES {
             return Ok(false);
         }
-        let mut entries = self.entries(now)?;
+        let expired: Vec<_> = index.entries.values().filter(|entry| entry.expires <= now || entry.stored > now).map(|entry| entry.key.clone()).collect();
+        for key in expired {
+            self.remove(&key)?;
+            index.entries.remove(&key);
+            index.dirty_access.remove(&key);
+        }
+        let mut entries: Vec<_> = index.entries.values().cloned().collect();
         entries.sort_by_key(|e| (e.accessed, e.stored));
         let mut bytes = entries
             .iter()
@@ -494,6 +543,8 @@ impl AvatarCache {
                 break;
             }
             self.remove(&entry.key)?;
+            index.entries.remove(&entry.key);
+            index.dirty_access.remove(&entry.key);
             bytes = bytes.saturating_sub(entry.bytes + METADATA_RESERVE);
             count -= 1;
         }
@@ -532,6 +583,8 @@ impl AvatarCache {
             output.flush().map_err(|_| ERROR)?;
             drop(output);
             self.remove(&key)?;
+            index.entries.remove(&key);
+            index.dirty_access.remove(&key);
             fs::rename(&temporary, self.body(&key)).map_err(|_| ERROR)?;
             let entry = Entry {
                 version: 1,
@@ -546,10 +599,23 @@ impl AvatarCache {
                 let _ = self.remove(&key);
                 return Err(error);
             }
+            index.entries.insert(key.clone(), entry);
+            if now.saturating_sub(index.last_flush) >= ACCESS_FLUSH_SECONDS {
+                self.flush_access(&mut index, now);
+            }
             Ok(true)
         })();
         let _ = fs::remove_file(temporary);
         result
+    }
+}
+impl Drop for AvatarCache {
+    fn drop(&mut self) {
+        if self.valid_root().is_err() { return; }
+        if let Ok(mut index) = self.lock.lock() {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
+            self.flush_access(&mut index, now);
+        }
     }
 }
 

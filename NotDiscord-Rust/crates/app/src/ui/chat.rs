@@ -7,7 +7,18 @@ mod rich;
 mod reaction_tooltip;
 #[path = "chat/interaction.rs"]
 mod interaction;
+#[path = "chat/viewport.rs"]
+mod viewport;
+#[path = "chat/text_cache.rs"]
+mod text_cache;
 pub(super) use reaction_tooltip::{clear_reaction_users, reaction_panel_open, reaction_panel_rect, reaction_users_result};
+pub(super) fn clear_presentation(ctx:&egui::Context) {
+    text_cache::clear(ctx);
+    clear_geometry(ctx);
+}
+pub(super) fn clear_geometry(ctx:&egui::Context) {
+    ctx.data_mut(|data|data.remove::<viewport::Rows>(egui::Id::new("message-viewport-rows")));
+}
 
 pub(super) fn suspend_interactions(ctx: &egui::Context) {
     interaction::suspend(ctx);
@@ -240,10 +251,11 @@ impl NotDiscordUi {
             ui.available_width(),
             self.prefs.chat_size,
             self.prefs.compact,
+            ui.ctx().pixels_per_point().to_bits(),
         );
         let previous_layout = ui
             .ctx()
-            .data(|data| data.get_temp::<(f32, f32, bool)>(layout_key));
+            .data(|data| data.get_temp::<(f32, f32, bool, u32)>(layout_key));
         if chat
             && !manual_history
             && previous_layout.is_some_and(|old| old != layout)
@@ -304,6 +316,14 @@ impl NotDiscordUi {
             egui::scroll_area::State::default().store(ui.ctx(), ui.make_persistent_id(scroll_salt));
         }
         let requested_offset = self.pending_scroll.take();
+        let rows_key = egui::Id::new("message-viewport-rows");
+        let mut rows = ui.ctx().data_mut(|data|data.remove_temp::<viewport::Rows>(rows_key)).unwrap_or_default();
+        if chat { rows.sync(scroll_salt, layout, &state.messages); }
+        let complete_layout = !chat || force_latest || viewport::complete_layout(ui.ctx(),scroll_salt);
+        // The initial pass positions the newest rows using finite geometry.
+        // It must not start downloads for the provisional, older viewport.
+        self.pictures.set_request_admission(!force_latest);
+        self.pictures.set_media_owner("chat",100);
         let mut area = theme::vertical_scroll(ui)
             .id_salt(scroll_salt)
             .auto_shrink([false, false])
@@ -335,8 +355,23 @@ impl NotDiscordUi {
                 let date = previous
                     .is_none_or(|p| local_date(&p.timestamp) != local_date(&message.timestamp));
                 let continuation = chat && previous.is_some_and(|p| can_group(p, message));
-                // MessageCache bounds this page. Measure every retained row so
-                // dragging the thumb never substitutes guessed media heights.
+                let content_y = ui.cursor().top() - content_top;
+                let estimated = if chat { rows.height(index,message,continuation,date) } else { 0. };
+                let margin = viewport.height().max(200.) * 0.75;
+                let wanted = viewport.min.y-margin .. viewport.max.y+margin;
+                let forced = self.focus_scroll_pending && message.id == self.focus_id
+                    || restore_request.as_ref().is_some_and(|(id,_)|id==&message.id);
+                if !complete_layout && !forced
+                    && (content_y+estimated < wanted.start || content_y > wanted.end) {
+                    if let Some((id, top)) = &restore_request {
+                        if message.id == *id { restore_offset = Some((content_y-*top).max(0.)); }
+                    }
+                    if first_visible.is_empty() && content_y+estimated > viewport.min.y {
+                        first_visible=message.id.clone();anchor_top=content_y-viewport.min.y;
+                    }
+                    ui.add_space(estimated);
+                    continue;
+                }
                 {
                     let begin = ui.cursor().top();
                     let content_y = begin - content_top;
@@ -380,7 +415,8 @@ impl NotDiscordUi {
                             .galley(center - galley.size() / 2., galley, self.theme.muted);
                         ui.add_space(7.);
                     }
-                    let response = self.draw_message(ui, message, state, continuation);
+                    let response = ui.scope_builder(egui::UiBuilder::new().id(("history-row",scroll_salt,&message.id)),
+                        |ui| self.draw_message(ui, message, state, continuation)).inner;
                     let height = (ui.cursor().top() - begin).max(1.);
                     if first_visible.is_empty() && content_y + height > viewport.min.y {
                         first_visible = message.id.clone();
@@ -393,6 +429,7 @@ impl NotDiscordUi {
                         }
                     }
                     measured.insert(message.id.clone(), height);
+                    if chat { rows.measure(index,height); }
                 }
             }
             if chat {
@@ -402,6 +439,9 @@ impl NotDiscordUi {
             // keeping stick-to-bottom and the measured scrollbar end consistent.
             ui.add_space(CHAT_COMPOSER_GAP);
         });
+        self.pictures.set_request_admission(true);
+        self.pictures.set_media_owner("ui",0);
+        ui.ctx().data_mut(|data|data.insert_temp(rows_key,rows));
         let selecting = history_selection_finish(ui.ctx(), out.inner_rect, scroll_salt,
             !ui.is_enabled() || self.background_blocked());
         let advance_motion = ui.ctx().current_pass_index() == 0;
@@ -557,7 +597,7 @@ impl NotDiscordUi {
             return self.draw_call_record(ui, m, state);
         }
         let selected = m.id == self.focus_id;
-        let personal_reply = replies_to_current_user(m, state)
+        let personal_reply = text_cache::personal_reply(ui.ctx(),m, state)
             || super::mentions::highlights_current_user(m, state);
         let shortcuts_allowed = ui.is_enabled() && !ui.ctx().wants_keyboard_input()
             && !egui::Popup::is_any_open(ui.ctx()) && !self.background_blocked();
@@ -1203,26 +1243,20 @@ impl NotDiscordUi {
         state: &AppSnapshot,
     ) {
         let mut media: Vec<&str> = Vec::new();
-        let mut line_start = 0;
-        for line in text.split('\n') {
+        let parsed = text_cache::parsed(ui.ctx(),text);
+        for parsed_line in &parsed.lines {
+            let line = &parsed.source[parsed_line.range.clone()];
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.;
                 ui.spacing_mut().item_spacing.y = 0.;
                 ui.set_min_height(self.prefs.chat_size * 1.45);
                 let mut end = 0;
-                for capture in message_rich_pattern().captures_iter(line) {
-                    let whole = capture.get(0).unwrap();
-                    if (capture.get(1).is_some() || capture.get(6).is_some())
-                        && !super::mentions::plain_text_at(text, line_start + whole.start()) {
-                        continue;
-                    }
-                    if capture.get(6).is_some() && !super::mentions::broadcast_at(text, line_start + whole.start(), line_start + whole.end()) {
-                        continue;
-                    }
+                for capture in &parsed_line.tokens {
+                    let whole = capture.get(0,line).unwrap();
                     let named = capture
-                        .get(5)
-                        .and_then(|name| known_named_emoji(name.as_str(), m, state));
-                    if capture.get(5).is_some() && named.is_none() {
+                        .get(5,line)
+                        .and_then(|name| text_cache::named(ui.ctx(),name.as_str(), m, state));
+                    if capture.get(5,line).is_some() && named.is_none() {
                         // An unknown name stays in the same plain text run.
                         continue;
                     }
@@ -1234,22 +1268,22 @@ impl NotDiscordUi {
                             self.theme.ink,
                         );
                     }
-                    if capture.get(6).is_some() {
+                    if capture.get(6,line).is_some() {
                         if m.mentions_everyone && !m.forwarded {
                             mention_label(ui, whole.as_str().trim_start_matches('@'), self.prefs.chat_size);
                         } else {
                             self.message_plain(ui, whole.as_str(), self.prefs.chat_size, self.theme.ink);
                         }
-                    } else if let Some(id) = capture.get(1) {
+                    } else if let Some(id) = capture.get(1,line) {
                         let name = super::mentions::name(id.as_str(), &m.mentions, state);
                         if mention_label(ui, name, self.prefs.chat_size).clicked() {
                             self.send("profile", id.as_str(), "", "", &m.channel_id);
                         }
-                    } else if let Some(id) = capture.get(4) {
+                    } else if let Some(id) = capture.get(4,line) {
                         let emoji = StatusEmoji {
                             id: id.as_str().into(),
-                            name: capture.get(3).unwrap().as_str().into(),
-                            animated: capture.get(2).is_some_and(|a| a.as_str() == "a"),
+                            name: capture.get(3,line).unwrap().as_str().into(),
+                            animated: capture.get(2,line).is_some_and(|a| a.as_str() == "a"),
                         };
                         self.message_emoji(ui, &emoji, self.prefs.chat_size * 1.4, &format!(":{}:",emoji.name));
                     } else if let Some(emoji) = named {
@@ -1258,7 +1292,7 @@ impl NotDiscordUi {
                         let url = whole.as_str();
                         let gif_preview = (notdiscord_core::parsing::direct_gif(url)
                             || notdiscord_core::parsing::gif_page(url))
-                            && super::mentions::plain_text_at(text, line_start + whole.start());
+                            && super::mentions::plain_text_at(text, parsed_line.range.start + whole.start());
                         // GIF messages use their media card as the visible
                         // target. Keep the original content for editing/copy
                         // and the card's existing Copy link context action.
@@ -1288,7 +1322,6 @@ impl NotDiscordUi {
                     self.message_plain(ui, &line[end..], self.prefs.chat_size, self.theme.ink);
                 }
             });
-            line_start += line.len() + 1;
         }
         for url in media {
             let gif = notdiscord_core::parsing::direct_gif(url)
@@ -3345,6 +3378,10 @@ fn adjust_mentions(old: &str, new: &str, spans: &mut Vec<Mention>) {
     super::mentions::adjust(old, new, spans)
 }
 fn latest_window(ctx: &egui::Context, state: &AppSnapshot) -> bool {
+    if !state.message_window.channel_id.is_empty() && state.message_window.channel_id == state.selected_channel_id {
+        return state.message_window.mode == MessageWindowMode::Latest
+            && !state.message_window.has_newer && state.message_window.contiguous;
+    }
     let key = egui::Id::new("chat-latest-known");
     let channel = &state.selected_channel_id;
     let last_visible = state
@@ -3391,6 +3428,7 @@ fn personal_reply_fill() -> Color32 { Color32::from_rgba_unmultiplied(250, 166, 
 
 /// A displayed name or a mention in the reply body is not evidence that this
 /// user received a reply. Resolve the referenced message's actual author.
+#[cfg(test)]
 fn replies_to_current_user(message: &ChatMessage, state: &AppSnapshot) -> bool {
     let Some(current) = state.current_user.as_ref().filter(|person| !person.id.is_empty()) else { return false; };
     let Some(reference) = message.reply_to.as_deref().filter(|id| {
@@ -3518,7 +3556,7 @@ mod tests {
         for custom in [false,true] {
             let (mut app,ctx,mut commands)=ui_harness();let (_,mut state)=message_fixture();app.prefs.send_typing=false;
             if custom {state.selected_guild_id="50".into();state.emojis=vec![CustomEmoji{id:"401".into(),name:"JazzCat".into(),
-                guild_id:"50".into(),available:true,usable:true,..Default::default()}];}
+                guild_id:"50".into(),available:true,usable:true,..Default::default()}].into();}
             seed_completion_emojis(&mut app,&ctx,&state);
             chat_frame(&mut app,&ctx,&state,vec![]);
             let query=if custom {":jazz"} else {":joy"};
@@ -4550,7 +4588,7 @@ mod tests {
             animated: true,
             guild_id: "10".into(),
             ..Default::default()
-        }];
+        }].into();
         message.content = ":MoniChibiSpin: :unknown: <:MoniChibiSpin:402>".into();
         let captures = message_rich_pattern()
             .captures_iter(&message.content)

@@ -46,7 +46,7 @@ impl NotDiscordUi {
         let available = ctx.content_rect().size() * (current_zoom / opening_zoom.max(0.1));
         let maximum = (available - egui::vec2(32., 64.)).max(egui::vec2(280., 180.));
         let mut close = false;
-        egui::Window::new("Ajustes de NotDiscord")
+        egui::Window::new(format!("Ajustes de {}",crate::brand::NAME))
             .order(egui::Order::Foreground)
             .id(egui::Id::new("settings-dialog"))
             .open(open).default_size(egui::vec2(620., 720.).min(maximum)).max_size(maximum)

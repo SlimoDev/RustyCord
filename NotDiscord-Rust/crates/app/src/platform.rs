@@ -525,7 +525,7 @@ impl EmojiSurface {
 pub fn render_emoji(text: &str, size: u32) -> Option<(u32, u32, Vec<u8>)> {
     EmojiRenderer::new().render(text, size)
 }
-const NOTIFICATION_APP_ID: &str = "com.notdiscord.Terminal.Native";
+const NOTIFICATION_APP_ID: &str = crate::brand::APP_ID;
 struct TrackedToast {
     notification: ToastNotification,
     channel: String,

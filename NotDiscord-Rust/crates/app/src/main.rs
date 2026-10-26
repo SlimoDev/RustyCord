@@ -36,7 +36,7 @@ fn main() -> eframe::Result {
             .map(PathBuf::from)
     };
     let absolute = |p: PathBuf| std::path::absolute(&p).unwrap_or(p);
-    let data = absolute(arg("--data-dir").unwrap_or_else(|| root.join("data")));
+    let data = absolute(arg("--data-dir").unwrap_or_else(|| root.join(notdiscord::brand::DATA_DIRECTORY)));
     if args.iter().any(|a| a == "--login") {
         authentication::login_process(&data);
         return Ok(());
@@ -81,7 +81,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     let result = eframe::run_native(
-        "NotDiscord",
+        notdiscord::brand::NAME,
         options,
         Box::new(move |cc| {
             let ctx = cc.egui_ctx.clone();

@@ -284,7 +284,7 @@ fn next_user(pending: &VecDeque<Envelope>, budget: &mut Budget) -> Option<(usize
 #[derive(Default)]
 struct SubscriptionState {
     guild: String,
-    latest: Option<(String, String, i32, Value)>,
+    latest: Option<(String, String, i32, i32, Value)>,
 }
 #[derive(Default)]
 struct IdentifyWindow {
@@ -315,12 +315,14 @@ impl SubscriptionState {
         if let GatewayCommand::SubscribeGuild {
             guild_id,
             channel_id,
+            range_start,
             range_end,
         } = command
         {
-            if let Some((guild, channel, range, payload)) = &self.latest
+            if let Some((guild, channel, start, range, payload)) = &self.latest
                 && guild == guild_id
                 && channel == channel_id
+                && start == range_start
                 && range == range_end
             {
                 return Ok(payload.clone());
@@ -329,6 +331,7 @@ impl SubscriptionState {
             self.latest = Some((
                 guild_id.clone(),
                 channel_id.clone(),
+                *range_start,
                 *range_end,
                 payload.clone(),
             ));

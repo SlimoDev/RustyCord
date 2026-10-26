@@ -771,15 +771,14 @@ impl NotDiscordUi {
         ui: &mut egui::Ui,
         channel: &NavItem,
         state: &AppSnapshot,
+        rows: &[(usize, String)],
     ) {
         if !matches!(channel.kind.as_str(),"voice"|"stage") || state.selected_guild_id.is_empty() {
             return;
         }
-        for member in state.guild_voice_members.iter().filter(|member| {
-            member.guild_id == state.selected_guild_id && member.channel_id == channel.id
-        }) {
-            let game=super::shell::guild_voice_game(state,member);
-            let height=super::shell::guild_voice_member_height(state,member);
+        for (index,game) in rows {
+            let Some(member)=state.guild_voice_members.get(*index).filter(|member|member.guild_id==state.selected_guild_id&&member.channel_id==channel.id)else{continue;};
+            let height=if game.is_empty(){32.}else{48.};
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(ui.available_width(),height), egui::Sense::click());
             let response=response.on_hover_cursor(egui::CursorIcon::PointingHand);

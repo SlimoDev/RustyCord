@@ -102,14 +102,24 @@ impl Features {
         result.reverse();
         Ok(result)
     }
-    /// Restore observed changes independently of the short-lived REST/LRU
-    /// window. Only deleted messages with a retained payload can add a row;
-    /// an edit record is a previous version, never an invented current row.
+    /// Restore only deletion markers inside the loaded interval. The separate
+    /// History view still exposes all retained observations; a deleted row
+    /// outside this window must not fabricate a pagination/scroll frontier.
     pub fn restore_session(&self,channel:&str,messages:Vec<ChatMessage>)->Vec<ChatMessage> {
         let history=self.history.lock().unwrap_or_else(|error|error.into_inner());
+        let order=|a:&ChatMessage,b:&ChatMessage|a.timestamp.cmp(&b.timestamp).then(a.id.len().cmp(&b.id.len())).then(a.id.cmp(&b.id));
+        let bounds=messages.iter().filter(|message|message.channel_id==channel).min_by(|a,b|order(a,b))
+            .zip(messages.iter().filter(|message|message.channel_id==channel).max_by(|a,b|order(a,b)));
+        let in_window=|snapshot:&ChatMessage|bounds.is_some_and(|(first,last)|!order(snapshot,first).is_lt()&&!order(snapshot,last).is_gt());
+        let visible=messages.iter().filter(|message|message.channel_id==channel).map(|message|message.id.as_str()).collect::<HashSet<_>>();
+        let reply_ids=messages.iter().filter(|message|message.channel_id==channel)
+            .filter_map(|message|message.reply_to.as_deref()).collect::<HashSet<_>>();
         let mut known:HashMap<&str,(Option<&ChatMessage>,Vec<&str>)>=HashMap::new();
         for record in history.records.iter().filter(|record|record.snapshot.channel_id==channel) {
-            let snapshot=&record.snapshot;let entry=known.entry(&snapshot.id).or_default();
+            let snapshot=&record.snapshot;
+            if !visible.contains(snapshot.id.as_str())&&!reply_ids.contains(snapshot.id.as_str())
+                && !(snapshot.deleted&&in_window(snapshot)) {continue;}
+            let entry=known.entry(&snapshot.id).or_default();
             if snapshot.deleted {entry.0=Some(snapshot);} else {
                 let content=snapshot.content.as_str();
                 if entry.1.last().copied()!=Some(content) {
@@ -118,10 +128,15 @@ impl Features {
                 }
             }
         }
+        let deleted=known.iter().filter_map(|(id,(snapshot,_))|snapshot.filter(|_|reply_ids.contains(*id)).map(|message|(
+            (*id).to_owned(),(message.author.clone(),notdiscord_core::parsing::message_preview(message),message.mentions.clone()))))
+            .collect::<HashMap<_,_>>();
+        let retained_deletions=known.iter().filter_map(|(id,(snapshot,_))|snapshot.filter(|snapshot|visible.contains(*id)||in_window(snapshot)).map(|_|(*id).to_owned()))
+            .collect::<HashSet<_>>();
         let mut combined:HashMap<String,ChatMessage>=messages.into_iter().filter(|message|message.channel_id==channel)
             .map(|message|(message.id.clone(),message)).collect();
         for (id,(deleted,versions)) in known {
-            if let Some(snapshot)=deleted {
+            if let Some(snapshot)=deleted.filter(|_|retained_deletions.contains(id)) {
                 let mut snapshot=snapshot.clone();snapshot.pinned=false;snapshot.reactions.clear();
                 combined.insert(id.to_owned(),snapshot);
             }
@@ -135,11 +150,13 @@ impl Features {
             }
         }
         let mut result=combined.into_values().collect::<Vec<_>>();
-        let deleted=result.iter().filter(|message|message.deleted).map(|message|(message.id.clone(),
-            (message.author.clone(),notdiscord_core::parsing::message_preview(message),message.mentions.clone()))).collect::<HashMap<_,_>>();
         for message in &mut result {
-            if let Some(preview)=message.reply_preview.as_mut().filter(|preview|preview.channel_id==channel)
-                && let Some((author,content,mentions))=deleted.get(&preview.message_id) {
+            if let Some(id)=message.reply_to.as_ref()
+                && message.reply_preview.as_ref().is_none_or(|preview|preview.channel_id==channel)
+                && let Some((author,content,mentions))=deleted.get(id) {
+                let preview=message.reply_preview.get_or_insert_with(||notdiscord_core::models::MessageReplyPreview {
+                    message_id:id.clone(),channel_id:channel.into(),..Default::default()
+                });
                 preview.deleted=true;preview.author=Some(author.clone());preview.content=content.clone();preview.mentions=mentions.clone();preview.unavailable=false;
             }
         }

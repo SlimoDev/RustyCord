@@ -63,6 +63,7 @@ pub enum GatewayCommand {
     SubscribeGuild {
         guild_id: String,
         channel_id: String,
+        range_start: i32,
         range_end: i32,
     },
     Presence {
@@ -429,6 +430,7 @@ pub fn command_payload(
         GatewayCommand::SubscribeGuild {
             guild_id,
             channel_id,
+            range_start,
             range_end,
         } => {
             if !guild_id.is_empty() && !crate::parsing::valid_id(guild_id)
@@ -446,9 +448,11 @@ pub fn command_payload(
             if !guild_id.is_empty() {
                 let mut channels = serde_json::Map::new();
                 if !channel_id.is_empty() {
+                    let start=(*range_start).clamp(0,1999);
+                    let end=(*range_end).clamp(start,1999);
                     channels.insert(
                         channel_id.clone(),
-                        json!([[0, range_end.clamp(&99, &1999)]]),
+                        json!([[start, end]]),
                     );
                 }
                 subscriptions.insert(
@@ -926,6 +930,7 @@ mod tests {
             &GatewayCommand::SubscribeGuild {
                 guild_id: "2".into(),
                 channel_id: "3".into(),
+                range_start: 0,
                 range_end: 99999,
             },
             "1",

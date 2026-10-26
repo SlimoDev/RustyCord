@@ -1,5 +1,6 @@
 pub mod authentication;
 pub mod backdrop;
+pub mod brand;
 pub mod controller;
 pub mod game_rpc;
 pub mod media;

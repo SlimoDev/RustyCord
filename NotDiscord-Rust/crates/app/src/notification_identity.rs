@@ -23,7 +23,7 @@ use windows::{
         },
     },
 };
-const APP_ID: &str = "com.notdiscord.Terminal.Native";
+const APP_ID: &str = crate::brand::APP_ID;
 const MAX_TOAST_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CACHED_IMAGE_BYTES: u64 = 64 * 1024;
 const TOAST_IMAGE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -357,7 +357,7 @@ pub fn register(exe: &Path, runtime: &Path, data: &Path) -> Result<(), String> {
             properties.SetValue(&key, &*value)?;
             properties.Commit()?;
             let persist: IPersistFile = link.cast()?;
-            let destination = wide(programs.join("NotDiscord.lnk").as_os_str());
+            let destination = wide(programs.join(crate::brand::START_MENU_SHORTCUT).as_os_str());
             persist.Save(PCWSTR(destination.as_ptr()), true)?;
             Ok(())
         })();
@@ -385,7 +385,7 @@ pub fn register(exe: &Path, runtime: &Path, data: &Path) -> Result<(), String> {
         }
         let mut success = true;
         for (name, value) in [
-            ("DisplayName", "NotDiscord".into()),
+            ("DisplayName", crate::brand::NAME.into()),
             ("IconUri", icon.to_string_lossy().into_owned()),
             ("NotDiscordExecutable", exe.to_string_lossy().into_owned()),
         ] {

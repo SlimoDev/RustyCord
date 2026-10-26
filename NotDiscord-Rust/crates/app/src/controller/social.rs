@@ -530,9 +530,8 @@ impl Controller {
                     return Err("La conversación cambió. Abre el mensaje y vuelve a elegir los destinos.".into());
                 }
                 let id = Self::valid(&action.id)?.to_owned();
-                let source=self.cache.get(&channel).into_iter()
-                    .chain(self.state.messages.iter().cloned()).chain(self.state.pinned_messages.iter().cloned())
-                    .find(|message|message.id==id&&message.channel_id==channel)
+                let source=self.cache.find(&channel,&id).or_else(||self.state.messages.iter().chain(&self.state.pinned_messages)
+                    .find(|message|message.id==id&&message.channel_id==channel).cloned())
                     .ok_or("El mensaje ya no está en la vista. No se ha reenviado nada.")?;
                 if source.deleted||source.forwarded||!matches!(source.message_type,0|19){return Err("Sólo se pueden reenviar mensajes originales disponibles.".into());}
                 let targets=forward_targets(&action)?;
@@ -873,7 +872,7 @@ impl Controller {
                     let channel = message.channel_id.clone();
                     self.observe_message_delivery(&channel, &message.id, true);
                     self.observe_message_preview(&message);
-                    if !self.cache.get(&channel).is_empty() {
+                    if !self.cache.window(&channel).newest_id.is_empty() {
                         self.cache.upsert(message);
                     }
                 }

@@ -12,10 +12,22 @@ pub(super) fn begin_frame(ctx: &egui::Context) {
     ctx.data_mut(|data| {
         data.insert_temp(key(false), false);
         data.insert_temp(key(true), false);
+        data.remove::<(usize,usize)>(egui::Id::new("member-demand-range"));
     });
 }
 pub(super) fn drawn(ctx: &egui::Context, dialog: bool) {
     ctx.data_mut(|data| data.insert_temp(key(dialog), true));
+}
+/// Positions are protocol rows: unloaded cells and role headers count too.
+pub(super) fn range(ctx:&egui::Context,start:usize,end:usize){
+    ctx.data_mut(|data|{
+        let key=egui::Id::new("member-demand-range");
+        let previous=data.get_temp::<(usize,usize)>(key);
+        let range=previous.map(|(a,b)|(a.min(start),b.max(end))).unwrap_or((start,end));
+        // Request fixed 100-slot blocks so a one-pixel scroll cannot generate
+        // a new subscription. The UI already includes a two-row overscan.
+        data.insert_temp(key,((range.0/100*100).min(1900),((range.1/100+1)*100-1).min(1999)));
+    });
 }
 impl NotDiscordUi {
     pub(super) fn update_member_demand(&mut self, ctx: &egui::Context, state: &AppSnapshot) {
@@ -54,18 +66,26 @@ impl NotDiscordUi {
             data.insert_temp(key, state.member_context_version);
             previous.is_some_and(|previous| previous != state.member_context_version)
         });
-        if desired == self.member_demand && !revision_changed {
-            return;
-        }
-        if let Some((old_account, guild, channel)) = self.member_demand.take() {
+        let context_changed=desired!=self.member_demand || revision_changed;
+        if context_changed && let Some((old_account, guild, channel)) = self.member_demand.take() {
             // A replaced session owns its own subscriptions and is already
             // cancelled; never send its old channel to the next account.
             if old_account == account {
                 self.send("member-demand", &channel, "hidden", &guild, &channel);
             }
         }
-        if let Some((_, guild, channel)) = &desired {
+        if context_changed && let Some((_, guild, channel)) = &desired {
             self.send("member-demand", channel, "visible", guild, channel);
+        }
+        let range=ctx.data(|data|data.get_temp::<(usize,usize)>(egui::Id::new("member-demand-range"))).unwrap_or((0,99));
+        let range_changed=ctx.data_mut(|data|{
+            let key=egui::Id::new("member-demand-last-range");
+            let previous=data.get_temp::<(usize,usize)>(key);
+            data.insert_temp(key,range);previous!=Some(range)
+        });
+        if let Some((_,guild,channel))=&desired
+            && (range_changed || context_changed) && (range!=(0,99) || !context_changed) {
+            self.send("member-range",channel,&format!("{}:{}",range.0,range.1),guild,channel);
         }
         self.member_demand = desired;
     }

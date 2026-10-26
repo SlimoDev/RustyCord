@@ -336,6 +336,35 @@ pub fn profile_details(
         else if p.user.name.is_empty() {p.user.name="Usuario".into();}
     }
     p.created_at = account_created_at(&p.user.id);
+    // Profile responses are partial: absence preserves cached metadata, while
+    // an explicit null removes an old banner. No extra profile/API request.
+    let global = value.get("user_profile").filter(|v| v.is_object());
+    let user = value.get("user").filter(|v| v.is_object());
+    let banner = global.and_then(|v| v.get("banner")).or_else(|| user.and_then(|v| v.get("banner")));
+    let valid_hash = |v: &Value| v.as_str().filter(|hash| {
+        let body = hash.strip_prefix("a_").unwrap_or(hash);
+        body.len() == 32 && body.bytes().all(|b| b.is_ascii_hexdigit())
+    }).unwrap_or("").to_owned();
+    let color = |v: &Value| v.as_u64().filter(|n| *n <= 0x00ff_ffff).map(|n| n as u32)
+        .or_else(|| v.as_str().and_then(|s| s.strip_prefix('#')).filter(|s| s.len() == 6).and_then(|s| u32::from_str_radix(s, 16).ok()));
+    if let Some(banner) = banner { p.banner_hash = valid_hash(banner); }
+    if let Some(value) = global.and_then(|v| v.get("accent_color").or_else(|| v.get("banner_color")))
+        .or_else(|| user.and_then(|v| v.get("accent_color").or_else(|| v.get("banner_color")))) {
+        p.banner_color = color(value);
+    }
+    if let Some(profile) = value.get("guild_member_profile") {
+        if profile.is_null() {
+            p.guild_banner_hash.clear();
+            p.guild_banner_color = None;
+        } else {
+            if let Some(banner) = profile.get("banner") { p.guild_banner_hash = valid_hash(banner); }
+            if let Some(value) = profile.get("accent_color") { p.guild_banner_color = color(value); }
+        }
+    }
+    if value.get("guild_member_profile").and_then(|v| v.get("banner")).is_none()
+        && let Some(banner) = value.get("guild_member").and_then(|v| v.get("banner")) {
+        p.guild_banner_hash = valid_hash(banner);
+    }
     if let Some(bio)=value["user_profile"].get("bio").or_else(||value["user"].get("bio"))
         .or_else(||p.user.is_bot.then(||value["application"].get("description")).flatten()) {
         p.bio=limited(bio.as_str().unwrap_or(""),4000);

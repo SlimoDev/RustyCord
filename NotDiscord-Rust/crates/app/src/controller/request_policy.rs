@@ -2,8 +2,8 @@
 use super::*;
 
 pub(super) fn queue_member_subscription<F>(
-    accepted: &mut Option<(String, String, i32)>,
-    desired: (String, String, i32),
+    accepted: &mut Option<(String, String, i32, i32)>,
+    desired: (String, String, i32, i32),
     ready: bool,
     enqueue: F,
 ) where
@@ -16,7 +16,8 @@ pub(super) fn queue_member_subscription<F>(
     if enqueue(GatewayCommand::SubscribeGuild {
         guild_id: desired.0.clone(),
         channel_id: desired.1.clone(),
-        range_end: desired.2,
+        range_start: desired.2,
+        range_end: desired.3,
     }) {
         *accepted = Some(desired);
     }

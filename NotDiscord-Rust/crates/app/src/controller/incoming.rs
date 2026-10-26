@@ -232,23 +232,13 @@ impl Controller {
         let me=self.me();
         let known_channel=self.channels.contains_key(&s(&value,"id"));
         self.guild_load.observe(kind,&value,&me,known_channel);
+        self.guild_catalog_cache.observe(kind,&value,&me);
         if matches!(kind, "MESSAGE_CREATE" | "MESSAGE_UPDATE" | "MESSAGE_DELETE") {
             self.observe_message_nickname(&value);
             let channel = s(&value, "channel_id");
-            if self.loading_channel == channel {
-                let bytes = value.to_string().encode_utf16().count() * 2;
-                if self.pending_deltas.len() >= 256
-                    || self.pending_delta_bytes.saturating_add(bytes) > 1024 * 1024
-                {
-                    self.cancel_view_requests();
-                    self.error("Demasiados cambios durante la carga. Vuelve a abrir el canal; los mensajes recibidos se conservan.".into());
-                } else {
-                    self.pending_deltas.push_back((kind.into(), value.clone()));
-                    self.pending_delta_bytes += bytes;
-                }
-            }
+            self.buffer_message_delta(&channel, kind, &value);
             let cached_old = self.cache.find(&channel, &s(&value, "id"));
-            let outside_window = cached_old.is_none() && matches!(self.state.view.as_str(),"pins"|"search");
+            let outside_window = cached_old.is_none();
             let old = cached_old.or_else(|| {
                 // Pins/search can contain a fully received message outside the
                 // small chat LRU. Its observed payload is still known locally.
@@ -271,32 +261,25 @@ impl Controller {
                     }
                 }
             }
-            let mut list = self.cache.get(&channel);
-            if let Some(previous)=&old && !list.iter().any(|message|message.id==previous.id) {list.push(previous.clone());}
-            apply_delta(&mut list, kind, &value);
+            let id = s(&value, "id");
+            let changed = if kind == "MESSAGE_CREATE" {
+                let message = parsing::message(&value);
+                self.cache.upsert(message.clone());
+                Some(message)
+            } else {
+                self.cache.update(&channel, &id, |message| apply_message_delta(message, kind, &value))
+                    .or_else(|| old.as_ref().map(|previous| {
+                        let mut message = previous.clone();
+                        apply_message_delta(&mut message, kind, &value);
+                        message
+                    }))
+            };
             if kind == "MESSAGE_DELETE" {
-                let id = s(&value, "id");
-                for reply in &mut list {
-                    if reply.reply_to.as_deref() == Some(&id)
-                        && reply
-                            .reply_preview
-                            .as_ref()
-                            .is_none_or(|p| p.channel_id == channel)
-                    {
-                        reply.reply_preview = Some(MessageReplyPreview {
-                            message_id: id.clone(),
-                            channel_id: channel.clone(),
-                            deleted: true,
-                            ..Default::default()
-                        })
-                    }
-                }
+                self.cache.mark_reply_deleted(&channel, &id);
             }
-            let changed=list.iter().find(|message|message.id==s(&value,"id")).cloned();
             if outside_window && matches!(kind,"MESSAGE_UPDATE"|"MESSAGE_DELETE") {
                 if let Some(changed)=&changed {for message in &mut self.state.messages {if message.id==changed.id&&message.channel_id==channel {*message=changed.clone();}}}
-            } else {self.cache.replace(&channel, list);}
-            let id = s(&value, "id");
+            }
             if kind == "MESSAGE_DELETE" {
                 self.state
                     .pinned_messages
@@ -477,9 +460,9 @@ impl Controller {
                 if !s(&value, "self_status").is_empty() {
                     self.apply_self_presence(&s(&value, "self_status"));
                 }
-                for p in items(&value["presences"]).iter().take(2000) {
-                    self.presence(p);
-                }
+                let touched=items(&value["presences"]).iter().take(2000)
+                    .filter_map(|presence|self.record_presence(presence)).collect::<HashSet<_>>();
+                self.apply_presence_batch(&touched);
                 for setting in items(&value["settings"]).iter().take(500) {
                     self.notification_settings(setting);
                 }
@@ -696,8 +679,9 @@ impl Controller {
                 self.state.guild_voice_members.retain(|member|member.guild_id!=guild||member.user.id!=user);
                 if guild==self.state.selected_guild_id{
                     self.state.guild_nicknames.remove(&user);
-                    self.state.guild_members.retain(|member|member.user.id!=user);
                     for member in &mut self.guild_member_slots{if member.as_ref().is_some_and(|member|member.user.id==user){*member=None;}}
+                    if self.state.guild_member_list_bound{self.project_member_slots();}
+                    else{self.state.guild_members.retain(|member|member.user.id!=user);}
                 }
                 self.invalidate_guild_editor(&guild);self.publish();
             }
@@ -1133,17 +1117,24 @@ impl Controller {
         Ok(())
     }
     fn presence(&mut self, value: &Value) {
+        let touched=self.record_presence(value).into_iter().collect::<HashSet<_>>();
+        self.apply_presence_batch(&touched);
+    }
+    /// Record a batch before touching view collections. A SYNC with 100
+    /// presences must not rescan the same member/DM collections 100 times.
+    fn record_presence(&mut self, value:&Value)->Option<String> {
         let id = if value["user"].is_object() {
             s(&value["user"], "id")
         } else {
             s(value, "user_id")
         };
         if id.is_empty() {
-            return;
+            return None;
         }
-        if value["user"].get("username").is_some() {
-            self.remember(parsing::person(&value["user"]));
-        }
+        let user_changed=if value["user"].get("username").is_some() {
+            let user=parsing::person(&value["user"]);
+            let changed=self.people.get(&id)!=Some(&user);self.remember(user);changed
+        }else{false};
         let mut p = parsing::presence(value);
         if let Some(previous)=self.state.user_presences.get(&id) {
             if value.get("status").is_none(){p.status=previous.status.clone();}
@@ -1156,33 +1147,51 @@ impl Controller {
                 self.state.user_presences.remove(&key);
             }
         }
-        self.state.user_presences.insert(id.clone(), p.clone());
-        self.state.presence_version += 1;
+        if self.state.user_presences.get(&id)==Some(&p){return user_changed.then_some(id);}
+        self.state.user_presences.insert(id.clone(), p);
+        self.state.presence_version = self.state.presence_version.wrapping_add(1);
+        Some(id)
+    }
+    fn apply_presence_batch(&mut self,touched:&HashSet<String>){
+        if touched.is_empty(){return;}
         for member in self
             .state
             .group_members
             .iter_mut()
             .chain(&mut self.state.guild_members)
         {
-            if member.user.id == id {
+            if touched.contains(&member.user.id) && let Some(p)=self.state.user_presences.get(&member.user.id) {
                 member.presence = p.status.clone();
                 member.custom_status = p.custom_status.clone();
                 member.custom_status_emoji = p.custom_status_emoji.clone();
                 member.activities = p.activities.clone();
             }
         }
+        for member in self.guild_member_slots.iter_mut().flatten(){
+            if touched.contains(&member.user.id) && let Some(p)=self.state.user_presences.get(&member.user.id){
+                member.presence=p.status.clone();member.custom_status=p.custom_status.clone();
+                member.custom_status_emoji=p.custom_status_emoji.clone();member.activities=p.activities.clone();
+            }
+        }
         if let Some(profile) = self
             .state
             .profile_details
             .as_mut()
-            .filter(|d| d.user.id == id)
+            .filter(|d| touched.contains(&d.user.id))
+            && let Some(p)=self.state.user_presences.get(&profile.user.id)
         {
-            profile.presence = p.status;
-            profile.custom_status = p.custom_status;
-            profile.custom_status_emoji = p.custom_status_emoji;
-            profile.activities = p.activities;
+            profile.presence = p.status.clone();
+            profile.custom_status = p.custom_status.clone();
+            profile.custom_status_emoji = p.custom_status_emoji.clone();
+            profile.activities = p.activities.clone();
         }
-        self.decorate_dms();
+        for dm in &mut self.state.direct_messages{
+            if touched.contains(&dm.recipient_id) && let Some(p)=self.state.user_presences.get(&dm.recipient_id){
+                dm.presence=p.status.clone();dm.custom_status=p.custom_status.clone();
+                dm.custom_status_emoji=p.custom_status_emoji.clone();dm.activities=p.activities.clone();
+                if let Some(user)=self.people.get(&dm.recipient_id){dm.name=user.name.clone();dm.icon_url=user.avatar_url.clone();}
+            }
+        }
     }
     fn notification_settings(&mut self, value: &Value) {
         self.notification_settings.apply(value);
@@ -1451,10 +1460,7 @@ impl Controller {
             self.state.pinned_messages.clear();
         }
         if !access.can_view_members {
-            self.state.guild_members.clear();
-            self.state.guild_members_note.clear();
-            self.guild_member_slots = Vec::new();
-            self.member_list_id.clear();
+            self.reset_member_list();
         }
         self.state.channel_access = access;
         // A partial list derived from history must disappear as soon as that
@@ -1481,64 +1487,27 @@ impl Controller {
     fn reaction_event(&mut self, kind: &str, value: &Value) {
         let channel = s(value, "channel_id");
         let id = s(value, "message_id");
-        let mut messages = self.cache.get(&channel);
-        let Some(message) = messages.iter_mut().find(|m| m.id == id) else {
-            return;
-        };
-        let e = &value["emoji"];
-        let emoji = StatusEmoji {
-            name: s(e, "name"),
-            id: s(e, "id"),
-            animated: b(e, "animated"),
-        };
-        let key = emoji.reaction_key();
-        let me = s(value, "user_id") == self.me();
-        let burst = b(value, "burst") || i(value, "type") == 1;
-        if kind == "MESSAGE_REACTION_REMOVE_ALL" {
-            message.reactions.clear();
-        } else if kind == "MESSAGE_REACTION_REMOVE_EMOJI" {
-            message.reactions.retain(|r| r.emoji.reaction_key() != key);
-        } else {
-            let existing = message
-                .reactions
-                .iter()
-                .position(|r| r.emoji.reaction_key() == key);
-            if kind == "MESSAGE_REACTION_ADD" {
-                if let Some(index) = existing {
-                    let r = &mut message.reactions[index];
-                    r.count += 1;
-                    if me {
-                        if burst {
-                            r.burst_me = true
-                        } else {
-                            r.normal_me = Some(true)
-                        }
-                        r.me = true;
-                    }
-                } else if message.reactions.len() < 100 {
-                    message.reactions.push(MessageReaction {
-                        emoji,
-                        count: 1,
-                        me,
-                        normal_me: Some(me && !burst),
-                        burst_me: me && burst,
-                    });
-                }
-            } else if let Some(index) = existing {
-                let r = &mut message.reactions[index];
-                r.count = (r.count - 1).max(0);
-                if me {
-                    if burst {
-                        r.burst_me = false
-                    } else {
-                        r.normal_me = Some(false)
-                    }
-                    r.me = r.normal_me.unwrap_or(false) || r.burst_me;
-                }
-                message.reactions.retain(|r| r.count > 0);
+        let me = self.me();
+        let update = |message: &mut ChatMessage| apply_reaction_delta(message, kind, value, &me);
+        let changed = self.cache.update(&channel, &id, &update);
+        if changed.is_none() {
+            for message in &mut self.state.messages {
+                if message.id == id && message.channel_id == channel { update(message); }
             }
         }
-        self.cache.replace(&channel, messages);
+        for message in &mut self.state.pinned_messages {
+            if message.id == id && message.channel_id == channel {
+                if let Some(changed) = &changed { *message = changed.clone(); } else { update(message); }
+            }
+        }
+        if self.state.view == "pins" && channel == self.state.selected_channel_id {
+            self.state.messages = self.state.pinned_messages.clone().into();
+        }
+        if let Some(message) = changed.as_ref().or_else(||self.state.messages.iter()
+            .find(|message|message.id==id&&message.channel_id==channel)) {
+            let observed = json!({"message_id":id,"observedReactions":message.reactions});
+            self.buffer_message_delta(&channel, kind, &observed);
+        }
     }
     pub(super) fn member_list_fallback(&mut self) {
         let guild = &self.state.selected_guild_id;
@@ -1557,11 +1526,13 @@ impl Controller {
         }).unwrap_or_default();
         if !expected.is_empty() {
             self.state.guild_members.clear();self.state.guild_member_groups.clear();
+            self.state.guild_member_indices.clear();self.state.guild_member_list_bound=false;
             self.state.guild_members_total=0;self.state.guild_members_partial=true;self.state.guild_members_has_more=false;
             self.state.guild_members_note="Esperando la lista verificada de miembros del canal.".into();
             return;
         }
         let mut seen = HashSet::new();
+        self.state.guild_member_indices.clear();self.state.guild_member_list_bound=false;
         self.state.guild_members = self.state.messages.iter()
             .filter(|m| self.state.channel_access.can_read_history && m.channel_id == *channel && parsing::valid_id(&m.author.id))
             .filter(|m| seen.insert(m.author.id.clone()))
@@ -1623,9 +1594,11 @@ impl Controller {
             // the previous list's slots, even when it is the same channel.
             self.guild_member_slots = Vec::new();
             self.state.guild_members.clear();
+            self.state.guild_member_indices.clear();
             self.state.guild_member_groups.clear();
         }
         self.member_list_id = id;
+        let mut touched=HashSet::new();
         self.state.guild_members_note.clear();
         let total = value.get("member_count").and_then(Value::as_i64)
             .map(|total|total.clamp(0,i32::MAX as i64) as i32).unwrap_or(self.state.guild_members_total);
@@ -1662,18 +1635,18 @@ impl Controller {
                     for (offset, item) in
                         items(&op["items"]).iter().take(end - start + 1).enumerate()
                     {
-                        self.set_member_slot(start + offset, item);
+                        self.set_member_slot_batch(start + offset, item, &mut touched);
                     }
                 }
                 "INSERT" => {
                     let index = i(op, "index").max(0) as usize;
                     if index <= self.guild_member_slots.len() && index < 2000 {
-                        let member = self.parse_member(&op["item"]);
+                        let member = self.parse_member(&op["item"], &mut touched);
                         self.guild_member_slots.insert(index, member);
                         self.guild_member_slots.truncate(2000);
                     }
                 }
-                "UPDATE" => self.set_member_slot(i(op, "index").max(0) as usize, &op["item"]),
+                "UPDATE" => self.set_member_slot_batch(i(op, "index").max(0) as usize, &op["item"], &mut touched),
                 "DELETE" => {
                     let index = i(op, "index").max(0) as usize;
                     if index < self.guild_member_slots.len() {
@@ -1702,14 +1675,8 @@ impl Controller {
                 _ => (),
             }
         }
-        let mut seen = HashSet::new();
-        self.state.guild_members = self
-            .guild_member_slots
-            .iter()
-            .flatten()
-            .filter(|m| seen.insert(m.user.id.clone()))
-            .cloned()
-            .collect();
+        self.project_member_slots();
+        self.apply_presence_batch(&touched);
         self.state.guild_members_partial = self.state.guild_members.len() < total.max(0) as usize;
         if value["groups"].is_array() {
         self.state.guild_member_groups = items(&value["groups"])
@@ -1737,16 +1704,21 @@ impl Controller {
         self.search_people();
     }
     fn set_member_slot(&mut self, index: usize, value: &Value) {
+        let mut touched=HashSet::new();
+        self.set_member_slot_batch(index,value,&mut touched);
+        self.apply_presence_batch(&touched);
+    }
+    fn set_member_slot_batch(&mut self, index: usize, value: &Value, touched:&mut HashSet<String>) {
         if index >= 2000 {
             return;
         }
         if self.guild_member_slots.len() <= index {
             self.guild_member_slots.resize(index + 1, None);
         }
-        let member = self.parse_member(value);
+        let member = self.parse_member(value,touched);
         self.guild_member_slots[index] = member;
     }
-    fn parse_member(&mut self, value: &Value) -> Option<ChannelMember> {
+    fn parse_member(&mut self, value: &Value, touched:&mut HashSet<String>) -> Option<ChannelMember> {
         let v = value.get("member")?;
         let user = parsing::person(&v["user"]);
         if user.id.is_empty() {
@@ -1761,7 +1733,7 @@ impl Controller {
             .or_else(||v.get("presence").filter(|value|value.is_object())) {
             let mut presence=raw.clone();
             presence["user"]=json!({"id":m.user.id});
-            self.presence(&presence);
+            if let Some(id)=self.record_presence(&presence){touched.insert(id);}
             if let Some(p)=self.state.user_presences.get(&m.user.id) {
                 m.presence=p.status.clone();m.activities=p.activities.clone();
                 m.custom_status=p.custom_status.clone();m.custom_status_emoji=p.custom_status_emoji.clone();

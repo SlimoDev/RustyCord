@@ -7,11 +7,13 @@ const MAX_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ENTRY_BYTES: usize = 512 * 1024;
 const MAX_ENCODED_EMOJI: u64 = 1024 * 1024;
 const MAX_FRAMES: usize = 400;
-type Reply = (u64, String, Result<AnimationFrames, String>);
+const HOVER_CACHE_TTL: Duration = Duration::from_secs(45);
+type Reply = (u64, String, Result<AnimationFrames, String>, DecodePermit);
 struct Entry {
     frames: Vec<(TextureHandle, Duration)>,
     index: usize,
     next: Instant,
+    clock: animation_clock::AnimationClock,
     seen: Instant,
     bytes: usize,
 }
@@ -28,6 +30,7 @@ pub(super) struct Cache {
     epoch: Arc<AtomicU64>,
     wanted: Arc<Mutex<HashSet<String>>>,
     requested_this_frame: HashSet<String>,
+    gate: Arc<DecodeGate>,
 }
 fn requested_side(url: &str) -> u32 {
     url::Url::parse(url).ok().filter(|url|url.query_pairs().any(|(key,value)|key=="size"&&value=="48"))
@@ -86,7 +89,7 @@ fn decode_gif(bytes: &[u8], cancelled: impl Fn() -> bool, max_side:u32) -> Resul
         }
         let frame = frame.map_err(|_| error())?;
         let (n, d) = frame.delay().numer_denom_ms();
-        let duration = Duration::from_millis(u64::from((n / d.max(1)).clamp(40, 10_000)));
+        let duration = Duration::from_millis(u64::from((n / d.max(1)).clamp(10, 10_000)));
         let bitmap = frame.into_buffer();
         let thumb = image::imageops::thumbnail(&bitmap, side, side);
         frames.push((thumb.width(), thumb.height(), thumb.into_raw(), duration));
@@ -191,7 +194,7 @@ fn decode_webp(bytes: &[u8], cancelled: impl Fn() -> bool, max_side:u32) -> Resu
         }
         let frame = frame.map_err(|_| error())?;
         let (n, d) = frame.delay().numer_denom_ms();
-        let duration = Duration::from_millis(u64::from((n / d.max(1)).clamp(40, 10_000)));
+        let duration = Duration::from_millis(u64::from((n / d.max(1)).clamp(10, 10_000)));
         let bitmap = frame.into_buffer();
         if bitmap.dimensions() != (width, height) {
             return Err(error());
@@ -205,6 +208,11 @@ fn decode_webp(bytes: &[u8], cancelled: impl Fn() -> bool, max_side:u32) -> Resu
     Ok(frames)
 }
 impl Cache {
+    pub(super) fn new(gate: Arc<DecodeGate>) -> Self {
+        let mut cache=Self::default();
+        cache.gate=gate;
+        cache
+    }
     fn initialize(&mut self, ctx: &egui::Context) {
         if self.worker.is_some() {
             return;
@@ -214,6 +222,7 @@ impl Cache {
         let epoch = self.epoch.clone();
         let wanted = self.wanted.clone();
         let wake = ctx.clone();
+        let gate = self.gate.clone();
         std::thread::spawn(move || {
             while let Ok((generation, url)) = receive.recv() {
                 let cancellation_seen = std::cell::Cell::new(false);
@@ -226,14 +235,14 @@ impl Cache {
                 if cancelled() {
                     continue;
                 }
+                let downloaded = download_bytes_cancellable(&url, MAX_ENCODED_EMOJI, cancelled);
+                let Some(permit) = gate.acquire(cancelled) else { continue; };
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    download_bytes_cancellable(&url, MAX_ENCODED_EMOJI, cancelled).and_then(|bytes| {
-                        decode_for_side(&bytes, cancelled,requested_side(&url))
-                    })
+                    downloaded.and_then(|bytes| decode_for_side(&bytes, cancelled, requested_side(&url)))
                 }))
                 .unwrap_or_else(|_| Err("No se pudo decodificar este emoji.".into()));
                 if cancellation_seen.get() || cancelled() { continue; }
-                if done.send((generation, url, result)).is_err() {
+                if done.send((generation, url, result, permit)).is_err() {
                     break;
                 }
                 wake.request_repaint();
@@ -247,7 +256,7 @@ impl Cache {
             .as_ref()
             .map(|worker| worker.ready.try_iter().collect())
             .unwrap_or_default();
-        for (generation, url, result) in replies {
+        for (generation, url, result, _permit) in replies {
             if generation != self.epoch.load(Ordering::Acquire)
                 || !self.wanted.lock().unwrap_or_else(|error| error.into_inner()).contains(&url) {
                 continue;
@@ -275,15 +284,12 @@ impl Cache {
                 self.failed.insert(url, Instant::now());
                 continue;
             }
-            if self.entries.len() >= MAX_ITEMS
-                || self
-                    .entries
-                    .values()
-                    .map(|entry| entry.bytes)
-                    .sum::<usize>()
-                    + bytes
-                    > MAX_BYTES
-            {
+            while self.entries.len() >= MAX_ITEMS || self.entries.values().map(|entry| entry.bytes).sum::<usize>() + bytes > MAX_BYTES {
+                let Some(oldest) = self.entries.iter().filter(|(url, _)| !self.requested_this_frame.contains(*url))
+                    .min_by_key(|(_, entry)| entry.seen).map(|(url, _)| url.clone()) else { break; };
+                self.entries.remove(&oldest);
+            }
+            if self.entries.len() >= MAX_ITEMS || self.entries.values().map(|entry| entry.bytes).sum::<usize>() + bytes > MAX_BYTES {
                 // Never evict another emoji from the same hovered message and
                 // re-download it on the next pass. Budget overflow uses the
                 // existing static image with a bounded retry delay instead.
@@ -316,6 +322,7 @@ impl Cache {
                         frames,
                         index: 0,
                         next,
+                        clock: animation_clock::AnimationClock::new(now),
                         seen: now,
                         bytes,
                     },
@@ -337,20 +344,24 @@ impl Cache {
         }) {
             return None;
         }
-        self.wanted.lock().unwrap_or_else(|error| error.into_inner()).insert(url.into());
+        let newly_active = self.wanted.lock().unwrap_or_else(|error| error.into_inner()).insert(url.into());
         self.requested_this_frame.insert(url.into());
         self.poll(ctx);
         if let Some(entry) = self.entries.get_mut(url) {
             entry.seen = Instant::now();
-            if entry.seen >= entry.next {
-                entry.index = (entry.index + 1) % entry.frames.len();
-                entry.next = entry.seen + entry.frames[entry.index].1;
-            }
-            ctx.request_repaint_after(entry.next.saturating_duration_since(entry.seen));
+            if newly_active { entry.clock.reset(entry.seen); }
+            let (index, after) = entry.clock.frame(entry.seen, entry.frames.iter().map(|frame| frame.1), 25);
+            entry.index = index; entry.next = entry.seen + after;
+            ctx.request_repaint_after(after);
             return Some(entry.frames[entry.index].0.clone());
         }
         // Additional simultaneously visible emojis keep their static fallback.
         // Do not evict visible entries and repeatedly re-download them each frame.
+        while self.pending.len() + self.entries.len() >= MAX_ITEMS {
+            let Some(oldest) = self.entries.iter().filter(|(url, _)| !self.requested_this_frame.contains(*url))
+                .min_by_key(|(_, entry)| entry.seen).map(|(url, _)| url.clone()) else { break; };
+            self.entries.remove(&oldest);
+        }
         if self.pending.len() + self.entries.len() < MAX_ITEMS
             && !self.pending.contains(url)
             && self
@@ -385,7 +396,7 @@ impl Cache {
                 ColorImage::new([side, side], vec![if index % 2 == 0 { egui::Color32::RED } else { egui::Color32::GREEN }; side * side]),
                 TextureOptions::NEAREST), Duration::from_millis(40))).collect();
         let ids = frames.iter().map(|(texture, _)| texture.id()).collect();
-        self.entries.insert(url.into(), Entry { frames, index: 0, next: Instant::now() + Duration::from_secs(60), seen: Instant::now(), bytes: count * side * side * 4 });
+        self.entries.insert(url.into(), Entry { frames, index: 0, next: Instant::now() + Duration::from_secs(60), clock: animation_clock::AnimationClock::new(Instant::now()), seen: Instant::now(), bytes: count * side * side * 4 });
         ids
     }
     #[cfg(any(test, feature = "offline-probes"))]
@@ -403,13 +414,8 @@ impl Cache {
         } else {
             self.wanted.lock().unwrap_or_else(|error| error.into_inner())
                 .retain(|url| self.requested_this_frame.contains(url));
-            self.entries.retain(|url, _| self.requested_this_frame.contains(url));
+            self.entries.retain(|_, entry| entry.seen.elapsed() < HOVER_CACHE_TTL);
             self.pending.retain(|url| self.requested_this_frame.contains(url));
-            if self.requested_this_frame.is_empty() {
-                // A late decoder result must not resurrect a message after
-                // pointer exit, navigation, minimization or clipping.
-                self.epoch.fetch_add(1, Ordering::AcqRel);
-            }
         }
     }
     pub(super) fn clear(&mut self) {

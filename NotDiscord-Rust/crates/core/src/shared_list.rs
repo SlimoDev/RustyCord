@@ -21,6 +21,8 @@ impl<T> Default for SharedList<T> {
     }
 }
 impl<T> SharedList<T> {
+    /// Identity of immutable payloads, useful for derived presentation caches.
+    pub fn same_storage(&self, other: &Self) -> bool { Arc::ptr_eq(&self.0, &other.0) }
     /// Replacing an obsolete view must not copy its shared payload merely to
     /// clear it. Dropping this handle also releases unique spare capacity.
     pub fn clear(&mut self) {
@@ -96,7 +98,7 @@ impl<T: fmt::Debug> fmt::Debug for SharedList<T> {
 }
 impl<T: PartialEq> PartialEq for SharedList<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.0.as_ref() == other.0.as_ref()
+        Arc::ptr_eq(&self.0, &other.0) || self.0.as_ref() == other.0.as_ref()
     }
 }
 impl<T: Eq> Eq for SharedList<T> {}

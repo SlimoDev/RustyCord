@@ -145,10 +145,10 @@ async fn member_demand_tracks_real_context_and_navigation_clears_it_without_jobs
 #[test]
 fn reconnect_reconciles_hidden_or_replaced_member_demand_once_ready() {
     for desired in [
-        (String::new(), String::new(), 99),
-        ("11".into(), "21".into(), 199),
+        (String::new(), String::new(), 0, 99),
+        ("11".into(), "21".into(), 100, 199),
     ] {
-        let old = Some(("10".into(), "20".into(), 99));
+        let old = Some(("10".into(), "20".into(), 0, 99));
         let mut accepted = old.clone();
         // Hiding or changing panels while disconnected cannot acknowledge the
         // new intent; the last subscription may still be replayed by RESUME.
@@ -171,12 +171,13 @@ fn reconnect_reconciles_hidden_or_replaced_member_demand_once_ready() {
                 let GatewayCommand::SubscribeGuild {
                     guild_id,
                     channel_id,
+                    range_start,
                     range_end,
                 } = command
                 else {
                     panic!("Only a member subscription may be reconciled")
                 };
-                assert_eq!((guild_id, channel_id, range_end), desired);
+                assert_eq!((guild_id, channel_id, range_start, range_end), desired);
                 true
             },
         );

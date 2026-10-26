@@ -160,7 +160,7 @@ pub fn login_process(data: &Path) {
                 w!(
                     "No se pudo abrir el inicio de sesión. Comprueba WebView2 y la conexión a Internet."
                 ),
-                w!("NotDiscord · Inicio de sesión"),
+                w!("NotDiscord+ · Inicio de sesión"),
                 MB_OK | MB_ICONWARNING,
             );
         }
@@ -201,7 +201,7 @@ fn run_login_window(profile: &Path, handoff: PathBuf) -> Result<(), String> {
         CreateWindowExW(
             Default::default(),
             w!("NotDiscordRustLogin"),
-            w!("NotDiscord · Inicio de sesión de Discord"),
+            w!("NotDiscord+ · Inicio de sesión de Discord"),
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,

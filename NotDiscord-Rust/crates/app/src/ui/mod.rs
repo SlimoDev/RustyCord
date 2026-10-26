@@ -10,6 +10,7 @@ mod font_files;
 mod icons;
 mod incoming;
 mod member_demand;
+mod list_projection;
 mod moderation;
 mod group_members;
 mod notification_activation;
@@ -621,6 +622,7 @@ impl NotDiscordUi {
             self.cjk_loaded |= bit;
         }
         self.ctx.set_fonts(self.fonts.clone());
+        chat::clear_geometry(&self.ctx);
         self.ctx.request_repaint();
     }
     fn send(
@@ -741,12 +743,22 @@ impl NotDiscordUi {
                     self.video_visibility = None;
                 }
                 UiUpdate::Snapshot(mut snapshot) => {
+                    if snapshot.guild_members != self.state.guild_members
+                        || snapshot.group_members != self.state.group_members
+                        || snapshot.guild_roles != self.state.guild_roles
+                        || snapshot.guild_nicknames != self.state.guild_nicknames
+                        || snapshot.search_people != self.state.search_people
+                        || snapshot.current_user != self.state.current_user
+                        || snapshot.emojis != self.state.emojis {
+                        chat::clear_geometry(ctx);
+                    }
                     if snapshot.notification_generation != self.state.notification_generation
                         || snapshot.signed_in != self.state.signed_in
                         || snapshot.current_user.as_ref().map(|person| &person.id)
                             != self.state.current_user.as_ref().map(|person| &person.id) {
                         chat::clear_reaction_users(ctx);
                         chat::clear_history_page_request(ctx);
+                        chat::clear_presentation(ctx);
                     }
                     // This ordered policy lane can be newer than a coalesced
                     // snapshot that was already flushed before its barrier.
@@ -776,10 +788,12 @@ impl NotDiscordUi {
                         if let Some(position) = self
                             .positions
                             .get(&snapshot.selected_channel_id)
-                            .filter(|position| !position.at_bottom && !position.anchor.is_empty())
+                            .filter(|position| (!position.at_bottom || snapshot.message_window.mode == MessageWindowMode::History)
+                                && !position.anchor.is_empty())
                         {
                             self.restore_anchor =
                                 Some((position.anchor.clone(), position.anchor_top));
+                            if snapshot.message_window.mode == MessageWindowMode::History { self.scroll_bottom=false; }
                         }
                     }
                     let mut avatars = HashMap::<String, Option<String>>::new();
@@ -1429,6 +1443,7 @@ impl NotDiscordUi {
             if !self.emoji_textures.contains_key(&key)
                 && !self.emoji_pending.contains_key(&key)
                 && !self.pictures.visuals_suspended()
+                && self.pictures.request_admitted()
                 && self
                     .emoji_failed
                     .get(&key)
