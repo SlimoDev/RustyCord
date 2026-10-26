@@ -3,5 +3,10 @@
   "variant": "standard",
   "branch": "NotDiscord",
   "version": "0.3.0",
-  "release": null
+  "release": {
+    "tag": "NotDiscord-v0.3.0",
+    "url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.3.0/NotDiscord-0.3.0.zip",
+    "bytes": 11769892,
+    "sha256": "091a04386bfd0da771349a2d43f0aa1204fffb99de26736b19918126e871b2ca"
+  }
 }
