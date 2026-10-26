@@ -1,0 +1,57 @@
+[package]
+name = "notdiscord"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+# Explicit diagnostic-only fixture access for standalone offline examples.
+offline-probes = []
+
+[dependencies]
+notdiscord-core = { path = "../core" }
+eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "accesskit"] }
+egui_extras = { version = "0.33", features = ["image"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "stream", "blocking"] }
+futures-util = "0.3"
+sha2 = "0.10"
+symphonia = { version = "=0.5.5", default-features = false, features = ["mp3", "ogg", "vorbis"] }
+base64 = "0.22"
+regex = "1"
+unicode-segmentation = "1"
+memmap2 = "0.9.11"
+raw-window-handle = "0.6.2"
+windows-numerics = "0.2.0"
+windows-core = "0.61.2"
+windows-collections = "0.2.0"
+url = "2"
+zeroize = { version = "1", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "ico"] }
+gif = "0.13"
+rfd = "0.15"
+arboard = "3"
+webbrowser = "1"
+rand = "0.9"
+uuid = { version = "1", features = ["v4"] }
+webview2-com = "0.38"
+windows = { version = "0.61", features = ["Graphics_Effects", "Win32_System_WinRT_Graphics_Direct2D", "UI_Composition", "UI_Composition_Desktop", "System", "Win32_System_WinRT", "Win32_System_WinRT_Composition", "Win32_Graphics_Dwm", "Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_System_RemoteDesktop", "Win32_System_Pipes", "Win32_System_IO", "Win32_System_DataExchange", "Win32_System_StationsAndDesktops", "Win32_Security_Authorization", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_Graphics_DirectWrite", "Win32_Graphics_Direct2D", "Win32_Graphics_Direct2D_Common", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Imaging", "Win32_Graphics_Gdi", "UI_Notifications", "Data_Xml_Dom", "Storage_Streams"] }
+
+[[bin]]
+name = "NotDiscord"
+path = "src/main.rs"
+
+[dev-dependencies]
+notdiscord-core = { path = "../core", features = ["offline-probes"] }
+
+[[example]]
+name = "ui7_resource_probe"
+required-features = ["offline-probes"]
+
+[[example]]
+name = "microphone_input_check"
+required-features = ["offline-probes"]

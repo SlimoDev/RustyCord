@@ -1,0 +1,29 @@
+[package]
+name = "notdiscord-core"
+version = "0.2.0"
+edition = "2024"
+
+[features]
+default = []
+# Local command recorder for cross-crate tests; never connects a socket.
+offline-probes = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream", "rustls-tls", "gzip", "brotli", "deflate"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+base64 = "0.22"
+url = "2"
+regex = "1"
+zeroize = "1"
+rand = "0.9"
+sha2 = "0.10"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+

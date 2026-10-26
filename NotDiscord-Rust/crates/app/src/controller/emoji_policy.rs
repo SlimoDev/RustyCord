@@ -1,0 +1,67 @@
+use super::*;
+
+impl Controller {
+    pub(super) fn can_send_emoji(&self,emoji:&CustomEmoji)->bool {
+        emoji.available && !emoji.guild_id.is_empty() && emoji.guild_id==self.state.selected_guild_id
+            && self.guild_acl.as_ref().is_some_and(|acl|acl.guild_id==emoji.guild_id && !acl.timed_out
+                && (emoji.roles.is_empty()||emoji.roles.iter().any(|role|role==&emoji.guild_id||acl.has_role(role))))
+            // Preserve the existing entitlement boundary, never infer Nitro
+            // from a received animated image or grant use in other guilds.
+            && (!emoji.animated||matches!(self.premium,1..=3))
+    }
+    pub(super) fn refresh_emoji_access(&mut self) {
+        let mut emojis=std::mem::take(&mut self.state.emojis);
+        for emoji in &mut emojis {emoji.usable=self.can_send_emoji(emoji);}
+        self.state.emojis=emojis;
+    }
+    pub(super) fn store_emoji_catalog(&mut self,guild:&str,values:&[Value])->Vec<CustomEmoji> {
+        let mut list=values.iter().take(500).map(|value|CustomEmoji {
+            id:s(value,"id"),name:parsing::limited(&s(value,"name"),64),animated:b(value,"animated"),guild_id:guild.into(),
+            available:value.get("available").is_none_or(|available|available.as_bool()==Some(true))
+                && value.get("roles").is_none_or(Value::is_array),
+            roles:items(&value["roles"]).iter().take(500).filter_map(Value::as_str).map(str::to_owned).collect(),
+            usable:false,
+        }).filter(|emoji|parsing::valid_id(&emoji.id)&&!emoji.name.is_empty()).collect::<Vec<_>>();
+        for emoji in &mut list {emoji.usable=self.can_send_emoji(emoji);}
+        if self.emoji_cache.len()>=3&&!self.emoji_cache.contains_key(guild) {
+            if let Some(old)=self.emoji_cache.iter().min_by_key(|(_, (at,_))|*at).map(|(guild,_)|guild.clone()) {self.emoji_cache.remove(&old);}
+        }
+        self.emoji_cache.insert(guild.into(),(Instant::now(),list.clone()));
+        if guild==self.state.selected_guild_id {self.state.emojis=list.clone();}
+        list
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn catalog_rechecks_roles_availability_entitlement_and_current_guild_at_send() {
+        let (mut c,_)=Controller::test_fixture();c.state.current_user=Some(Person{id:"1".into(),..Default::default()});
+        c.state.selected_guild_id="50".into();
+        c.guild_raw=json!({"id":"50","roles":[{"id":"50","permissions":"3072"},{"id":"9","permissions":"0"}]});
+        c.self_member=json!({"roles":["9"]});c.guild_acl=Some(GuildAccess::from_values(&c.guild_raw,&c.self_member,"1"));
+        let list=c.store_emoji_catalog("50",&[json!({"id":"401","name":"Free"}),json!({"id":"402","name":"Locked","roles":["9"]}),
+            json!({"id":"403","name":"Unavailable","available":false}),json!({"id":"404","name":"Animated","animated":true})]);
+        assert_eq!(list.iter().map(|emoji|emoji.usable).collect::<Vec<_>>(),[true,true,false,false]);
+        assert_eq!(c.content("<:Locked:402>"),"<:Locked:402>");
+        c.dispatch("GUILD_MEMBER_UPDATE",json!({"guild_id":"50","user":{"id":"1"},"roles":[]})).await.unwrap();
+        assert!(!c.state.emojis.iter().find(|emoji|emoji.id=="402").unwrap().usable);
+        assert_eq!(c.content("<:Locked:402>"),"https://cdn.discordapp.com/emojis/402.png?size=48&name=Locked");
+        c.premium=2;c.refresh_emoji_access();assert!(c.state.emojis.iter().find(|emoji|emoji.id=="404").unwrap().usable);
+        c.state.selected_guild_id="51".into();c.refresh_emoji_access();assert!(c.state.emojis.iter().all(|emoji|!emoji.usable));
+        assert_eq!(c.content("<:Free:401>"),"https://cdn.discordapp.com/emojis/401.png?size=48&name=Free");assert!(c.api.is_none());
+    }
+    #[tokio::test]
+    async fn gateway_unavailability_cannot_be_undone_by_a_late_emoji_catalog_reply() {
+        let (mut c,_)=Controller::test_fixture();c.state.selected_guild_id="50".into();
+        c.state.guilds=vec![NavItem{id:"50".into(),..Default::default()}];
+        let pending=c.next_request("emojis");
+        let catalogue=c.next_request("emoji-catalog/50");
+        c.dispatch("GUILD_EMOJIS_UPDATE",json!({"guild_id":"50","emojis":[{"id":"401","name":"Paused","available":false}]})).await.unwrap();
+        assert!(c.request_current("emojis",pending),"Gateway invalidates this guild's catalogue, not an unrelated picker's global request");
+        let mut action=UiAction::id("__emojis","50");action.extra=pending.to_string();action.text=catalogue.to_string();
+        c.complete(action,json!([{"id":"401","name":"Paused","available":true}])).await.unwrap();
+        assert_eq!(c.state.emojis.len(),1);assert!(!c.state.emojis[0].available);assert!(!c.state.emojis[0].usable);assert!(c.api.is_none());
+    }
+}

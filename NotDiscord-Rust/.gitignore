@@ -1,0 +1,10 @@
+/target/
+/dist/
+/data/
+/.test-data/
+/.test-bin/
+/media-host/runtime/
+/bin/
+*.tmp
+*.node
+

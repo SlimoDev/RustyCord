@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/core", "crates/app", "crates/media-addon"]
+resolver = "2"
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+panic = "unwind"
+

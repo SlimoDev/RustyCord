@@ -1,0 +1,69 @@
+{
+  "synthetic": true,
+  "accountUsed": false,
+  "soundfileVersion": "0.13.1",
+  "libsndfileVersion": "1.2.2",
+  "files": [
+    {
+      "path": "synthetic-0.25s.mp3",
+      "bytes": 3256,
+      "sha256": "c3fca204ff7292a9f3e5db84a2236ad7dd446ac06b6cbb9bcf846ac9df698122",
+      "sourceSeconds": 0.25,
+      "rate": 44100,
+      "channels": 2,
+      "subtype": "MPEG_LAYER_III"
+    },
+    {
+      "path": "synthetic-0.25s.ogg",
+      "bytes": 5401,
+      "sha256": "1a3c8d601ec49f16452b65fcd6392af9610b0d40bc43fa13075a3c3dbb36e44f",
+      "sourceSeconds": 0.25,
+      "rate": 44100,
+      "channels": 2,
+      "subtype": "VORBIS"
+    },
+    {
+      "path": "synthetic-opus.ogg",
+      "bytes": 3024,
+      "sha256": "2af2e7b19e5877ed25db24d1bd32649acfc20e4290244cf2101722b78df4ff74",
+      "subtype": "OPUS",
+      "purpose": "unsupported codec regression"
+    },
+    {
+      "path": "synthetic-60s.mp3",
+      "bytes": 928433,
+      "sha256": "690a039d53034f910702cf88470bb14d4ff63ba43132dd85d9cd8251a1001de9",
+      "sourceSeconds": 60,
+      "rate": 44100,
+      "channels": 2,
+      "subtype": "MPEG_LAYER_III"
+    },
+    {
+      "path": "synthetic-60s.ogg",
+      "bytes": 539699,
+      "sha256": "6b113659ac646de18c191bc1c08d6326d5c49488672e507aaa49f4f6870acc16",
+      "sourceSeconds": 60,
+      "rate": 44100,
+      "channels": 2,
+      "subtype": "VORBIS"
+    },
+    {
+      "path": "synthetic-61s.mp3",
+      "bytes": 945222,
+      "sha256": "e7d1bd1222291beb2364328fd3d3856ba2f9476d15bb1657fdb2d9b6650ec5dd",
+      "sourceSeconds": 61,
+      "rate": 44100,
+      "channels": 2,
+      "subtype": "MPEG_LAYER_III"
+    },
+    {
+      "path": "synthetic-61s.ogg",
+      "bytes": 550989,
+      "sha256": "2ee34690b00e86c46a21d45dd9362c81fa3fa77559104ab411c7a6e31c8bbba2",
+      "sourceSeconds": 61,
+      "rate": 44100,
+      "channels": 2,
+      "subtype": "VORBIS"
+    }
+  ]
+}
