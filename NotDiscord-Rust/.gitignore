@@ -1,6 +1,10 @@
 /target/
 /dist/
 /data/
+/data-plus/
+# Local launch/build helpers for the unchanged Plus installation.
+/ABRIR_NOTDISCORD_PLUS.cmd
+/package-plus.ps1
 /.test-data/
 /.test-bin/
 /media-host/runtime/
