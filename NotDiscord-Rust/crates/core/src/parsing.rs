@@ -490,6 +490,50 @@ pub fn media_identity(value: &str) -> Option<String> {
 pub fn same_media_resource(left: &str, right: &str) -> bool {
     !left.is_empty() && (left == right || media_identity(left).zip(media_identity(right)).is_some_and(|(a, b)| a == b))
 }
+/// One logical medium and its metadata-proven download aliases. A public page,
+/// poster and animation rendition are different URLs, not three UI cards.
+/// Provider query strings are retained; only media_identity's known Discord
+/// attachment identity can differ from a signed download URL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaDescriptor {
+    pub logical_id: String,
+    pub page_url: Option<String>,
+    pub poster_url: Option<String>,
+    pub animation_url: Option<String>,
+    pub width: i32,
+    pub height: i32,
+    pub aliases: Vec<String>,
+}
+impl MediaDescriptor {
+    pub fn matches_url(&self, candidate: &str) -> bool {
+        self.aliases.iter().any(|alias| same_media_resource(alias, candidate))
+    }
+    pub fn same_medium(&self, other: &Self) -> bool {
+        if let (Some(left),Some(right))=(&self.page_url,&other.page_url){
+            return same_media_resource(left,right)||self.animation_url.as_deref().zip(other.animation_url.as_deref()).is_some_and(|(left,right)|same_media_resource(left,right));
+        }
+        other.aliases.iter().any(|alias| self.matches_url(alias))
+    }
+}
+pub fn media_descriptor(file: &ChatAttachment) -> MediaDescriptor {
+    let mut aliases = Vec::with_capacity(3);
+    for value in [&file.url].into_iter().chain(file.preview_url.as_ref()).chain(file.animation_url.as_ref()) {
+        if !value.is_empty() && !aliases.iter().any(|known: &String| same_media_resource(known, value)) {
+            aliases.push(value.clone());
+        }
+    }
+    let page_url = gif_page(&file.url).then(|| file.url.clone());
+    let identity = page_url.as_deref().unwrap_or(&file.url);
+    MediaDescriptor {
+        logical_id: media_identity(identity).unwrap_or_else(|| identity.into()),
+        page_url,
+        poster_url: file.preview_url.clone(),
+        animation_url: file.animation_url.clone(),
+        width: file.width,
+        height: file.height,
+        aliases,
+    }
+}
 fn signed_media_expiry(value: &str) -> Option<u64> {
     let url = url::Url::parse(value).ok()?;
     if !matches!(url.host_str(), Some("cdn.discordapp.com" | "media.discordapp.net")) || !url.path().starts_with("/attachments/") { return None; }
@@ -504,8 +548,8 @@ pub fn prefer_media_url<'a>(current: &'a str, candidate: &'a str) -> &'a str {
 pub fn deduplicate_media(files: Vec<ChatAttachment>) -> Vec<ChatAttachment> {
     let mut result: Vec<ChatAttachment> = Vec::new();
     for file in files {
-        let same = result.iter_mut().find(|old| [&old.url].into_iter().chain(old.preview_url.as_ref()).chain(old.animation_url.as_ref())
-            .any(|a| [&file.url].into_iter().chain(file.preview_url.as_ref()).chain(file.animation_url.as_ref()).any(|b| same_media_resource(a,b))));
+        let descriptor = media_descriptor(&file);
+        let same = result.iter_mut().find(|old| media_descriptor(old).same_medium(&descriptor));
         if let Some(old) = same {
             old.url = prefer_media_url(&old.url, &file.url).to_owned();
             if let Some(preview) = &file.preview_url {

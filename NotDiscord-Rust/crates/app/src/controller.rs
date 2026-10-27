@@ -1,16 +1,19 @@
 //! Single-owner state actor. Network replies carry session/navigation generations.
 mod incoming;
+use incoming::snowflake_greater;
 mod deleted_logs;
 mod presence;
 mod profile_editor;
 mod reaction_users;
 mod channel_catalog;
+mod read_index;
 mod emoji_policy;
 mod notification_activation;
 mod game_activity;
 mod guild_settings;
 mod member_moderation;
 mod group_members;
+mod gifs;
 #[cfg(test)]
 mod network_safety_tests;
 mod request_policy;
@@ -140,6 +143,7 @@ pub struct Controller {
     // Incoming unread watermark is independent of our own latest delivery.
     incoming_latest: HashMap<String, String>,
     read: HashMap<String, String>,
+    read_index: read_index::Index,
     mention: HashMap<String, i32>,
     pending_deltas: VecDeque<(String, Value)>,
     pending_delta_bytes: usize,
@@ -166,7 +170,7 @@ pub struct Controller {
     stream_started: bool,
     call_people: HashMap<String, CallParticipant>,
     pending_video: bool,
-    gif_cache: HashMap<String, (Instant, Value)>,
+    gif_state: gifs::GifState,
     emoji_cache: HashMap<String, (Instant, Vec<CustomEmoji>)>,
     voice_lifecycle: voice::VoiceLifecycle,
     latest_snapshot: Arc<Mutex<Option<AppSnapshot>>>,
@@ -323,6 +327,7 @@ impl Controller {
             latest: HashMap::new(),
             incoming_latest: HashMap::new(),
             read: HashMap::new(),
+            read_index: Default::default(),
             mention: HashMap::new(),
             pending_deltas: VecDeque::new(),
             pending_delta_bytes: 0,
@@ -349,7 +354,7 @@ impl Controller {
             stream_started: false,
             call_people: HashMap::new(),
             pending_video: false,
-            gif_cache: HashMap::new(),
+            gif_state: gifs::GifState::default(),
             emoji_cache: HashMap::new(),
             voice_lifecycle: voice::VoiceLifecycle::default(),
             latest_snapshot: Arc::new(Mutex::new(None)),
@@ -415,12 +420,14 @@ impl Controller {
         (c, updates_rx, rx)
     }
     fn accepts(&self, done: &Completed) -> bool {
-        done.generation == self.generation
+        done.generation == self.generation && self.presence_read_current(&done.action)
             && done.nav.is_none_or(|n| n == self.nav)
             && (done.action.kind != "__sidebar"
                 || done.action.extra.parse::<u64>().unwrap_or(0) == self.sidebar_epoch)
     }
     async fn complete_failed(&mut self, action: &UiAction) {
+        if action.kind=="__presence-reconciled"{let _=self.finish_presence_reconcile(action,None);}
+        self.gif_failed(action);
         if action.kind == "__guild" {self.guild_load.clear();}
         if action.kind == "__status" {
             if let Err(error) = self.finish_presence_change(action, None) { self.error(error); }
@@ -521,6 +528,7 @@ impl Controller {
         }
         if let Ok(mut slot) = self.latest_snapshot.lock() {
             let mut snapshot=self.state.clone();
+            presence::project_self(&mut snapshot);
             snapshot.upload_limit=self.upload_limit();
             *slot = Some(snapshot);
             self.snapshot_dirty.store(false, Ordering::Relaxed);
@@ -588,6 +596,7 @@ impl Controller {
         }
     }
     fn error(&mut self, error: String) {
+        notdiscord_core::diagnostics::record(notdiscord_core::diagnostics::Component::Controller,notdiscord_core::diagnostics::Code::Recoverable,notdiscord_core::diagnostics::Phase::Dispatch,0);
         self.state.status = error.clone();
         self.state.busy = false;
         let _ = self.updates.send(UiUpdate::Error(error));
@@ -678,7 +687,13 @@ impl Controller {
         let session_cancel = self.session_cancel.clone();
         let navigation_cancel = self.navigation_cancel.clone();
         tokio::spawn(async move {
-            let result = tokio::select! {_=session_cancel.cancelled()=>return,_=navigation_cancel.cancelled(),if nav.is_some()=>return,result=future=>result};
+            use futures_util::FutureExt;
+            let result = tokio::select! {_=session_cancel.cancelled()=>return,_=navigation_cancel.cancelled(),if nav.is_some()=>return,result=std::panic::AssertUnwindSafe(future).catch_unwind()=>match result{
+                Ok(result)=>result,Err(_)=>{
+                    notdiscord_core::diagnostics::record(notdiscord_core::diagnostics::Component::Controller,notdiscord_core::diagnostics::Code::TaskFailed,notdiscord_core::diagnostics::Phase::Dispatch,0);
+                    Err("Una tarea de la aplicación terminó inesperadamente. Puedes consultar el diagnóstico local.".into())
+                }
+            }};
             let _ = tx.send(Completed {
                 generation,
                 nav,
@@ -694,7 +709,13 @@ impl Controller {
         let generation = self.generation;
         let cancel = self.session_cancel.clone();
         tokio::spawn(async move {
-            let result = tokio::select! {biased;_=cancel.cancelled()=>return,result=crate::authentication::interactive(&data)=>result};
+            use futures_util::FutureExt;
+            let result = tokio::select! {biased;_=cancel.cancelled()=>return,result=std::panic::AssertUnwindSafe(crate::authentication::interactive(&data)).catch_unwind()=>match result{
+                Ok(result)=>result,Err(_)=>{
+                    notdiscord_core::diagnostics::record(notdiscord_core::diagnostics::Component::Controller,notdiscord_core::diagnostics::Code::TaskFailed,notdiscord_core::diagnostics::Phase::Dispatch,0);
+                    Err("La tarea de inicio de sesión terminó inesperadamente. No se registraron datos de la cuenta.".into())
+                }
+            }};
             let (credential, result) = match result {
                 Ok(value) => (Some(value), Ok(Value::Null)),
                 Err(error) => (None, Err(error)),
@@ -886,6 +907,7 @@ impl Controller {
         self.latest.clear();
         self.incoming_latest.clear();
         self.read.clear();
+        self.read_index.clear();
         self.mention.clear();
         self.notice_seen.clear();
         self.gifs_clear();
@@ -988,7 +1010,7 @@ impl Controller {
         self.publish();
     }
     fn gifs_clear(&mut self) {
-        self.gif_cache.clear();
+        self.gif_state.clear();
         self.emoji_cache.clear();
     }
     fn sidebar(&mut self) {
@@ -1835,29 +1857,15 @@ impl Controller {
                 }
             }
             "gif-catalog" => {
-                let request_version = self.next_request("gifs");
-                let extra: Value = serde_json::from_str(&action.extra).unwrap_or_default();
-                let mode = s(&extra, "mode");
-                let limit = extra["limit"].as_u64().unwrap_or(20).min(96) as usize;
-                let endpoint = pickers::endpoint(&mode, &action.text, limit)?;
-                if let Some((_, value)) = self
-                    .gif_cache
-                    .get(&endpoint)
-                    .filter(|(at, _)| at.elapsed() < Duration::from_secs(60))
-                {
-                    self.data("gif-catalog", value.clone());
-                } else {
-                    let api = self.api()?;
-                    action.kind = "__gifs".into();
-                    action.id = endpoint.clone();
-                    action.extra =
-                        json!({"mode":mode,"limit":limit,"requestVersion":request_version})
-                            .to_string();
-                    self.launch(action, None, async move {
-                        api.get(&endpoint).await.map_err(|e| e.to_string())
-                    });
-                }
-            }
+                let request=serde_json::from_str::<pickers::CatalogRequest>(&action.extra);
+                if let Err(error)=self.gif_catalog_action(action){if let Ok(request)=request{self.gif_reply(&request,None,&error);}return Err(error);}
+            },
+            "gif-catalog-cancel" => self.cancel_gif_catalog(&action.extra),
+            "picker-history" | "picker-recent" | "picker-favorite" | "picker-import" => self.picker_history_action(action)?,
+            "gif-favorite-remove" => {
+                let target=action.id.clone();let operation=serde_json::from_str::<Value>(&action.extra).unwrap_or_default()["operation"].clone();
+                if let Err(error)=self.remove_remote_gif(action){self.data("gif-favorite-result",json!({"owner":self.me(),"generation":self.state.notification_generation,"url":target,"operation":operation,"confirmed":false,"error":error}));return Err(error);}
+            },
             "history" => {
                 self.require("history")?;
                 self.cancel_view_requests();
@@ -1882,6 +1890,7 @@ impl Controller {
         // stops the session. Invalidate voice/capture attempts before resuming it.
         self.sync_network_safety().await;
         match action.kind.as_str() {
+            "__presence-reconciled"=>{self.finish_presence_reconcile(&action,Some(&value))?;}
             "__private-ring" => {self.complete_private_ring(&action)?;}
             "__private-ring-stop" => {self.complete_private_ring_stop(&action);}
             "__private-incoming-expired" => {}
@@ -2216,26 +2225,8 @@ impl Controller {
                     self.data("guild-emojis", serde_json::to_value(list).unwrap());
                 }
             }
-            "__gifs" => {
-                let extra: Value = serde_json::from_str(&action.extra).unwrap_or_default();
-                if !self.request_current("gifs", extra["requestVersion"].as_u64().unwrap_or(0)) {
-                    return Ok(());
-                }
-                let page = pickers::parse(
-                    &value,
-                    &s(&extra, "mode"),
-                    extra["limit"].as_u64().unwrap_or(20) as usize,
-                )?;
-                let value = serde_json::to_value(page).map_err(|_| "Catálogo no válido.")?;
-                if self.gif_cache.len() >= 4 {
-                    if let Some(key) = self.gif_cache.keys().next().cloned() {
-                        self.gif_cache.remove(&key);
-                    }
-                }
-                self.gif_cache
-                    .insert(action.id, (Instant::now(), value.clone()));
-                self.data("gif-catalog", value);
-            }
+            "__gifs" => self.complete_gif_catalog(&action,&value)?,
+            "__gif-remote-remove" => self.complete_remote_gif(&action,&value)?,
             "__media" => {
                 if action.extra.parse::<u64>().ok() == Some(self.voice_lifecycle.media_epoch) {
                     self.media_event(value).await?;
@@ -2246,10 +2237,26 @@ impl Controller {
         Ok(())
     }
     fn rebuild_channels(&mut self) {
+        let mut indexed=Vec::new();
+        let mut coverage=self.guild_acl.is_some() && s(&self.guild_raw,"id")==self.state.selected_guild_id && self.channels.len()<2000;
         let values = self
             .channels
             .values()
-            .filter(|v| self.channel_access(v).can_view)
+            .filter(|v| {
+                if !self.state.selected_guild_id.is_empty() && matches!(i(v,"type"),1|3){return false;}
+                let access=self.channel_access(v);coverage &= access.known;
+                if access.can_view && !matches!(i(v,"type"),1|3|4){
+                    let id=s(v,"id");
+                    let hint=v.get("last_message_id").map(|_|s(v,"last_message_id"));
+                    let latest=match (self.latest.get(&id),hint){
+                        (Some(observed),Some(hint)) if snowflake_greater(&hint,observed)=>Some(hint),
+                        (Some(observed),_)=>Some(self.incoming_message_id(&id,observed).to_owned()),
+                        (None,hint)=>hint,
+                    };
+                    indexed.push((id,latest));
+                }
+                access.can_view
+            })
             .collect::<Vec<_>>();
         self.state.channels = parsing::ordered_guild_channels(values)
             .into_iter()
@@ -2284,6 +2291,7 @@ impl Controller {
                 n
             })
             .collect();
+        self.read_index.capture(&self.state.selected_guild_id,coverage,indexed);
         self.state.guild_roles = self
             .guild_acl
             .as_ref()
@@ -2374,6 +2382,7 @@ fn is_network_mutation(kind: &str) -> bool {
     matches!(
         kind,
         "send"
+            | "gif-favorite-remove"
             | "send-prepared"
             | "edit"
             | "delete"

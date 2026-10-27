@@ -69,6 +69,19 @@ pub(crate) fn read_section(path: &Path, limit: u64) -> Option<Option<Vec<u8>>> {
         .filter(|bytes| bytes.len() as u64 <= limit);
     Some(bytes)
 }
+/// Mutation callers must distinguish a missing section from an unreadable or
+/// oversized one; treating both as defaults can replace another account's map.
+pub(crate) fn read_section_checked(path:&Path,limit:u64)->Option<Result<Option<Vec<u8>>,String>>{
+    let (root,key)=key(path)?;
+    let _guard=CONFIG_IO.lock().unwrap_or_else(|error|error.into_inner());
+    Some((||{
+        let mut config=read_configuration(&root)?;
+        let Some(value)=config.sections.remove(&key)else{return Ok(None);};
+        let bytes=serde_json::to_vec(&value).map_err(|_|"No se pudo leer la sección de configuración.".to_owned())?;
+        if bytes.len() as u64>limit{return Err("La sección de configuración supera el límite de lectura; no se sustituyeron los datos anteriores.".into());}
+        Ok(Some(bytes))
+    })())
+}
 pub(crate) fn write_section(path: &Path, incoming: Value) -> Option<Result<(), String>> {
     let (root, key) = key(path)?;
     let _guard = CONFIG_IO.lock().unwrap_or_else(|e| e.into_inner());

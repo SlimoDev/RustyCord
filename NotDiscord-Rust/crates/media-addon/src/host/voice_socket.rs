@@ -83,7 +83,7 @@ pub(super) fn spawn(runtime: &tokio::runtime::Handle, endpoint: String, id: u64,
             result = run(endpoint, id, sender.clone(), receiver, heart) => result,
         };
         if !stop.is_cancelled() && !global.is_cancelled() {
-            let _ = sender.call(Event::WsError(id, error), ThreadsafeFunctionCallMode::NonBlocking);
+            let _ = sender.call(Event::WsError(id, error.0, error.1), ThreadsafeFunctionCallMode::NonBlocking);
         }
     });
     Socket { outbox, cancel, task: task.abort_handle(), heartbeat, failed: AtomicBool::new(false) }
@@ -95,21 +95,21 @@ fn config() -> WebSocketConfig {
         .max_message_size(Some(protocol::MAX_FRAME)).max_frame_size(Some(protocol::MAX_FRAME))
 }
 
-async fn run(endpoint: String, id: u64, sender: Sender, receiver: mpsc::Receiver<Queued>, heartbeat: Arc<Heartbeat>) -> MediaError {
+async fn run(endpoint: String, id: u64, sender: Sender, receiver: mpsc::Receiver<Queued>, heartbeat: Arc<Heartbeat>) -> (&'static str, MediaError) {
     let socket = match tokio::time::timeout(CONNECT_TIMEOUT,
         tokio_tungstenite::connect_async_with_config(&endpoint, Some(config()), false)).await {
         Ok(Ok((socket, _))) => socket,
-        Ok(Err(error)) => return socket_failure(&error),
-        Err(_) => return MediaError::new("VOICE_SOCKET_TIMEOUT", "El servidor de voz no respondió a tiempo al abrir la conexión."),
+        Ok(Err(error)) => return ("connect", socket_failure(&error)),
+        Err(_) => return ("connect", MediaError::new("VOICE_SOCKET_TIMEOUT", "El servidor de voz no respondió a tiempo al abrir la conexión.")),
     };
-    if sender.call(Event::WsOpen(id), ThreadsafeFunctionCallMode::NonBlocking) != Status::Ok { return callback_delivery_error(); }
+    if sender.call(Event::WsOpen(id), ThreadsafeFunctionCallMode::NonBlocking) != Status::Ok { return ("dispatch", callback_delivery_error()); }
     let (write, read) = socket.split();
     // WebSocket Pongs have reserved bounded capacity and bypass the data
     // backlog. They still obey the same finite per-write deadline.
     let (pong_sender, pongs) = mpsc::channel(2);
     tokio::select! {
-        error = writer(write, receiver, pongs) => error,
-        error = reader(read, id, sender, pong_sender, heartbeat) => error,
+        error = writer(write, receiver, pongs) => ("write", error),
+        error = reader(read, id, sender, pong_sender, heartbeat) => ("read", error),
     }
 }
 

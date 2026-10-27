@@ -2,6 +2,8 @@ use base64::Engine;
 use notdiscord_core::parsing::{i, items, s};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[path="pickers/favorites_wire.rs"]
+pub mod favorites_wire;
 
 pub fn safe_link(value: &str) -> bool {
     if value.len() > 4096 {
@@ -83,6 +85,28 @@ pub struct GifPage {
     pub has_more: bool,
     pub note: String,
 }
+/// Correlation crosses the UI/backend boundary intact. It is never a cache key
+/// containing an account; caches are discarded when the session is replaced.
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogRequest {
+    pub owner: String,
+    pub generation: u64,
+    pub opening: String,
+    pub request: String,
+    pub mode: String,
+    pub query: String,
+    pub limit: usize,
+}
+impl GifItem {
+    pub fn descriptor(&self) -> notdiscord_core::parsing::MediaDescriptor {
+        notdiscord_core::parsing::media_descriptor(&notdiscord_core::models::ChatAttachment {
+            url:self.url.clone(),preview_url:(!self.thumbnail_url.is_empty()).then(||self.thumbnail_url.clone()),
+            animation_url:(!self.animation_url.is_empty()).then(||self.animation_url.clone()),
+            width:self.width,height:self.height,animated:true,..Default::default()
+        })
+    }
+}
 pub fn endpoint(mode: &str, text: &str, limit: usize) -> Result<String, String> {
     let limit = if limit <= 20 {
         20
@@ -120,7 +144,8 @@ fn text(value: &Value, key: &str) -> String {
 }
 pub fn parse(value: &Value, mode: &str, limit: usize) -> Result<GifPage, String> {
     if mode == "favorites" {
-        return Ok(GifPage{items:favorites(&s(value,"settings"))?,note:"Incluye tus guardados de Discord. Las estrellas nuevas se guardan en NotDiscord para esta cuenta.".into(),..Default::default()});
+        let encoded=value.get("settings").and_then(Value::as_str).ok_or("Discord no entregó el estado de guardados; la lista confirmada se conserva")?;
+        return Ok(GifPage{items:favorites(encoded)?,note:"Incluye tus guardados de Discord. Las estrellas nuevas se guardan en NotDiscord para esta cuenta.".into(),..Default::default()});
     }
     let categories = items(&value["categories"])
         .iter()

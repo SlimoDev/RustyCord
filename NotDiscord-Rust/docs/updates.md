@@ -5,7 +5,7 @@ ejecutable y accesos directos anteriores; todavía no participa en el actualizad
 ni en la configuración y exclusión bidireccionales nuevas.
 
 La distribución actual es exclusivamente el instalador
-**NotDiscord-Setup-0.5.0.exe**. No se publica una edición portable de esta versión.
+**NotDiscord-Setup-0.6.0.exe**. No se publica una edición portable de esta versión.
 La instalación permite elegir una carpeta y, por defecto, utiliza Programs del
 usuario para no requerir elevación. Una ruta protegida necesita el consentimiento
 normal de Windows; el actualizador no intenta eludir UAC.
@@ -51,11 +51,11 @@ El manifiesto publicado tiene esta estructura:
       "schema": 2,
       "variant": "standard",
       "branch": "NotDiscord",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "release": {
         "kind": "installer",
-        "tag": "NotDiscord-v0.5.0",
-        "url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.5.0/NotDiscord-Setup-0.5.0.exe",
+        "tag": "NotDiscord-v0.6.0",
+        "url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.6.0/NotDiscord-Setup-0.6.0.exe",
         "sha256": "<SHA-256 del Setup.exe>",
         "bytes": 123,
         "executable_sha256": "<SHA-256 del NotDiscord.exe que instala>"
@@ -95,11 +95,11 @@ de ejecución siguen idénticos. Los registros permanecen en la carpeta de prepa
 
 Para preparar la publicación, después de compilar el cliente y el instalador:
 
-    .\prepare-update-release.ps1 -Installer 'dist\NotDiscord-Setup-0.5.0.exe' -Executable 'ruta-del-payload\NotDiscord.exe' -Destination 'ruta-nueva\version.json'
+    .\prepare-update-release.ps1 -Installer 'dist\NotDiscord-Setup-0.6.0.exe' -Executable 'ruta-del-payload\NotDiscord.exe' -Destination 'ruta-nueva\version.json'
 
 El script únicamente lee los ejecutables compilados y escribe el manifiesto; no
 ejecuta, sube o publica nada, ni crea un ZIP. Se publica el Setup.exe como asset de
-NotDiscord-v0.5.0 y después el manifiesto generado en la rama NotDiscord. Primero
+NotDiscord-v0.6.0 y después el manifiesto generado en la rama NotDiscord. Primero
 se compila con release null, se empaqueta y se calculan los hashes; el manifiesto
 con el hash del instalador no se vuelve a incluir en ese mismo instalador, evitando
 un ciclo de hashes. Los hashes verifican integridad respecto de la publicación;

@@ -28,9 +28,9 @@ $numeric="$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
 $version=[string]$manifest.version
 $installer=Join-Path $output "NotDiscord-Setup-$version.exe"
 if(Test-Path -LiteralPath $installer){throw 'El instalador de destino ya existe. No se sobrescribe una entrega anterior.'}
-$required=@('NotDiscord.exe','NotDiscord.Media.node','runtime.json','version.json','discord.ico','UNICODE-LICENSE.txt','SYMPHONIA-LICENSE-MPL-2.0.txt','media-runtime\NotDiscord.Media.exe','media-runtime\resources\app\main.cjs','media-runtime\resources\app\package.json','media-runtime\resources\standalone_modules\discord_voice\discord_voice.node')
+$required=@('NotDiscord.exe','NotDiscord.Media.node','runtime.json','version.json','discord.ico','UNICODE-LICENSE.txt','SYMPHONIA-LICENSE-MPL-2.0.txt','WINIT-LICENSE-APACHE-2.0.txt','media-runtime\NotDiscord.Media.exe','media-runtime\resources\app\main.cjs','media-runtime\resources\app\package.json','media-runtime\resources\standalone_modules\discord_voice\discord_voice.node')
 foreach($relative in $required){if(!(Test-Path -LiteralPath (Join-Path $package $relative) -PathType Leaf)){throw "Falta el componente: $relative"}}
-$allowedRoot=@('NotDiscord.exe','NotDiscord.Media.node','runtime.json','version.json','discord.ico','UNICODE-LICENSE.txt','SYMPHONIA-LICENSE-MPL-2.0.txt','ABRIR_NOTDISCORD_RUST.cmd')
+$allowedRoot=@('NotDiscord.exe','NotDiscord.Media.node','runtime.json','version.json','discord.ico','UNICODE-LICENSE.txt','SYMPHONIA-LICENSE-MPL-2.0.txt','WINIT-LICENSE-APACHE-2.0.txt','ABRIR_NOTDISCORD_RUST.cmd')
 $entries=@(Get-ChildItem -LiteralPath $package -Recurse -File -Force)
 $included=@()
 foreach($entry in $entries){

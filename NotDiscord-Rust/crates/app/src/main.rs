@@ -17,6 +17,12 @@ impl eframe::App for DesktopApp {
         [0., 0., 0., 0.]
     }
     fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
+        let focused=ctx.input(|input|input.focused);
+        let previous_focus=ctx.data_mut(|data|{
+            let key=eframe::egui::Id::new("diagnostic-root-focus");
+            let previous=data.get_temp::<bool>(key);data.insert_temp(key,focused);previous
+        });
+        if previous_focus!=Some(focused){notdiscord_core::diagnostics::record(notdiscord_core::diagnostics::Component::Input,notdiscord_core::diagnostics::Code::FocusChanged,notdiscord_core::diagnostics::Phase::Present,u64::from(focused));}
         if !self.closing_for_replacement
             && self.replacement_close_error.is_none()
             && self.instance_signal.as_ref().is_some_and(|signal| signal.requested()) {
@@ -66,6 +72,7 @@ impl eframe::App for DesktopApp {
     }
 }
 fn main() -> eframe::Result {
+    notdiscord_core::diagnostics::install_panic_hook();
     let args = std::env::args().collect::<Vec<_>>();
     let root = std::env::current_exe()
         .ok()
@@ -104,6 +111,7 @@ fn main() -> eframe::Result {
         }
     };
     let instance_signal = desktop_instance.as_ref().map(|instance| instance.signal());
+    let diagnostic_session=notdiscord_core::diagnostics::initialise(&data,&notdiscord::updates::installed_version());
     let replacement_notice = desktop_instance.as_ref().is_some_and(|instance| instance.replaced_previous());
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(3)
@@ -144,6 +152,8 @@ fn main() -> eframe::Result {
         viewport,
         ..Default::default()
     };
+    let ui_ready=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ui_created=ui_ready.clone();
     let result = eframe::run_native(
         notdiscord::brand::NAME,
         options,
@@ -179,7 +189,7 @@ fn main() -> eframe::Result {
                     app.set_preview_delay(delay);
                 }
             }
-            Ok(Box::new(DesktopApp {
+            let desktop=DesktopApp {
                 ui: app,
                 readiness,
                 last: std::time::Instant::now(),
@@ -188,18 +198,30 @@ fn main() -> eframe::Result {
                 closing_for_replacement: false,
                 replacement_close_error: None,
                 shutdown: app_shutdown,
-            }))
+            };
+            ui_created.store(true,std::sync::atomic::Ordering::Release);
+            Ok(Box::new(desktop))
         }),
     );
     let _ = shutdown.send(notdiscord_core::models::UiAction::new("shutdown"));
+    if result.is_err(){
+        use notdiscord_core::diagnostics::{record,Component,Code,Phase};
+        if ui_ready.load(std::sync::atomic::Ordering::Acquire){record(Component::App,Code::Recoverable,Phase::Present,0);}
+        else{record(Component::App,Code::AppStartFailed,Phase::Start,0);}
+    }
     if let Some(task) = task.lock().unwrap().take() {
         runtime.block_on(async {
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(30), task).await;
+            use notdiscord_core::diagnostics::{record,Component,Code,Phase};
+            match tokio::time::timeout(std::time::Duration::from_secs(30), task).await {
+                Ok(Ok(()))=>{},Ok(Err(error))=>record(Component::Controller,if error.is_cancelled(){Code::TaskCancelled}else{Code::TaskFailed},Phase::Stop,0),
+                Err(_)=>record(Component::Controller,Code::TaskTimeout,Phase::Stop,0),
+            }
         });
     }
     // Releasing ownership before controller/runtime teardown would let the new
     // edition read stale preferences or contend for still-open media files.
     drop(runtime);
     drop(desktop_instance);
+    drop(diagnostic_session);
     result
 }

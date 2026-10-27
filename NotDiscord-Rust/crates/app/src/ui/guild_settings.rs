@@ -377,7 +377,7 @@ impl NotDiscordUi {
             );
         }
         ui.add_enabled_ui(settings.can_manage_guild,|ui|{
-            ui.label("Nombre del servidor");ui.add(bordered(egui::TextEdit::singleline(&mut editor.name).char_limit(100).desired_width(450.)));
+            ui.label("Nombre del servidor");ui.add(bordered(egui::TextEdit::singleline(&mut editor.name).char_limit(100).desired_width(450.)).submit_action("guild-general"));
             ui.label("Descripción");ui.add(bordered(egui::TextEdit::multiline(&mut editor.description).char_limit(120).desired_width(600.).desired_rows(3)));
             egui::ComboBox::from_label("Nivel de verificación").selected_text(match editor.verification{0=>"Ninguno",1=>"Bajo",2=>"Medio",3=>"Alto",_=>"Máximo"}).show_ui(ui,|ui|{
                 for (value,name) in ["Ninguno","Bajo","Medio","Alto","Máximo"].iter().enumerate(){ui.selectable_value(&mut editor.verification,value as i32,*name);}
@@ -386,7 +386,7 @@ impl NotDiscordUi {
                 for (value,name) in ["No analizar","Miembros sin rol","Todos los miembros"].iter().enumerate(){ui.selectable_value(&mut editor.filter,value as i32,*name);}
             });
             egui::ComboBox::from_label("Notificaciones predeterminadas").selected_text(if editor.notifications==0{"Todos los mensajes"}else{"Solo menciones"}).show_ui(ui,|ui|{ui.selectable_value(&mut editor.notifications,0,"Todos los mensajes");ui.selectable_value(&mut editor.notifications,1,"Solo menciones");});
-            if ui.button("Guardar configuración general").clicked(){self.guild_write(&settings.guild_id,"general","",json!({"name":editor.name.trim(),"description":editor.description,"verification_level":editor.verification,"explicit_content_filter":editor.filter,"default_message_notifications":editor.notifications}));}
+            if ui.button("Guardar configuración general").clicked() || super::input_ownership::take_action(ui.ctx(),"guild-general"){self.guild_write(&settings.guild_id,"general","",json!({"name":editor.name.trim(),"description":editor.description,"verification_level":editor.verification,"explicit_content_filter":editor.filter,"default_message_notifications":editor.notifications}));}
         });
     }
     fn guild_roles_editor(
@@ -436,12 +436,12 @@ impl NotDiscordUi {
             );
         }
         ui.add_enabled_ui(editable,|ui|{
-            ui.label("Nombre del rol");ui.add(bordered(egui::TextEdit::singleline(&mut editor.role_name).char_limit(100)));
-            ui.label("Color RGB (6 dígitos hexadecimales)");ui.add(bordered(egui::TextEdit::singleline(&mut editor.role_color).char_limit(6)));
+            ui.label("Nombre del rol");ui.add(bordered(egui::TextEdit::singleline(&mut editor.role_name).char_limit(100)).submit_action("guild-role"));
+            ui.label("Color RGB (6 dígitos hexadecimales)");ui.add(bordered(egui::TextEdit::singleline(&mut editor.role_color).char_limit(6)).submit_action("guild-role"));
             ui.checkbox(&mut editor.role_hoist,"Mostrar por separado en la lista de miembros");ui.checkbox(&mut editor.role_mentionable,"Permitir mencionar este rol");
             ui.collapsing("Permisos del rol",|ui|permission_checks(ui,&mut editor.role_bits,settings.effective_permissions));
             ui.horizontal(|ui|{
-                if ui.button(if editor.role.is_empty(){"Crear este rol"}else{"Guardar rol"}).clicked(){
+                if ui.button(if editor.role.is_empty(){"Crear este rol"}else{"Guardar rol"}).clicked() || super::input_ownership::take_action(ui.ctx(),"guild-role"){
                     if let Some(color)=u32::from_str_radix(editor.role_color.trim_start_matches('#'),16).ok().filter(|color|*color<=0xffffff){
                         self.guild_write(&settings.guild_id,if editor.role.is_empty(){"role-create"}else{"role"},&editor.role,json!({"name":editor.role_name.trim(),"color":color,"hoist":editor.role_hoist,"mentionable":editor.role_mentionable,"permissions":editor.role_bits.to_string()}));
                     }else{self.error="El color debe contener 6 dígitos hexadecimales.".into();}
@@ -495,7 +495,7 @@ impl NotDiscordUi {
             ui.label("Nombre del canal");
             ui.add(bordered(
                 egui::TextEdit::singleline(&mut editor.channel_name).char_limit(100),
-            ));
+            ).submit_action("guild-channel"));
             if channel.is_none() {
                 egui::ComboBox::from_label("Tipo")
                     .selected_text(match editor.channel_kind {
@@ -566,7 +566,7 @@ impl NotDiscordUi {
                     } else {
                         "Guardar canal"
                     })
-                    .clicked()
+                    .clicked() || super::input_ownership::take_action(ui.ctx(),"guild-channel")
                 {
                     let mut body = json!({"name":editor.channel_name.trim()});
                     if channel.is_none() {
@@ -754,8 +754,8 @@ impl NotDiscordUi {
             ui.label("Apodo");
             ui.add(bordered(
                 egui::TextEdit::singleline(&mut editor.nickname).char_limit(32),
-            ));
-            if ui.button("Guardar apodo").clicked() {
+            ).submit_action("guild-nickname"));
+            if ui.button("Guardar apodo").clicked() || super::input_ownership::take_action(ui.ctx(),"guild-nickname") {
                 self.guild_write(
                     &settings.guild_id,
                     "nickname",

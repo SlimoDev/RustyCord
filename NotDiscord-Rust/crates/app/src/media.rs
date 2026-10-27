@@ -40,7 +40,9 @@ impl ControlExit {
     }
 }
 fn early_host_exit(status:std::io::Result<std::process::ExitStatus>)->String {
-    match status.ok().and_then(|status|status.code()) {
+    let exit_code=status.ok().and_then(|status|status.code());
+    notdiscord_core::diagnostics::record(notdiscord_core::diagnostics::Component::Media,notdiscord_core::diagnostics::Code::HostExited,notdiscord_core::diagnostics::Phase::Start,exit_code.unwrap_or(0) as u64);
+    match exit_code {
         Some(code)=>format!("El proceso multimedia terminó durante el inicio con código 0x{:08X}.",code as u32),
         None=>"El proceso multimedia terminó durante el inicio sin confirmar su estado.".into(),
     }
@@ -206,7 +208,9 @@ impl MediaBridge {
             if !reason.intentional {
                 let exit_code=status.and_then(|status|status.code());
                 let code=if exit_code.is_some_and(|code|code!=0) {"HOST_PROCESS_EXIT"}else{reason.code};
-                let _=events.send(json!({"event":"fatal","error":{"code":code,"message":reason.message,"controlCode":reason.code,"exitCode":exit_code,"forcedStop":forced}}));
+                let fatal=json!({"event":"fatal","error":{"code":code,"message":reason.message,"controlCode":reason.code,"exitCode":exit_code,"forcedStop":forced}});
+                crate::diagnostics::media_event(&fatal);
+                let _=events.send(fatal);
                 // A request failure and its fatal event travel through separate
                 // actor tasks. Return the observed exit reason through both so
                 // whichever wins cannot replace it with a generic IPC error.
@@ -353,6 +357,7 @@ fn clear_video_namespace(frames:&SharedVideoFrames,namespace:u64) {
     for id in frames.active_ids().into_iter().filter(|id|id>>32==namespace>>32) {frames.remove(id);}
 }
 fn emit_scoped_event(value:Value,events:&mpsc::UnboundedSender<Value>,frames:Option<&SharedVideoFrames>,namespace:u64) {
+    crate::diagnostics::media_event(&value);
     if value["event"] == "videoStream" {
         if let (Some(frames), Some(id)) = (frames, value["id"].as_u64()) {
             if id>>32!=namespace>>32 {return;}

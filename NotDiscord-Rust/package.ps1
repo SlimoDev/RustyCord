@@ -34,7 +34,7 @@ Copy-PlusFile (Join-Path $PSScriptRoot 'crates\media-addon\host\main.cjs') 'medi
 Copy-PlusFile (Join-Path $PSScriptRoot 'crates\media-addon\host\package.json') 'media-runtime\resources\app\package.json'
 $null=Write-RuntimeInventory (Join-Path $packageRoot 'media-runtime') ('prepared-reference-sha256:'+(Get-FileHash -LiteralPath (Join-Path $runtimeBase $script:RuntimeInventoryName) -Algorithm SHA256).Hash.ToLowerInvariant())
 $null=Assert-RuntimeInventory (Join-Path $packageRoot 'media-runtime')
-foreach ($asset in @('discord.ico','UNICODE-LICENSE.txt','SYMPHONIA-LICENSE-MPL-2.0.txt')) { Copy-PlusFile (Join-Path $PSScriptRoot ('assets\' + $asset)) $asset }
+foreach ($asset in @('discord.ico','UNICODE-LICENSE.txt','SYMPHONIA-LICENSE-MPL-2.0.txt','WINIT-LICENSE-APACHE-2.0.txt')) { Copy-PlusFile (Join-Path $PSScriptRoot ('assets\' + $asset)) $asset }
 $utf8 = [Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText((Join-Path $packageRoot 'runtime.json'), "{`r`n  `"MediaHostExe`": `"media-runtime/NotDiscord.Media.exe`",`r`n  `"NativeRoot`": `"media-runtime`"`r`n}`r`n", $utf8)
 [IO.File]::WriteAllText((Join-Path $packageRoot 'ABRIR_NOTDISCORD_RUST.cmd'), "@echo off`r`nstart `"`" `"%~dp0NotDiscord.exe`" --runtime-root `"%~dp0.`" --data-dir `"%~dp0data`"`r`n", $utf8)

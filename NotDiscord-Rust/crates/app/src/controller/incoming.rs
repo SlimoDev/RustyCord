@@ -230,6 +230,7 @@ impl Controller {
             }
         }
         let me=self.me();
+        self.read_index.observe(kind,&value,&me);
         let known_channel=self.channels.contains_key(&s(&value,"id"));
         self.guild_load.observe(kind,&value,&me,known_channel);
         if matches!(kind, "MESSAGE_CREATE" | "MESSAGE_UPDATE" | "MESSAGE_DELETE") {
@@ -405,7 +406,7 @@ impl Controller {
                 self.publish();
             }
             "SELF_PRESENCE" => {
-                self.apply_self_presence(&s(&value, "status"));
+                self.remote_presence(&s(&value, "status"));
                 if let Some(show) = value["show_current_game"].as_bool() {
                     self.state.game_activity_enabled = show;
                     self.state.game_activity_available = true;
@@ -478,7 +479,7 @@ impl Controller {
                 self.load_local_notification_views();
                 self.observe_guild_voice_metadata(&value);
                 if !s(&value, "self_status").is_empty() {
-                    self.apply_self_presence(&s(&value, "self_status"));
+                    self.remote_presence(&s(&value, "self_status"));
                 }
                 for p in items(&value["presences"]).iter().take(2000) {
                     self.presence(p);
@@ -785,11 +786,12 @@ impl Controller {
             | "STREAM_DELETE" => self.voice_dispatch(kind, &value).await?,
             "USER_SETTINGS_UPDATE" => {
                 if !s(&value, "status").is_empty() {
-                    self.apply_self_presence(&s(&value, "status"));
+                    self.remote_presence(&s(&value, "status"));
                 }
                 self.publish();
             }
             "USER_SETTINGS_PROTO_UPDATE" => {
+                if i(&value["settings"],"type")==2{self.gif_settings_update(&value);}
                 if i(&value["settings"], "type") == 1 {
                     if let Ok(p) = notdiscord_core::settings_proto::read(
                         &s(&value["settings"], "proto"),
@@ -996,23 +998,13 @@ impl Controller {
                 }
                 !read
             });
-            let newest = self
-                .incoming_latest
-                .get(channel)
-                .cloned()
-                .or_else(|| self.latest.get(channel).cloned())
-                .or_else(|| {
-                    self.state
-                        .direct_messages
-                        .iter()
-                        .chain(&self.state.channels)
-                        .find(|item| item.id == channel)
-                        .map(|item| item.last_message_id.clone())
-                })
-                .filter(|id| parsing::valid_id(id));
+            let newest = [self.incoming_latest.get(channel).cloned(),self.latest.get(channel).cloned(),
+                self.state.direct_messages.iter().chain(&self.state.channels).find(|item|item.id==channel).map(|item|item.last_message_id.clone()),
+                self.read_index.latest(channel).map(str::to_owned)]
+                .into_iter().flatten().filter(|id|parsing::valid_id(id)).max_by(|a,b|a.len().cmp(&b.len()).then(a.cmp(b)));
             if newest
                 .as_ref()
-                .is_none_or(|newest| !snowflake_greater(newest, last))
+                .is_some_and(|newest| !snowflake_greater(newest, last))
             {
                 self.mention.remove(channel);
             } else if let Some(count) = self.mention.get_mut(channel) {
@@ -1025,6 +1017,7 @@ impl Controller {
         advanced
     }
     fn refresh_read_guild(&mut self, channel: &str, removed_mentions: i32) {
+        if self.state.direct_messages.iter().any(|item|item.id==channel){return;}
         let guild = self
             .channels
             .get(channel)
@@ -1037,6 +1030,7 @@ impl Controller {
                     .any(|item| item.id == channel)
                     .then(|| self.state.selected_guild_id.clone())
             })
+            .or_else(||self.read_index.guild_for(channel))
             .unwrap_or_default();
         if guild.is_empty() {
             return;
@@ -1088,7 +1082,7 @@ impl Controller {
             item.mention_count = item.mention_count.saturating_sub(removed_mentions).max(0);
             if any_unread || item.mention_count > 0 {
                 item.unread = true;
-            } else if known && readable_channels > 0 {
+            } else if known && readable_channels > 0 || self.read_index.unread(&guild,&self.read,&self.mention,&self.incoming_latest)==Some(false) {
                 item.unread = false;
             }
         }
@@ -1156,6 +1150,7 @@ impl Controller {
                 p.activities=previous.activities.clone();p.custom_status=previous.custom_status.clone();p.custom_status_emoji=previous.custom_status_emoji.clone();
             }
         }
+        if id==self.me() && notdiscord_core::settings_proto::valid_presence(&self.state.self_presence){p.status=self.state.self_presence.clone();}
         if self.state.user_presences.len() >= 2000 && !self.state.user_presences.contains_key(&id) {
             if let Some(key) = self.state.user_presences.keys().next().cloned() {
                 self.state.user_presences.remove(&key);
@@ -1320,7 +1315,32 @@ impl Controller {
             .map(|item| item.name.as_str())
             .filter(|name| !name.trim().is_empty())
             .unwrap_or(if personal { "Mensaje directo" } else { "Canal" });
-        let body = message_notice_body(message);
+        let body = if message.content.trim().is_empty() || message.forwarded || !message.stickers.is_empty(){message_notice_body(message)}else{
+            let mut names=crate::notification_text::Names::default();
+            for person in &message.mentions{
+                let name=if !person.name.trim().is_empty(){&person.name}else if !person.display_name.trim().is_empty(){&person.display_name}else{&person.username};
+                names.users.insert(person.id.clone(),name.clone());
+            }
+            // A nickname cache is scoped to the selected guild. Only use it
+            // when it is also the origin guild of this particular toast.
+            if !guild_id.is_empty() && guild_id==self.state.selected_guild_id{
+                for (id,nick) in &self.state.guild_nicknames{if !nick.trim().is_empty(){names.users.insert(id.clone(),nick.clone());}}
+                for role in &self.state.guild_roles{names.roles.insert(role.id.clone(),role.name.clone());}
+                for channel in &self.state.channels{names.channels.insert(channel.id.clone(),channel.name.trim_start_matches('#').into());}
+            }
+            for person in items(&value["mentions"]).iter().take(100){
+                let nick=person.get("member").and_then(|member|member.get("nick")).or_else(||person.get("nick"));
+                if let Some(nick)=nick{
+                    let id=s(person,"id");
+                    if let Some(nick)=nick.as_str().filter(|nick|!nick.trim().is_empty()){names.users.insert(id,nick.into());}
+                    else if let Some(explicit)=message.mentions.iter().find(|mention|mention.id==id){
+                        let name=if !explicit.name.trim().is_empty(){&explicit.name}else{&explicit.username};
+                        names.users.insert(id,name.clone());
+                    }else{names.users.remove(&id);}
+                }
+            }
+            crate::notification_text::readable(&message.content,&names).chars().take(50).collect()
+        };
         let title = if !personal {
             format!(
                 "{sender} · {} / #{}",
@@ -1359,6 +1379,7 @@ impl Controller {
         }
     }
     fn queue_notice(&mut self, mut notice: DesktopNotice) {
+        notdiscord_core::diagnostics::record(notdiscord_core::diagnostics::Component::Notifications,notdiscord_core::diagnostics::Code::ToastQueued,notdiscord_core::diagnostics::Phase::Enqueue,0);
         let account = self.me();
         let generation = self.generation;
         let epoch = self.state.notification_epoch;

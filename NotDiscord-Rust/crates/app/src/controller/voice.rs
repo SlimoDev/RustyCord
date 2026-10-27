@@ -2418,6 +2418,11 @@ impl Controller {
                 if id!=self.me()&&(channel!=self.voice_channel||value.get("self_stream")==Some(&Value::Bool(false))) {
                     self.voice_lifecycle.stream_identities.retain(|key,_|key.rsplit(':').next()!=Some(id.as_str()));
                 }
+                if id!=self.me()&&(channel!=self.voice_channel||value.get("self_video")==Some(&Value::Bool(false))) {
+                    self.voice_lifecycle.pending_views.retain(|_,view|view.owner!=id||view.kind!="camera");
+                    self.state.call_videos.retain(|video|video.local||video.user_id!=id||video.kind!="camera");
+                    self.voice_lifecycle.video_sessions.retain(|video_id,_|self.state.call_videos.iter().any(|video|video.id==*video_id));
+                }
                 if channel == self.voice_channel && !self.voice_channel.is_empty() {
                     let previous = self.call_people.get(&id).cloned();
                     if (previous.is_some() || self.call_people.len() < 256)
@@ -2537,12 +2542,11 @@ impl Controller {
                     if self.voice_lifecycle.watches.get(&key).is_some_and(|watch|watch["requested"]!=true) {Box::pin(self.request_watch(&key)).await?;}
                 } else if self.voice_lifecycle.watches.contains_key(&key) {
                     self.voice_lifecycle.watches.get_mut(&key).unwrap()["requested"]=json!(false);
-                    let message=match value["reason"].as_str() {
-                        Some("stream_full")=>"La transmisión alcanzó su límite de espectadores. Puedes volver a intentarlo.",
-                        Some("unauthorized")=>"Discord no autorizó esta suscripción de pantalla.",
-                        _=>"La suscripción de pantalla terminó. Puedes volver a abrirla sin salir de voz.",
-                    };
-                    self.fail_watch(&key,message).await?;
+                    match value["reason"].as_str() {
+                        Some("stream_full")=>self.fail_watch(&key,"La transmisión alcanzó su límite de espectadores. Puedes volver a intentarlo.").await?,
+                        Some("unauthorized")=>self.fail_watch(&key,"Discord no autorizó esta suscripción de pantalla.").await?,
+                        _=>self.finish_watch(&key).await?,
+                    }
                 }
                 // The publisher's VOICE_STATE self_stream, not a viewer's
                 // subscription teardown, controls whether its screen is offered.
@@ -2800,6 +2804,20 @@ impl Controller {
         self.publish();
         Ok(())
     }
+    async fn finish_watch(&mut self, key: &str) -> Result<(), String> {
+        // A normal terminal subscription is neither a decoder failure nor a
+        // publisher announcement. Remove only this viewer's resources. The
+        // publisher's VOICE_STATE controls its independently offered buttons.
+        if let Some(watch)=self.voice_lifecycle.watches.get_mut(key) {
+            watch["requested"]=json!(false);
+            let owner=s(watch,"owner");
+            self.voice_lifecycle.pending_views.retain(|_,view|view.owner!=owner||view.kind!="screen");
+        }
+        self.stop_watch(key).await?;
+        self.refresh_call();
+        self.publish();
+        Ok(())
+    }
     async fn stop_share(&mut self) -> Result<(), String> {
         if self.voice_lifecycle.pending_share.is_some()
             && self
@@ -2927,7 +2945,18 @@ impl Controller {
                         }
                         self.voice_lifecycle.video_sessions.remove(&id);
                         self.wait_watch_frame(&key);
-                    } else {self.state.call_videos.retain(|video| video.id != id);}
+                    } else {
+                        let camera_replacement=self.state.call_videos.iter().any(|video|video.id==id&&!video.local&&video.kind=="camera"&&video.view_requested
+                            && self.call_people.get(&video.user_id).is_some_and(|person|person.self_video));
+                        if camera_replacement {
+                            // Decoder teardown while hiding/replacing a camera
+                            // is not withdrawal of the publisher's announcement.
+                            if let Some(video)=self.state.call_videos.iter_mut().find(|video|video.id==id) {
+                                video.active=false;video.status="waiting".into();video.error.clear();
+                            }
+                            self.voice_lifecycle.video_sessions.remove(&id);
+                        } else {self.state.call_videos.retain(|video| video.id != id);}
+                    }
                 } else {
                     let person = s(&value, "userId");
                     let local = b(&value, "local");
@@ -2944,6 +2973,10 @@ impl Controller {
                     let requested_screen=remote_screen&&watch.is_some();
                     let requested=self.state.call_videos.iter().any(|old|old.id==id&&old.user_id==person&&old.kind==s(&value,"kind")&&old.source_id==s(&value,"sourceId")&&old.view_requested
                         && (local&&!old.preview||value["mediaSession"].as_u64().is_none_or(|session|self.voice_lifecycle.video_sessions.get(&id)==Some(&session))))
+                        || !local&&s(&value,"kind")=="camera"
+                            && value["mediaSession"].as_u64().is_none_or(|session|self.voice_lifecycle.native_voice==Some(session))
+                            && self.call_people.get(&person).is_some_and(|peer|peer.self_video)
+                            && self.state.call_videos.iter().any(|old|old.user_id==person&&old.kind=="camera"&&!old.local&&old.view_requested)
                         || requested_screen;
                     // Suspending a selected sink is not an end of its source.
                     // Retain that selection until the window restores reception.
@@ -2967,7 +3000,9 @@ impl Controller {
                             || !((video.preview && old.preview)
                                 || (video.kind == "screen"
                                     && !video.stream_key.is_empty()
-                                    && old.stream_key == video.stream_key))
+                                    && old.stream_key == video.stream_key)
+                                || (video.kind=="camera"&&!video.local&&!old.local&&old.kind=="camera"
+                                    && old.user_id==video.user_id&&!old.active&&old.status=="waiting"))
                     });
                     if let Some(existing) = self
                         .state
@@ -3037,7 +3072,10 @@ impl Controller {
                 {
                     return Ok(());
                 }
-                if matches!(s(&value, "state").as_str(), "error" | "disconnected") {
+                if s(&value,"state")=="disconnected" && value["reason"]["code"].as_str().is_none()
+                    && value["error"]["code"].as_str().is_none() {
+                    self.finish_watch(&key).await?;
+                } else if matches!(s(&value, "state").as_str(), "error" | "disconnected") {
                     let message = value["reason"]["message"]
                         .as_str()
                         .or_else(|| value["error"]["message"].as_str())

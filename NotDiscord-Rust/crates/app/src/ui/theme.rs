@@ -141,8 +141,10 @@ pub(super) fn apply_interactive_cursor(ctx: &egui::Context) {
     let cursor = ctx.output(|output| output.cursor_icon);
     if !matches!(cursor, egui::CursorIcon::Default | egui::CursorIcon::Text) { return; }
     let hovered = ctx.interaction_snapshot(|snapshot| snapshot.hovered.iter().copied().collect::<Vec<_>>());
+    let history=ctx.data(|data|data.get_temp::<Vec<egui::Id>>(egui::Id::new("history-middle-allowed"))).unwrap_or_default();
     if hovered.into_iter().any(|id| ctx.read_response(id).is_some_and(|response|
-        response.enabled() && response.hovered() && response.sense.senses_click() && !response.sense.senses_drag())) {
+        response.enabled() && response.hovered() && response.sense.senses_click() && !response.sense.senses_drag()
+            && !history.contains(&id))) {
         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 }

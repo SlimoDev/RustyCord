@@ -42,6 +42,7 @@ impl NotDiscordUi {
         let pending=ui.ctx().data(|data|data.get_temp::<Load>(load_key()));
         if !force && pending.is_some_and(|pending|pending.guild==state.selected_guild_id && pending.user==person.id
             && pending.actor==actor && pending.generation==state.notification_generation) {return;}
+        notdiscord_core::diagnostics::record(notdiscord_core::diagnostics::Component::Menus,notdiscord_core::diagnostics::Code::MenuDemand,notdiscord_core::diagnostics::Phase::Dispatch,0);
         self.send("member-moderation-load",&person.id,"","",&state.selected_guild_id);
         ui.ctx().data_mut(|data|data.insert_temp(load_key(),Load {guild:state.selected_guild_id.clone(),user:person.id.clone(),
             actor:actor.into(),generation:state.notification_generation,at:Instant::now()}));

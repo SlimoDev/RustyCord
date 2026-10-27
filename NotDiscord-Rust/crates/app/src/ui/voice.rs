@@ -17,10 +17,9 @@ fn call_chat_scope(state:&AppSnapshot)->Option<egui::Id> {
         && call_panel_visible(state)).then(||egui::Id::new(("call-chat",state.notification_generation,
             state.current_user.as_ref().map(|user|user.id.as_str()),&state.call_guild_id,&state.call_channel_id,state.call_instance_id)))
 }
-pub(super) fn call_chat_hidden(ctx:&egui::Context,state:&AppSnapshot)->bool {
-    call_chat_scope(state).is_some_and(|scope| !ctx.data(|data|
-        data.get_temp::<(egui::Id,bool)>(egui::Id::new("call-chat-visibility")))
-        .is_some_and(|(stored,shown)|stored==scope&&shown))
+pub(super) fn call_chat_hidden(ctx:&egui::Context,state:&AppSnapshot,directory:&std::path::Path)->bool {
+    call_chat_scope(state).is_some() && !super::call_preferences::shown(ctx,directory,
+        state.current_user.as_ref().map(|user|user.id.as_str()).unwrap_or(""),!state.call_guild_id.is_empty())
 }
 fn media_selector_window<'a>(ctx:&egui::Context,title:&str,id:&str)->dialogs::DialogWindow<'a> {
     let width=(ctx.content_rect().width()-40.).clamp(1.,604.);
@@ -98,14 +97,17 @@ impl NotDiscordUi {
                 ui.horizontal(|ui| {
                     let label_width=(ui.available_width()-if chat_scope.is_some(){26.+ui.spacing().item_spacing.x}else{0.}).max(1.);
                     ui.add_sized([label_width,title_height],egui::Label::new(title).truncate()).on_hover_text(format!("{}{duration}",state.call_status_label));
-                    if let Some(scope)=chat_scope {
-                        let hidden=call_chat_hidden(ui.ctx(),state);
+                    if chat_scope.is_some() {
+                        let hidden=call_chat_hidden(ui.ctx(),state,&self.data_dir);
                         let label=if hidden {"Mostrar chat"}else{"Ocultar chat"};
                         let toggle=super::shell::icon_button(ui,super::shell::Icon::Chat,26.,false,hidden).on_hover_text(label);
                         toggle.widget_info(||egui::WidgetInfo::labeled(egui::WidgetType::Button,true,label));
                         if toggle.clicked() {
-                            ui.ctx().data_mut(|data|data.insert_temp(egui::Id::new("call-chat-visibility"),(scope,hidden)));
-                            if !hidden {super::chat::suspend_interactions(ui.ctx());}
+                            let account=state.current_user.as_ref().map(|user|user.id.as_str()).unwrap_or("");
+                            match super::call_preferences::set_shown(ui.ctx(),&self.data_dir,account,!state.call_guild_id.is_empty(),hidden) {
+                                Ok(()) => if !hidden {super::chat::suspend_interactions(ui.ctx());},
+                                Err(error) => self.error=error,
+                            }
                             ui.ctx().request_repaint();
                         }
                     }
@@ -209,10 +211,14 @@ impl NotDiscordUi {
         painter.text(canvas.left_bottom()+egui::vec2(8.,-8.),egui::Align2::LEFT_BOTTOM,
             format!("{:.0} % · rueda para ampliar · arrastra para desplazar",scale*100.),egui::FontId::proportional(12.),ink);
         if video.kind=="screen" {
-            response.context_menu(|ui| {
+            let popup_id=egui::Id::new(("call-expanded-context",&state.call_channel_id,state.call_instance_id,&video.user_id,video.id));
+            if response.secondary_clicked() {super::menus::requested(ui.ctx(),popup_id);}
+            egui::Popup::context_menu(&response).id(popup_id).show(|ui| {
                 if let Some(participant)=state.call_participants.iter().find(|participant|participant.user.id==video.user_id) {
                     self.draw_call_participant_menu(ui,participant,state,&state.call_channel_id,state.call_instance_id,false);
-                } else {self.draw_stream_volume_control(ui,state);}
+                } else if !video.local && !video.preview && video.view_requested {
+                    self.draw_stream_volume_control(ui,state);
+                }
             });
         }
         let collapse = response.clicked_by(egui::PointerButton::Primary) && !popup_was_open && !egui::Popup::is_any_open(ui.ctx());
@@ -1254,7 +1260,7 @@ impl NotDiscordUi {
                         "camera"=>camera.as_ref(),"screen"=>screen.as_ref(),_=>None,
                     }.is_some_and(|video|video.local && video.preview);
                     let running = |video: &CallVideo| video.active || matches!(
-                        video.status.as_str(), "loading" | "connecting" | "waiting" | "starting"
+                        video.status.as_str(), "loading" | "connecting" | "waiting" | "starting" | "paused"
                     );
                     let retained = |video: &CallVideo| running(video) || video.status=="error";
                     let camera_available = participant.self_video || camera.as_ref().is_some_and(|video|
@@ -1291,12 +1297,14 @@ impl NotDiscordUi {
                             ui.ctx().request_repaint_after(Duration::from_secs(10).saturating_sub(started.elapsed()));
                         }
                     }
-                    // A Go Live watch can replace its native decoder/SSRC.
-                    // Keep the explicit choice only within the same watch token.
+                    // The publisher announcement and explicit viewer choice
+                    // outlive a decoder/SSRC replacement or visibility pause.
+                    // A different call generation is already a different scope.
                     let changed = previous.as_ref().is_some_and(|previous| previous.kind == selected && selected != "avatar"
                         && (previous.id.zip(selected_source.map(|video|video.id)).is_some_and(|(old,new)|old!=new)
-                                && !selected_source.is_some_and(|video| selected=="screen" && !video.local
-                                    && video.view_requested && !video.source_id.is_empty() && previous.source_id==video.source_id)
+                                && !selected_source.is_some_and(|video| !video.local && video.view_requested
+                                    && (selected=="camera"&&participant.self_video || selected=="screen"
+                                        && !video.source_id.is_empty() && previous.source_id==video.source_id))
                             || selected_source.is_some_and(|video| selected=="screen" && !video.local
                                 && !previous.source_id.is_empty() && previous.source_id!=video.source_id)
                             || selected_source.is_some_and(|video|previous.selector_preview!=(video.local && video.preview))
@@ -1354,7 +1362,7 @@ impl NotDiscordUi {
                     let mut footer=call_tile_text_height(ui,width,display_name,&egui::TextStyle::Body)+gap;
                     if !flags.is_empty() {footer+=call_tile_text_height(ui,width,&flags,&egui::TextStyle::Small)+gap;}
                     if screen_available {footer+=call_tile_text_height(ui,width,"Espectadores: 999",&egui::TextStyle::Small)+gap;}
-                    for (label,available) in [("Cámara",camera_available),("Pantalla",screen_available)] {
+                    for (label,available) in [("Pantalla",screen_available),("Cámara",camera_available)] {
                         if available {footer+=call_tile_button_height(ui,width,&format!("{label} · Dejar de ver"))+gap;}
                     }
                     if video.is_some_and(|video|video.status=="error") {footer+=ui.text_style_height(&egui::TextStyle::Small)+gap;}
@@ -1432,7 +1440,9 @@ impl NotDiscordUi {
                             }
                             if selected=="avatar" || selected=="screen" {
                                 #[cfg(test)] ui.ctx().data_mut(|data|data.insert_temp(egui::Id::new(("participant-avatar",scope,&participant.user.id)),rect));
-                                response.context_menu(|ui|self.draw_call_participant_menu(ui,participant,state,channel_id,instance_id,incoming));
+                                let popup_id=egui::Id::new(("call-participant-context",scope,&participant.user.id));
+                                if response.secondary_clicked() {super::menus::requested(ui.ctx(),popup_id);}
+                                egui::Popup::context_menu(&response).id(popup_id).show(|ui|self.draw_call_participant_menu(ui,participant,state,channel_id,instance_id,incoming));
                             }
                             ui.add(
                                 egui::Label::new(RichText::new(display_name).color(ink)).wrap(),
@@ -1454,7 +1464,7 @@ impl NotDiscordUi {
                                     }
                                 }
                             }
-                            for (kind,label,available) in [("camera","Cámara",camera_available),("screen","Pantalla",screen_available)] {
+                            for (kind,label,available) in [("screen","Pantalla",screen_available),("camera","Cámara",camera_available)] {
                                 if !available {continue;}
                                 let failed=selected==kind && video.is_some_and(|video|video.status=="error");
                                 let retrying=retry_waiting&&selected==kind;
@@ -1560,19 +1570,21 @@ impl NotDiscordUi {
     fn draw_call_participant_menu(&mut self,ui:&mut egui::Ui,participant:&CallParticipant,state:&AppSnapshot,channel:&str,attempt:u64,incoming:bool) {
         let valid=notdiscord_core::parsing::valid_id(&participant.user.id);
         let other=valid && !participant.is_self && state.current_user.as_ref().is_none_or(|user|user.id!=participant.user.id);
+        let mut sections=super::menus::Sections::new();
+        sections.section(ui,true);
         for label in ["Enviar mensaje","Abrir conversación"] {
-            if ui.add_enabled(other,egui::Button::new(label)).clicked() {self.send("open-dm",&participant.user.id,"","","");ui.close();}
+            if super::menus::action(ui,label,other).clicked() {self.send("open-dm",&participant.user.id,"","","");ui.close();}
         }
-        if ui.add_enabled(valid,egui::Button::new("Ver perfil")).clicked() {self.send("profile",&participant.user.id,"","","");ui.close();}
+        if super::menus::action(ui,"Ver perfil",valid).clicked() {self.send("profile",&participant.user.id,"","","");ui.close();}
         let dm=state.direct_messages.iter().find(|item|item.kind=="dm"&&item.recipient_id==participant.user.id);
         let callable=other&&!participant.user.is_bot&&state.voice_available&&dm.is_some_and(|item|item.id!=state.call_channel_id);
-        if ui.add_enabled(callable,egui::Button::new("Llamar")).on_hover_text("Conectar a la conversación de esta persona; se cerrará la llamada anterior.").clicked() {
+        if super::menus::action(ui,"Llamar",callable).on_hover_text("Conectar a la conversación de esta persona; se cerrará la llamada anterior.").clicked() {
             self.send("call-dm",&dm.unwrap().id,"","","");ui.close();
         }
-        ui.separator();
-        self.draw_stream_volume_control(ui,state);
-        if !other {return;}
-        ui.separator();
+        if sections.section(ui,stream_volume_applicable(participant,state)) {
+            self.draw_stream_volume_control(ui,state);
+        }
+        if !sections.section(ui,other) {return;}
         let enabled=!incoming&&state.voice_connected&&state.call_channel_id==channel&&state.call_instance_id==attempt;
         let key=egui::Id::new(("participant-volume",channel,attempt,&participant.user.id));
         let maximum=500.;
@@ -1602,6 +1614,13 @@ pub(super) struct CallExpansion {
     id: u64,
     zoom: f32,
     pan: egui::Vec2,
+}
+fn stream_volume_applicable(participant: &CallParticipant, state: &AppSnapshot) -> bool {
+    !participant.is_self
+        && state.current_user.as_ref().is_none_or(|user| user.id != participant.user.id)
+        && (participant.screen_sharing || state.call_videos.iter().any(|video|
+            video.user_id == participant.user.id && video.kind == "screen" && !video.local && !video.preview
+                && video.view_requested && !matches!(video.status.as_str(), "ended" | "removed")))
 }
 fn call_gallery_columns(_width:f32,_gap:f32,count:usize,_incoming:bool)->usize {
     // The cell width adapts to zoom and available space; the requested count

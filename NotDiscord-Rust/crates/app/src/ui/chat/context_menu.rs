@@ -20,7 +20,8 @@ struct Selection {
 #[derive(Clone, Copy)]
 struct RowIdentity { base: egui::Id, scope: egui::Id }
 #[derive(Clone, Copy)]
-struct PopupState { id: egui::Id, frame: u64 }
+struct PopupState { response: egui::Id, id: egui::Id, frame: u64 }
+fn popup_key()->egui::Id {egui::Id::new("message-context-current-popup")}
 
 fn active_key() -> egui::Id { egui::Id::new("message-context-active-row") }
 fn selection_key() -> egui::Id { egui::Id::new("message-context-selection") }
@@ -33,8 +34,8 @@ fn scope_id(message: &ChatMessage, state: &AppSnapshot) -> egui::Id {
 }
 pub(super) fn is_open(response: &egui::Response) -> bool {
     let frame = response.ctx.cumulative_frame_nr();
-    let key = response.id.with("message-context-popup");
-    let state = response.ctx.data(|data| data.get_temp::<PopupState>(key)).filter(|state| state.frame == frame);
+    let state = response.ctx.data(|data| data.get_temp::<PopupState>(popup_key()))
+        .filter(|state| state.response==response.id && state.frame.saturating_add(1)>=frame);
     state.is_some_and(|state| egui::Popup::is_id_open(&response.ctx, state.id))
 }
 
@@ -82,6 +83,7 @@ pub(super) fn clear(ctx: &egui::Context) {
     ctx.data_mut(|data| {
         data.remove::<RowIdentity>(active_key());
         data.remove::<std::sync::Arc<Selection>>(selection_key());
+        data.remove::<PopupState>(popup_key());
     });
 }
 
@@ -102,8 +104,6 @@ impl NotDiscordUi {
         let scope = identity.scope;
         let frame = ui.ctx().cumulative_frame_nr();
         let popup_id = scope.with("popup");
-        let popup_key = response.id.with("message-context-popup");
-        ui.ctx().data_mut(|data| data.insert_temp(popup_key, PopupState { id: popup_id, frame }));
         let selection = ui.ctx().data(|data| data.get_temp::<std::sync::Arc<Selection>>(selection_key()))
             .filter(|selection| selection.scope == scope);
         let child_clicked = selection.as_ref().is_some_and(|selection| selection.frame == frame);
@@ -118,6 +118,9 @@ impl NotDiscordUi {
                 && interaction::owns_surface(ui.ctx(), pointer, response.layer_id));
         let requested = ui.is_enabled() && !interaction::cancelling(ui.ctx())
             && (child_clicked || text_clicked || row_clicked || response.secondary_clicked());
+        if requested || egui::Popup::is_id_open(ui.ctx(),popup_id) {
+            ui.ctx().data_mut(|data|data.insert_temp(popup_key(),PopupState {response:response.id,id:popup_id,frame}));
+        }
         let target = if requested && !child_clicked {
             ui.ctx().data_mut(|data| data.insert_temp(selection_key(), std::sync::Arc::new(Selection { base: identity.base, scope, frame, target: None })));
             None
@@ -125,6 +128,7 @@ impl NotDiscordUi {
         // An asynchronously deleted message may still have an open popup from
         // its live media. Never reintroduce downloads or retry into a tombstone.
         let target = target.filter(|target| !message.deleted || !matches!(target, Target::Media { .. }));
+        if requested {super::super::menus::requested(ui.ctx(),popup_id);}
         let command = if requested { Some(egui::SetOpenCommand::Bool(true)) }
             else if response.clicked() { Some(egui::SetOpenCommand::Bool(false)) } else { None };
         egui::Popup::context_menu(response).id(popup_id).open_memory(command).show(|ui| {
@@ -140,12 +144,15 @@ impl NotDiscordUi {
     }
 
     fn message_link_menu(&mut self, ui: &mut egui::Ui, url: &str) {
+        let mut sections=super::super::menus::Sections::new();
+        sections.section(ui,true);
         let supported = url::Url::parse(url).is_ok_and(|url| matches!(url.scheme(), "http" | "https")
             && url.host_str().is_some() && url.username().is_empty() && url.password().is_none());
         if ui.add_enabled(supported, egui::Button::new("Abrir enlace")).clicked() {
             self.open_message_link(ui.ctx(), url);
             ui.close();
         }
+        sections.section(ui,true);
         if ui.button("Copiar enlace").clicked() {
             ui.ctx().copy_text(url.to_owned());
             ui.close();
@@ -158,6 +165,7 @@ impl NotDiscordUi {
             self.pictures.retry(url, 384);
             ui.close();
         }
+        ui.separator();
         self.media_menu(ui, url, name);
     }
 }

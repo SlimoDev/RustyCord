@@ -768,7 +768,7 @@ async fn stale_gif_query_is_ignored() {
         .await
         .unwrap();
     assert!(updates.try_recv().is_err());
-    assert!(c.gif_cache.is_empty());
+    assert!(c.gif_state.is_empty());
 }
 #[test]
 fn prepared_nonce_reused_exactly() {

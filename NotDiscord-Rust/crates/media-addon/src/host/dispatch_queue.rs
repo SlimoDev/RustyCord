@@ -152,7 +152,7 @@ fn event_bytes(event: &Event) -> usize {
                 Tag::Stats { request, .. } => value_bytes(request, 0), _ => 0 };
             values.iter().fold(tag_bytes, |bytes, value| bytes.saturating_add(value_bytes(value, 0)))
         }
-        Event::WsError(_, error) => error.message.len(),
+        Event::WsError(_, _, error) => error.message.len(),
         Event::PreviewResult { source, .. } => source.len(), _ => 0,
     };
     std::mem::size_of::<Event>().saturating_add(payload).max(1)

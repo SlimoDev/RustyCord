@@ -91,7 +91,7 @@ fn read(path: &std::path::Path, current: impl Fn() -> bool) -> Result<Vec<Picker
             host == *provider || host.strip_suffix(*provider).is_some_and(|prefix|prefix.ends_with('.')));
         if url.scheme() == "https" && (provider || url.path().to_ascii_lowercase().ends_with(".gif"))
             && values.len() < 100 && !values.iter().any(|value|value.value == line) {
-            values.push(PickerValue { value: line.into(), name: "GIF importado".into(), image_url: line.into() });
+            values.push(PickerValue { value: line.into(), name: "GIF importado".into(), image_url: line.into(), ..Default::default() });
         }
     }
     Ok(values)

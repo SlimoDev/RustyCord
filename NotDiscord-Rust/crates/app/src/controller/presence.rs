@@ -5,6 +5,30 @@ use notdiscord_core::settings_proto;
 pub(super) struct Changes {
     pending: Option<u64>,
     queued: Option<UiAction>,
+    confirmed: bool,
+    reconcile: Option<u64>,
+    reconcile_again: bool,
+}
+
+/// The confirmed own setting is authoritative for presentation. Presence echoes
+/// may arrive later than its settings response; retain activities/custom status.
+pub(super) fn project_self(snapshot: &mut AppSnapshot) {
+    let Some(id)=snapshot.current_user.as_ref().map(|person|person.id.clone()).filter(|id|!id.is_empty()) else{return;};
+    if !settings_proto::valid_presence(&snapshot.self_presence){return;}
+    let status=snapshot.self_presence.clone();
+    if !snapshot.user_presences.contains_key(&id) && snapshot.user_presences.len()>=2000{
+        if let Some(expired)=snapshot.user_presences.keys().next().cloned(){snapshot.user_presences.remove(&expired);}
+    }
+    snapshot.user_presences.entry(id.clone()).or_default().status=status.clone();
+    // Preserve SharedList storage identity on unchanged snapshots.
+    if snapshot.guild_members.iter().any(|member|member.user.id==id && member.presence!=status){
+        for member in snapshot.guild_members.iter_mut(){if member.user.id==id{member.presence=status.clone();}}
+    }
+    for member in &mut snapshot.group_members{
+        if member.user.id==id{member.presence=status.clone();}
+    }
+    for item in &mut snapshot.direct_messages{if item.recipient_id==id{item.presence=status.clone();}}
+    if let Some(profile)=snapshot.profile_details.as_mut().filter(|profile|profile.user.id==id){profile.presence=status;}
 }
 
 // A successful persisted change and a failed Gateway flush are different
@@ -25,14 +49,47 @@ where
 }
 
 impl Controller {
+    pub(super) fn remote_presence(&mut self,status:&str){
+        if !settings_proto::valid_presence(status){return;}
+        if self.presence_changes.pending.is_some(){self.presence_changes.reconcile_again=true;return;}
+        if self.presence_changes.reconcile.is_some(){self.presence_changes.reconcile_again=true;return;}
+        if !self.presence_changes.confirmed || status==self.state.self_presence{self.apply_self_presence(status);return;}
+        if let Err(error)=self.reconcile_presence(){self.error(error);}
+    }
+    fn reconcile_presence(&mut self)->Result<(),String>{
+        if self.presence_changes.reconcile.is_some(){self.presence_changes.reconcile_again=true;return Ok(());}
+        let api=self.api()?;let version=self.next_request("presence-read");
+        self.presence_changes.reconcile=Some(version);self.presence_changes.reconcile_again=false;
+        let mut action=UiAction::new("__presence-reconciled");action.extra=version.to_string();
+        self.launch(action,None,async move{
+            let value=api.request(Method::GET,"users/@me/settings",None).await.map_err(|error|error.to_string())?;
+            let status=value["status"].as_str().filter(|status|settings_proto::valid_presence(status)).ok_or("No se confirmó el estado actual de la cuenta; se conserva el último confirmado.")?;
+            Ok(json!({"status":status}))
+        });Ok(())
+    }
+    pub(super) fn finish_presence_reconcile(&mut self,action:&UiAction,value:Option<&Value>)->Result<(),String>{
+        if !self.presence_read_current(action){return Ok(());}
+        self.presence_changes.reconcile=None;
+        if self.presence_changes.pending.is_some(){self.presence_changes.reconcile_again=true;return Ok(());}
+        if self.presence_changes.reconcile_again && value.is_some(){return self.reconcile_presence();}
+        self.presence_changes.reconcile_again=false;
+        if let Some(status)=value.and_then(|value|value["status"].as_str()){self.apply_self_presence(status);}
+        Ok(())
+    }
+    pub(super) fn presence_read_current(&self,action:&UiAction)->bool{
+        action.kind!="__presence-reconciled" || action.extra.parse::<u64>().ok().is_some_and(|version|Some(version)==self.presence_changes.reconcile)
+    }
     pub(super) fn presence_change_pending(&self)->bool {self.presence_changes.pending.is_some()}
     pub(super) fn apply_self_presence(&mut self, status: &str) {
         if !settings_proto::valid_presence(status) { return; }
-        if self.state.self_presence == status { return; }
+        let changed=self.state.self_presence != status;
         if status == "dnd" && self.state.self_presence != "dnd" {
             self.state.notification_epoch = self.state.notification_epoch.wrapping_add(1);
         }
         self.state.self_presence = status.to_owned();
+        if changed{self.state.presence_version=self.state.presence_version.wrapping_add(1);}
+        project_self(&mut self.state);
+        if !changed{self.publish();return;}
         if matches!(status,"invisible"|"offline"){self.game_detector.suspend_rpc();}
         // This ordered policy barrier precedes sound/notice data even when
         // the full snapshot is still waiting for its coalescing interval.
@@ -49,6 +106,8 @@ impl Controller {
         self.start_presence_change(action, api)
     }
     fn start_presence_change(&mut self, mut action: UiAction, api: Api) -> Result<(), String> {
+        // A new explicit choice supersedes an older read reconciliation.
+        self.presence_changes.reconcile=None;
         let status = action.text.clone();
         let gateway = self.gateway.clone().ok_or("Gateway no preparado.")?;
         let activity = self.game_presence_for_status(&status);
@@ -84,6 +143,7 @@ impl Controller {
             return Ok(());
         }
         if let Some(value) = value {
+            self.presence_changes.confirmed=true;
             let status = value["status"].as_str().unwrap_or(&action.text);
             self.apply_self_presence(status);
             if let Some(error) = value["gateway_error"].as_str() {
@@ -97,6 +157,8 @@ impl Controller {
         self.presence_changes.pending = None;
         if let Some(next) = self.presence_changes.queued.take() {
             self.start_presence_change(next, self.api()?)?;
+        }else if self.presence_changes.reconcile_again{
+            self.reconcile_presence()?;
         }
         self.publish();
         Ok(())

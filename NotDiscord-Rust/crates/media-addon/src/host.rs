@@ -62,7 +62,7 @@ pub enum Event {
     Tick,
     WsOpen(u64),
     WsFrame(u64, Frame),
-    WsError(u64, MediaError),
+    WsError(u64, &'static str, MediaError),
     Callback(Tag, Vec<Value>),
     PreviewResult {
         token: u64,
@@ -503,7 +503,12 @@ impl Host {
   Event::Request(request)=>{let id=request["id"].clone();let valid=id.as_str().is_some_and(|s|s.len()<=128)||id.as_i64().is_some();if !valid{self.reply(Value::Null,Err(MediaError::new("INVALID_REQUEST","A short request id is required.")));return}if self.pending.len()>=32{self.reply(id,Err(MediaError::new("QUEUE_LIMIT","Too many media requests.")));return}self.pending.insert(id.to_string(),(id.clone(),Instant::now()+Duration::from_secs(30)));let cmd=request["command"].as_str().unwrap_or("");match self.command(id.clone(),cmd,&request["params"]){Ok(Some(value))=>self.reply(id,Ok(value)),Ok(None)=>{},Err(e)=>self.reply(id,Err(e))}},
   Event::WsOpen(id)=>{if let Some(s)=self.sessions.get(&id){let p=&s.credentials;self.stage(s,"websocket-open");self.send(id,0,json!({"server_id":p.server_id,"channel_id":p.channel_id,"user_id":p.user_id,"session_id":p.session_id,"token":p.voice_token,"max_dave_protocol_version":1,"video":true,"streams":[{"type":"video","rid":"100","quality":100,"active":false}]}));}},
   Event::WsFrame(id,frame)=>{if let Some(mut s)=self.sessions.remove(&id){let result=self.frame(&mut s,frame);if let Err(e)=result{self.fail(&mut s,e)}if !s.closed{self.sessions.insert(id,s);}}},
-  Event::WsError(id,error)=>{if let Some(mut s)=self.sessions.remove(&id){self.fail(&mut s,error);}},
+  Event::WsError(id,phase,error)=>{if let Some(mut s)=self.sessions.remove(&id){
+    // Fixed phase/code vocabulary and an ephemeral session generation only.
+    // Preserve this cause before close removes transport/capture resources.
+    self.emit(json!({"event":"transportError","mediaSession":id,"phase":if error.code=="VOICE_HEARTBEAT_TIMEOUT" {"heartbeat"}else{phase},"code":error.code}));
+    self.fail(&mut s,error);
+  }},
   Event::Callback(tag,values)=>{if let Err(e)=self.native_event(tag.clone(),values){match tag.session(){Some(id)=>{if let Some(mut s)=self.sessions.remove(&id){self.fail(&mut s,e)}},None=>{if let Some(id)=tag.request(){self.reply(id,Err(e));}}}}},
  }
     }
@@ -979,7 +984,7 @@ impl Host {
         if let Some(socket) = self.sockets.get(&id) {
             if let Err(error) = socket.send(Message::Text(json!({"op":op,"d":data}).to_string().into())) {
                 if socket.fail_once() {
-                    let _ = self.sender.call(Event::WsError(id, error), ThreadsafeFunctionCallMode::NonBlocking);
+                    let _ = self.sender.call(Event::WsError(id, "enqueue", error), ThreadsafeFunctionCallMode::NonBlocking);
                 }
             }
         }
@@ -989,7 +994,7 @@ impl Host {
         let socket = self.sockets.get(&id).ok_or_else(|| MediaError::new("VOICE_SEND_CLOSED", "La conexión de voz ya se cerró."))?;
         if let Err(error) = socket.send(Message::Binary(data.into())) {
             if socket.fail_once() {
-                let _ = self.sender.call(Event::WsError(id, error.clone()), ThreadsafeFunctionCallMode::NonBlocking);
+                let _ = self.sender.call(Event::WsError(id, "enqueue", error.clone()), ThreadsafeFunctionCallMode::NonBlocking);
             }
             return Err(error);
         }
@@ -2753,7 +2758,13 @@ fn socket_failure(error: &tokio_tungstenite::tungstenite::Error) -> MediaError {
         Error::Tls(_) => MediaError::new("VOICE_SOCKET_TLS", "No se pudo establecer la conexión segura con el servidor de voz."),
         Error::Io(_) => MediaError::new("VOICE_SOCKET_NETWORK", "La conexión de red con el servidor de voz falló o se interrumpió."),
         Error::Capacity(_) | Error::WriteBufferFull(_) => MediaError::new("VOICE_SOCKET_LIMIT", "La señalización de voz superó los límites de tamaño del transporte."),
-        _ => MediaError::new("VOICE_SOCKET_ERROR", "Falló la comunicación con el servidor de voz."),
+        Error::Protocol(_) => MediaError::new("VOICE_SOCKET_PROTOCOL", "El transporte de voz recibió una secuencia WebSocket no válida."),
+        Error::ConnectionClosed => MediaError::new("VOICE_SOCKET_CLOSED", "El servidor completó el cierre de la conexión de voz."),
+        Error::AlreadyClosed => MediaError::new("VOICE_SOCKET_ALREADY_CLOSED", "Se intentó usar un transporte de voz que ya estaba cerrado."),
+        Error::Utf8(_) => MediaError::new("VOICE_SOCKET_UTF8", "La señalización de voz contenía texto no válido."),
+        Error::AttackAttempt => MediaError::new("VOICE_SOCKET_HANDSHAKE_LIMIT", "El transporte rechazó un intercambio WebSocket no permitido."),
+        Error::Url(_) => MediaError::new("VOICE_SOCKET_ENDPOINT", "No se pudo preparar la dirección del transporte de voz."),
+        Error::HttpFormat(_) => MediaError::new("VOICE_SOCKET_HTTP_FORMAT", "La respuesta del transporte no tenía un formato HTTP válido."),
     }
 }
 fn transport_success(values: &[Value]) -> bool {

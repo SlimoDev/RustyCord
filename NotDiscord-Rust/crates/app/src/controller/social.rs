@@ -694,6 +694,7 @@ impl Controller {
                         action.id.clone()
                     },
                     image_url: s(&val, "imageUrl"),
+                    ..Default::default()
                 };
                 if action.kind == "gif-favorite" {
                     picker.favorite(entry)?;
@@ -702,8 +703,7 @@ impl Controller {
                 } else {
                     picker.recent(entry, gif)?;
                 }
-                let history = serde_json::to_value(&picker.data).unwrap();
-                self.data("picker-history", history);
+                self.publish_picker_history();
             }
             _ => return Ok(false),
         }

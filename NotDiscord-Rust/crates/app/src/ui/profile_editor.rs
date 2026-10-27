@@ -205,7 +205,7 @@ impl NotDiscordUi {
                                 .id_salt("profile-status")
                                 .char_limit(128)
                                 .desired_width(ui.available_width()),
-                        ));
+                        ).focus_salt("profile-status").submit_action("profile-status"));
                         if !s(&editor.emoji, "emoji_id").is_empty()
                             || !s(&editor.emoji, "emoji_name").is_empty()
                         {
@@ -225,7 +225,7 @@ impl NotDiscordUi {
                             ui.small(format!("{} / 128", editor.status.chars().count()));
                             if ui
                                 .add_enabled(!state.demo, egui::Button::new("Guardar estado"))
-                                .clicked()
+                                .clicked() || !state.demo && super::input_ownership::take_action(ui.ctx(),"profile-status")
                             {
                                 let token = uuid::Uuid::new_v4().to_string();
                                 if self.send_profile_request(
@@ -270,7 +270,7 @@ impl NotDiscordUi {
                                 .char_limit(190)
                                 .desired_rows(4)
                                 .desired_width(ui.available_width()),
-                        ));
+                        ).focus_salt("profile-bio"));
                         let length = editor.bio.encode_utf16().count();
                         ui.horizontal(|ui| {
                             ui.small(format!("{length} / 190"));

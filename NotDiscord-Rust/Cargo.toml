@@ -1,6 +1,12 @@
 [workspace]
 members = ["crates/core", "crates/app", "crates/media-addon"]
+exclude = ["vendor/winit", "vendor/egui-winit"]
 resolver = "2"
+
+[patch.crates-io]
+# Native Windows Alt+numpad commits, kept in the normal ordered input pipeline.
+winit = { path = "vendor/winit" }
+egui-winit = { path = "vendor/egui-winit" }
 
 [workspace.package]
 version = "0.2.0"

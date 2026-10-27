@@ -76,11 +76,11 @@ impl NotDiscordUi {
                     ui.separator();
                     ui.label(RichText::new("Colores y fondos").strong());
                     ui.label("Color base de toda la interfaz · #RRGGBB");
-                    ui.add(bordered(egui::TextEdit::singleline(&mut self.prefs.background)));
+                    ui.add(bordered(egui::TextEdit::singleline(&mut self.prefs.background)).submit_action("appearance-save"));
                     ui.label("Color de líneas separadoras · #RRGGBB");
-                    ui.add(bordered(egui::TextEdit::singleline(&mut self.prefs.separator)));
+                    ui.add(bordered(egui::TextEdit::singleline(&mut self.prefs.separator)).submit_action("appearance-save"));
                     ui.label("Color de acento · #RRGGBB");
-                    ui.add(bordered(egui::TextEdit::singleline(&mut self.prefs.accent_color)));
+                    ui.add(bordered(egui::TextEdit::singleline(&mut self.prefs.accent_color)).submit_action("appearance-save"));
                     ui.horizontal_wrapped(|ui| {
                         for (name, bg, line, accent) in [("Discord", "#313338", "#45474D", "#5865F2"), ("Noche azul", "#13263A", "#36516A", "#54BDFF"), ("Bosque", "#142B25", "#386652", "#60D49A"), ("Claro", "#F1F3F6", "#ABB4C1", "#4055CB")] {
                             if ui.button(name).clicked() { self.prefs.background = bg.into(); self.prefs.separator = line.into(); self.prefs.accent_color = accent.into(); }
@@ -120,7 +120,7 @@ impl NotDiscordUi {
                 ui.horizontal(|ui| {
                     if ui.button("Restablecer").clicked() { self.prefs = Preferences::default(); }
                     if ui.button("Cancelar").clicked() { if let Some(p) = self.settings_backup.take() { self.prefs = p; } close = true; }
-                    if ui.button("Guardar").clicked() {
+                    if ui.button("Guardar").clicked() || super::input_ownership::take_action(ctx,"appearance-save") {
                         if theme::parse_color(&self.prefs.background).is_none() || theme::parse_color(&self.prefs.separator).is_none() || theme::parse_color(&self.prefs.accent_color).is_none() { self.error = "Usa colores como #10151C.".into(); }
                         else { match self.prefs.save(&self.data_dir) { Ok(()) => { self.settings_backup = None; self.send("ui-settings", "", serde_json::to_string(&self.prefs).unwrap_or_default(), "", ""); close = true; }, Err(e) => self.error = e } }
                     }

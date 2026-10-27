@@ -826,6 +826,7 @@ impl SoundEngine {
         if let Some(worker) = self.worker() {
             let generation = worker.effect_generation.load(std::sync::atomic::Ordering::Acquire);
             if worker.tx.try_send(Command::Play(generation, event, setting)).is_ok() {
+                notdiscord_core::diagnostics::record(notdiscord_core::diagnostics::Component::Sound,notdiscord_core::diagnostics::Code::SoundQueued,notdiscord_core::diagnostics::Phase::Enqueue,0);
                 worker.wake_producer.notify();
             }
         }

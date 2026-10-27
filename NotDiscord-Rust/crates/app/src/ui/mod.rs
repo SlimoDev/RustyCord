@@ -1,5 +1,9 @@
 mod chat;
-mod autoscroll;
+pub(crate) mod autoscroll;
+mod menus;
+mod input_ownership;
+mod server_order;
+mod call_preferences;
 mod overlay;
 mod appearance;
 mod custom_text;
@@ -95,9 +99,14 @@ use std::{
 };
 use theme::{Preferences, Theme};
 
-struct BorderedTextEdit<'a>(egui::TextEdit<'a>);
+struct BorderedTextEdit<'a> { edit: egui::TextEdit<'a>, focus_id: Option<egui::Id>, focus_salt: Option<egui::Id>, submit_action: Option<&'static str> }
 fn bordered(edit: egui::TextEdit<'_>) -> BorderedTextEdit<'_> {
-    BorderedTextEdit(edit)
+    BorderedTextEdit { edit, focus_id: None, focus_salt: None, submit_action: None }
+}
+impl BorderedTextEdit<'_> {
+    fn focus_id(mut self, id: egui::Id) -> Self { self.focus_id=Some(id);self }
+    fn focus_salt(mut self, salt: impl std::hash::Hash) -> Self {self.focus_salt=Some(egui::Id::new(salt));self}
+    fn submit_action(mut self, action:&'static str)->Self {self.submit_action=Some(action);self}
 }
 impl egui::Widget for BorderedTextEdit<'_> {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
@@ -112,7 +121,14 @@ impl egui::Widget for BorderedTextEdit<'_> {
             widgets.hovered.bg_stroke = egui::Stroke::new(1.5_f32, accent);
             widgets.active.bg_stroke = egui::Stroke::new(1.5_f32, accent);
             widgets.open.bg_stroke = egui::Stroke::new(1.5_f32, accent);
-            ui.add(self.0)
+            let id=self.focus_id.or_else(||self.focus_salt.map(|salt|ui.make_persistent_id(salt))).unwrap_or_else(||ui.next_auto_id());
+            input_ownership::before_field(ui,id);
+            if let Some(action)=self.submit_action.filter(|_|ui.is_enabled() && input_ownership::take_submit(ui.ctx(),id)) {
+                input_ownership::request_action(ui.ctx(),action);
+            }
+            let response=ui.add(self.edit);
+            input_ownership::after_field(ui,&response);
+            response
         })
         .inner
     }
@@ -214,6 +230,14 @@ enum Dialog {
 }
 #[derive(Default)]
 struct Picker {
+    open_id: String,
+    request_id: String,
+    remote_items: Vec<Value>,
+    items_revision: u64,
+    history_revision: u64,
+    remote_favorites: HashSet<String>,
+    has_more: bool,
+    items_dirty: bool,
     gif: bool,
     query: String,
     category: String,
@@ -225,20 +249,7 @@ struct Picker {
     pending: bool,
     react: Option<(String, String)>,
 }
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
-#[serde(default, rename_all = "PascalCase")]
-struct PickerValue {
-    value: String,
-    name: String,
-    image_url: String,
-}
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
-#[serde(default, rename_all = "PascalCase")]
-struct PickerHistory {
-    emoji_recent: Vec<PickerValue>,
-    gif_favorites: Vec<PickerValue>,
-    gif_recent: Vec<PickerValue>,
-}
+use crate::storage::{PickerValue, PickerValues as PickerHistory};
 struct Viewer {
     url: String,
     // Local sources enter only through an already prepared attachment, never
@@ -305,6 +316,7 @@ pub struct NotDiscordUi {
     dialog_error: String,
     picker: Option<Picker>,
     picker_history: PickerHistory,
+    remote_gif_favorites: Vec<Value>,
     picker_account: String,
     txt_import: Option<txt_import::Importer>,
     profile_tab: usize,
@@ -485,6 +497,7 @@ impl NotDiscordUi {
             dialog_error: String::new(),
             picker: None,
             picker_history: PickerHistory::default(),
+            remote_gif_favorites: Vec::new(),
             picker_account: String::new(),
             txt_import: None,
             profile_tab: 0,
@@ -759,6 +772,9 @@ impl NotDiscordUi {
                         chat::clear_reaction_users(ctx);
                         chat::clear_history_page_request(ctx);
                         markdown_cache::clear(ctx);
+                        menus::clear(ctx);
+                        self.remote_gif_favorites.clear();
+                        self.picker=None;
                         if let Some(importer) = &mut self.txt_import { importer.cancel(); }
                         self.clear_edit_prompt(ctx);
                     }
@@ -886,7 +902,8 @@ impl NotDiscordUi {
                         let owned = self.owned_temporary.iter().cloned().collect::<Vec<_>>();
                         self.cleanup_temporary(&owned);
                         self.picker_account = account.into();
-                        self.picker_history = self.read_picker_history();
+                        self.picker_history = PickerHistory::default();
+                        self.remote_gif_favorites.clear();
                         self.picker = None;
                         self.dialog = None;
                         self.forward_pending = false;
@@ -1091,23 +1108,11 @@ impl NotDiscordUi {
                 }
             }
             "gifs" | "gif-catalog" => {
-                if let Some(p) = &mut self.picker {
-                    p.items = field(&data, "Items")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .or_else(|| data.as_array().cloned())
-                        .unwrap_or_default();
-                    p.categories = field(&data, "Categories")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                    p.note = s(&data, "Note").into();
-                    p.pending = false;
-                    for item in &p.items {
-                        resources::remember_source(s(item, "Url"), s(item, "AnimationUrl"));
-                    }
-                }
+                self.receive_gif_catalog(&data);
             }
+            "picker-history" => self.receive_picker_history(&data),
+            "gif-favorites-update" => self.receive_gif_favorites(&data),
+            "gif-favorite-result" => self.receive_gif_favorite_result(&data),
             "emojis" | "guild-emojis" => {
                 if let Some(p) = &mut self.picker {
                     p.items = data
@@ -1204,13 +1209,13 @@ impl NotDiscordUi {
         self.send("channel", &item.id, "", anchor, "");
     }
     fn people_menu(&mut self, ui: &mut egui::Ui, p: &Person, state: &AppSnapshot) {
-        if ui.button("Ver perfil").clicked() {
+        let mut sections=menus::Sections::new();
+        sections.section(ui,true);
+        if menus::action(ui,"Ver perfil",true).clicked() {
             self.send("profile", &p.id, "", "", &state.selected_channel_id);
             ui.close();
         }
         self.draw_add_to_call(ui, p, state);
-        self.draw_member_moderation_menu(ui, p, state);
-        self.draw_group_member_removal(ui, p, state);
         if p.id
             != state
                 .current_user
@@ -1250,6 +1255,9 @@ impl NotDiscordUi {
                 _ => {}
             }
         }
+        self.draw_member_moderation_menu(ui, p, state);
+        self.draw_group_member_removal(ui, p, state);
+        sections.section(ui,true);
         if ui.button("Copiar ID").clicked() {
             ui.ctx().copy_text(p.id.clone());
             ui.close();
@@ -1525,6 +1533,7 @@ impl eframe::App for NotDiscordUi {
         crate::platform::remember_root_window(ctx, frame);
         let minimized = ctx.input(|input| input.viewport().minimized.unwrap_or(false));
         let suspension_changed = self.pictures.visuals_suspended() != minimized;
+        if suspension_changed{notdiscord_core::diagnostics::record(notdiscord_core::diagnostics::Component::App,notdiscord_core::diagnostics::Code::VisibilityChanged,notdiscord_core::diagnostics::Phase::Present,u64::from(minimized));}
         self.pictures.set_visual_suspended(minimized);
         if minimized && suspension_changed {
             self.emoji_generation.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
@@ -1661,11 +1670,13 @@ impl eframe::App for NotDiscordUi {
         autoscroll::begin_frame(ctx);
         if !minimized {
             self.dismiss_outside_overlays(ctx);
+            input_ownership::begin(self,ctx,&state);
             self.draw_modal_barrier(ctx);
             self.draw_shell(ctx, &state);
             self.draw_dialog(ctx, &state);
             self.draw_picker(ctx, &state);
             self.draw_viewer(ctx);
+            crate::diagnostics::draw(ctx);
         }
         self.update_member_demand(ctx, &state);
         self.check_selection_preview_closed();

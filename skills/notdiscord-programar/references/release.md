@@ -47,6 +47,9 @@ es un cambio separado; no se presupone al pedir una corrección pequeña.
    a la rama correcta y crear la release con el asset correspondiente. Ante una
    respuesta desconocida, consultar el estado remoto antes de repetir la mutación.
    Evitar push forzado o cambios en ramas fuera del alcance.
+   El título de cada release de NotDiscord debe ser exactamente `NotDiscord x.x.x`,
+   sustituyendo `x.x.x` por la versión publicada, sin comentarios, descripciones,
+   separadores ni otros sufijos en el título.
 7. Comparar nombre, estado, tamaño y digest remoto con el asset local. Publicar
    después el manifiesto que anuncia ese instalador. Confirmar rama, versión y
    ausencia de cambios en la edición congelada. Una consulta GitHub autorizada

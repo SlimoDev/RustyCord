@@ -24,6 +24,7 @@ fn register_background(ui: &egui::Ui, salt: Id) {
 /// Decorative media can have only Sense::hover and must still exclude middle
 /// scrolling. The media caller supplies its exact painted hit rectangle.
 pub(super) fn exclude(ui: &egui::Ui, rect: Rect) {
+    if !rect.is_positive() {return;}
     let ctx=ui.ctx(); let frame=ctx.cumulative_frame_nr();
     let key=surfaces_key(ctx.viewport_id());
     let excluded=(ui.layer_id(),rect.intersect(ui.clip_rect()));
@@ -31,6 +32,16 @@ pub(super) fn exclude(ui: &egui::Ui, rect: Rect) {
         let surfaces=data.get_temp_mut_or_default::<Surfaces>(key);
         if surfaces.frame!=frame { *surfaces=Surfaces {frame,..Default::default()}; }
         surfaces.excluded.push(excluded);
+    });
+}
+/// A selectable galley can reserve more layout than the glyphs it paints.
+/// Permit its empty region while `exclude` retains each real link rectangle.
+pub(super) fn allow_background(ui:&egui::Ui,id:Id) {
+    let ctx=ui.ctx();let frame=ctx.cumulative_frame_nr();let key=surfaces_key(ctx.viewport_id());
+    ctx.data_mut(|data| {
+        let surfaces=data.get_temp_mut_or_default::<Surfaces>(key);
+        if surfaces.frame!=frame {*surfaces=Surfaces {frame,..Default::default()};}
+        if !surfaces.backgrounds.contains(&id){surfaces.backgrounds.push(id);}
     });
 }
 
@@ -59,7 +70,8 @@ pub(super) fn begin_frame(ctx: &egui::Context) {
     let frame=ctx.cumulative_frame_nr();
     let key=key(ctx.viewport_id());
     let stop=ctx.input(|input|input.key_pressed(egui::Key::Escape) || !input.focused
-        || input.pointer.primary_pressed() || input.pointer.secondary_pressed());
+        || input.pointer.primary_pressed() || input.pointer.secondary_pressed()
+        || input.raw_scroll_delta!=egui::Vec2::ZERO || input.smooth_scroll_delta!=egui::Vec2::ZERO);
     ctx.data_mut(|data| {
         if let Some(mut state)=data.get_temp::<Owner>(key) {
             if stop || frame>state.seen.saturating_add(1) {
@@ -92,7 +104,7 @@ fn unclaimed(ctx: &egui::Context) -> bool {
             && !allowed.contains(&id) && !surfaces.backgrounds.contains(&id)))
 }
 
-pub(super) fn drive(ui: &egui::Ui, id: Id, viewport: Rect, scrollable: bool) -> f32 {
+pub(crate) fn drive(ui: &egui::Ui, id: Id, viewport: Rect, scrollable: bool) -> f32 {
     let ctx=ui.ctx();
     let frame=ctx.cumulative_frame_nr();
     let key=key(ctx.viewport_id());
@@ -102,7 +114,10 @@ pub(super) fn drive(ui: &egui::Ui, id: Id, viewport: Rect, scrollable: bool) -> 
     if state.id.is_some() && frame>state.seen.saturating_add(1) {
         state.id=None;state.origin=None;
     }
-    if state.id==Some(id) { state.seen=frame; }
+    if state.id==Some(id) {
+        if ui.is_enabled() {state.seen=frame;}
+        else {state.id=None;state.origin=None;state.changed=Some(frame);}
+    }
     if middle && state.changed!=Some(frame) {
         if state.id.is_some() {
             state.id=None;state.origin=None;state.changed=Some(frame);
@@ -129,15 +144,15 @@ pub(super) fn drive(ui: &egui::Ui, id: Id, viewport: Rect, scrollable: bool) -> 
     velocity
 }
 
-pub(super) struct ScrollArea { inner: egui::ScrollArea, middle: bool, salt: Id }
+pub(crate) struct ScrollArea { inner: egui::ScrollArea, middle: bool, salt: Id }
 impl ScrollArea {
-    pub(super) fn vertical() -> Self { Self {inner:egui::ScrollArea::vertical(),middle:true,salt:Id::new("scroll_area")} }
+    pub(crate) fn vertical() -> Self { Self {inner:egui::ScrollArea::vertical(),middle:true,salt:Id::new("scroll_area")} }
     // Horizontal attachment strips intentionally retain wheel/drag handling.
     pub(super) fn horizontal() -> Self { Self {inner:egui::ScrollArea::horizontal(),middle:false,salt:Id::new("scroll_area")} }
     pub(super) fn middle_scroll(mut self, enabled: bool) -> Self {self.middle=enabled;self}
-    pub(super) fn id_salt(mut self,salt:impl std::hash::Hash)->Self {self.salt=Id::new(&salt);self.inner=self.inner.id_salt(salt);self}
+    pub(crate) fn id_salt(mut self,salt:impl std::hash::Hash)->Self {self.salt=Id::new(&salt);self.inner=self.inner.id_salt(salt);self}
     pub(super) fn max_width(mut self,value:f32)->Self {self.inner=self.inner.max_width(value);self}
-    pub(super) fn max_height(mut self,value:f32)->Self {self.inner=self.inner.max_height(value);self}
+    pub(crate) fn max_height(mut self,value:f32)->Self {self.inner=self.inner.max_height(value);self}
     pub(super) fn min_scrolled_height(mut self,value:f32)->Self {self.inner=self.inner.min_scrolled_height(value);self}
     pub(super) fn auto_shrink(mut self,value:impl Into<egui::Vec2b>)->Self {self.inner=self.inner.auto_shrink(value);self}
     pub(super) fn stick_to_bottom(mut self,value:bool)->Self {self.inner=self.inner.stick_to_bottom(value);self}
@@ -158,7 +173,7 @@ impl ScrollArea {
         }
         out
     }
-    pub(super) fn show<R>(self,ui:&mut egui::Ui,contents:impl FnOnce(&mut egui::Ui)->R)->egui::scroll_area::ScrollAreaOutput<R> {
+    pub(crate) fn show<R>(self,ui:&mut egui::Ui,contents:impl FnOnce(&mut egui::Ui)->R)->egui::scroll_area::ScrollAreaOutput<R> {
         register_background(ui,self.salt);
         let out=self.inner.show(ui,contents);Self::finish(self.middle,ui,out)
     }

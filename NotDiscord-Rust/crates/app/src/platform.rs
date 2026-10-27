@@ -635,6 +635,7 @@ impl Notifications {
         let activation = notification_open_action(channel,account,generation);
         toast
             .Activated(&windows::Foundation::TypedEventHandler::new(move |_, _| {
+                notdiscord_core::diagnostics::record(notdiscord_core::diagnostics::Component::Notifications,notdiscord_core::diagnostics::Code::ToastActivated,notdiscord_core::diagnostics::Phase::Dispatch,0);
                 if let Some(action)=&activation { let _ = command.send(action.clone()); }
                 Ok(())
             }))

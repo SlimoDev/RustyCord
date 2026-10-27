@@ -842,7 +842,7 @@ impl NotDiscordUi {
                             if r.clicked() {
                                 self.navigate(item);
                             }
-                            r.context_menu(|ui| self.nav_menu(ui, item, state));
+                            self.nav_context_menu(&r,item,state);
                         }
                         let mut attention_seen = call_ids.clone();
                         for call in state
@@ -894,28 +894,30 @@ impl NotDiscordUi {
                             if r.clicked() {
                                 self.navigate(item);
                             }
-                            r.context_menu(|ui| self.nav_menu(ui, item, state));
+                            self.nav_context_menu(&r,item,state);
                         }
                         ui.separator();
-                        theme::vertical_scroll(ui)
+                        let mut order=super::server_order::State::load(ui.ctx(),&self.data_dir,state);
+                        let indices=order.indices(&state.guilds);
+                        let mut guild_scroll=theme::vertical_scroll(ui)
                             .id_salt("guilds")
                             .auto_shrink([false, true])
-                            .show_rows(ui, 56., state.guilds.len(), |ui, range| {
-                                for guild in &state.guilds[range] {
-                                    let r = self.rail_item(
-                                        ui,
-                                        guild,
-                                        48.,
-                                        guild.id == state.selected_guild_id,
-                                        false,
-                                        if guild.unread { 1 } else { 0 },
-                                    );
-                                    if r.clicked() {
-                                        self.send("guild", &guild.id, "", "", "");
-                                    }
-                                    r.context_menu(|ui| self.nav_menu(ui, guild, state));
+                            .show_rows(ui, 56., indices.len(), |ui, range| {
+                                for index in range {
+                                    let guild=&state.guilds[indices[index]];
+                                    ui.push_id(("guild-row",&guild.id),|ui| {
+                                        let r=self.rail_item(ui,guild,48.,guild.id==state.selected_guild_id,false,
+                                            if guild.unread {1}else{0});
+                                        order.row(&r,&guild.id);
+                                        if r.clicked() && !order.dragging() && !r.dragged() {
+                                            self.send("guild",&guild.id,"","","");
+                                        }
+                                        self.nav_context_menu(&r,guild,state);
+                                    });
                                 }
                             });
+                        if let Err(error)=order.finish(ui,&mut guild_scroll,&self.data_dir){self.error=error;}
+                        order.store(ui.ctx());
                     });
             });
         let navigation = egui::SidePanel::left("conversation-sidebar")
@@ -1236,7 +1238,7 @@ impl NotDiscordUi {
         count: i32,
     ) -> egui::Response {
         let (rect, response) =
-            ui.allocate_exact_size(egui::Vec2::splat(size + 8.), egui::Sense::click());
+            ui.allocate_exact_size(egui::Vec2::splat(size + 8.), if item.kind=="guild" {egui::Sense::click_and_drag()}else{egui::Sense::click()});
         let hovered = ui.rect_contains_pointer(rect);
         if selected || hovered {
             ui.painter().rect_filled(
@@ -1513,7 +1515,7 @@ impl NotDiscordUi {
                         egui::TextEdit::singleline(&mut self.search)
                             .id(egui::Id::new("message-search"))
                             .hint_text("Buscar mensajes  ⌕"),
-                    ),
+                    ).focus_id(egui::Id::new("message-search")),
                 );
                 self.search_rect = response.rect;
                 if ui.is_enabled() {
@@ -1782,13 +1784,17 @@ impl NotDiscordUi {
         {
             self.navigate(item);
         }
-        if let Some(avatar) = avatar {
-            avatar.context_menu(|ui| self.nav_menu(ui, item, state));
-        }
-        response.context_menu(|ui| self.nav_menu(ui, item, state));
+        let response=avatar.map_or_else(||response.clone(),|avatar|response.union(avatar));
+        self.nav_context_menu(&response,item,state);
         ui.advance_cursor_after_rect(rect);
     }
+    fn nav_context_menu(&mut self,response:&egui::Response,item:&NavItem,state:&AppSnapshot) {
+        let target=super::menus::bind(response,super::menus::Target::Navigation(item.clone()),state);
+        response.context_menu(|ui|if let super::menus::Target::Navigation(item)=target {self.nav_menu(ui,&item,state)});
+    }
     fn nav_menu(&mut self, ui: &mut egui::Ui, item: &NavItem, state: &AppSnapshot) {
+        let mut sections=super::menus::Sections::new();
+        sections.section(ui,true);
         if item.kind == "guild" {
             if ui.button("Abrir servidor").clicked() {
                 self.send("guild", &item.id, "", "", "");
@@ -1798,6 +1804,7 @@ impl NotDiscordUi {
                 self.send("guild-mark-read", &item.id, "", "", "");
                 ui.close();
             }
+            sections.section(ui,true);
             if ui
                 .button(if item.is_muted {
                     "Reactivar notificaciones"
@@ -1809,9 +1816,9 @@ impl NotDiscordUi {
                 self.send("guild-mute", &item.id, "", "", "");
                 ui.close();
             }
-            ui.menu_button("Ajustes de notificaciones", |ui| self.guild_notification_options(ui,item,state));
+            super::menus::submenu(ui,"Ajustes de notificaciones",|ui|self.guild_notification_options(ui,item,state));
             let mut hidden = item.guild_notifications.hide_muted_channels;
-            if ui.checkbox(&mut hidden,"Ocultar canales silenciados").on_hover_text("Preferencia local de este servidor. El canal abierto permanece visible.").changed() {
+            if super::menus::toggle(ui,&mut hidden,"Ocultar canales silenciados").on_hover_text("Preferencia local de este servidor. El canal abierto permanece visible.").changed() {
                 self.send("guild-hide-muted",&item.id,hidden.to_string(),"","");
                 ui.close();
             }
@@ -1819,13 +1826,9 @@ impl NotDiscordUi {
                 self.send("guild-invite", &item.id, "", "", "");
                 ui.close();
             }
-            ui.separator();
+            sections.section(ui,true);
             if ui.button("Configuración del servidor").clicked() {
                 self.send("guild-settings", &item.id, "", "", "");
-                ui.close();
-            }
-            if ui.button("Copiar ID del servidor").clicked() {
-                ui.ctx().copy_text(item.id.clone());
                 ui.close();
             }
             if ui
@@ -1837,6 +1840,11 @@ impl NotDiscordUi {
                     "¿Salir de este servidor? Para volver necesitarás otra invitación.",
                     UiAction::id("guild-leave", &item.id),
                 );
+                ui.close();
+            }
+            sections.section(ui,true);
+            if ui.button("Copiar ID del servidor").clicked() {
+                ui.ctx().copy_text(item.id.clone());
                 ui.close();
             }
             return;
@@ -1874,7 +1882,7 @@ impl NotDiscordUi {
             ui.close();
         }
         if private {
-            ui.separator();
+            sections.section(ui,true);
             if !item.recipient_id.is_empty() && ui.button("Ver perfil").clicked() {
                 self.send(
                     "profile",
@@ -1893,7 +1901,7 @@ impl NotDiscordUi {
                 ui.close();
             }
         }
-        ui.separator();
+        sections.section(ui,true);
         if ui
             .button(if item.is_muted {
                 "Reactivar notificaciones"
@@ -1912,7 +1920,7 @@ impl NotDiscordUi {
             ui.close();
         }
         if private && !item.recipient_id.is_empty() {
-            ui.separator();
+            sections.section(ui,true);
             if ui
                 .button(RichText::new("Bloquear").color(Color32::from_rgb(242, 63, 67)))
                 .clicked()
@@ -1940,7 +1948,7 @@ impl NotDiscordUi {
                 ui.close();
             }
         }
-        ui.separator();
+        sections.section(ui,true);
         if ui.button("Copiar ID").clicked() {
             ui.ctx().copy_text(item.id.clone());
             ui.close();
@@ -2030,6 +2038,7 @@ impl NotDiscordUi {
                             ui.spacing_mut().button_padding = egui::vec2(1., 0.);
                             let user = state.current_user.clone().unwrap_or_default();
                             let avatar = self.avatar(ui, &user, &state.self_presence, 40.);
+                            if avatar.secondary_clicked() {super::menus::requested(ui.ctx(),egui::Popup::default_response_id(&avatar));}
                             avatar.context_menu(|ui| self.account_menu(ui, state));
                             egui::Popup::menu(&avatar)
                                 .id(avatar.id.with("account-left-menu"))
@@ -2115,11 +2124,16 @@ impl NotDiscordUi {
         #[cfg(not(test))] let _ = footer;
     }
     fn account_menu(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
+        let mut sections=super::menus::Sections::new();
+        sections.section(ui,true);
         if ui.add_enabled(self.updater.can_check(), egui::Button::new("Buscar actualizaciones")).clicked() {
             self.updater.check(ui.ctx());
             ui.close();
         }
-        ui.separator();
+        if super::menus::action(ui,"Diagnóstico local…",true).clicked() {
+            crate::diagnostics::open(ui.ctx());ui.close();
+        }
+        sections.section(ui,true);
         if let Some(me) = &state.current_user {
             if ui.button("Ver mi perfil").clicked() {
                 self.send("profile", &me.id, "", "", &state.selected_channel_id);
@@ -2137,7 +2151,7 @@ impl NotDiscordUi {
                 ui.close();
             }
         }
-        if state.signed_in && ui.button("Cerrar sesión").clicked() {
+        if sections.section(ui,state.signed_in) && super::menus::destructive(ui,"Cerrar sesión",true).clicked() {
             self.confirm(
                 "Cerrar sesión",
                 "¿Cerrar la sesión de este cliente?",
@@ -2346,8 +2360,9 @@ impl NotDiscordUi {
                 &state.selected_channel_id,
             );
         }
-        avatar.context_menu(|ui| self.people_menu(ui, &member.user, state));
-        response.context_menu(|ui| self.people_menu(ui, &member.user, state));
+        let response=response.union(avatar);
+        let target=super::menus::bind(&response,super::menus::Target::Person(member.user.clone()),state);
+        response.context_menu(|ui|if let super::menus::Target::Person(person)=target {self.people_menu(ui,&person,state)});
         ui.advance_cursor_after_rect(rect);
     }
     fn draw_people(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
@@ -2374,7 +2389,7 @@ impl NotDiscordUi {
                         egui::TextEdit::singleline(&mut filter.query)
                             .id(filter_id.with("search"))
                             .hint_text("Buscar por nombre o usuario"),
-                    ),
+                    ).focus_id(filter_id.with("search")),
                 );
                 if !filter.query.is_empty()
                     && ui

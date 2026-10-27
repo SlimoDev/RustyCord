@@ -4,6 +4,7 @@ pub mod access;
 pub mod api;
 mod api_operations;
 pub mod catalog;
+pub mod diagnostics;
 pub mod gateway;
 pub mod game_presence;
 pub mod guild_settings;

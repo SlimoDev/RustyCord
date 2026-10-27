@@ -106,8 +106,8 @@ impl NotDiscordUi {
             return true;
         }
         if self.background_blocked()
-            || super::voice::call_chat_hidden(ctx,&self.state)
-            || super::voice::call_chat_hidden(ctx,next)
+            || super::voice::call_chat_hidden(ctx,&self.state,&self.data_dir)
+            || super::voice::call_chat_hidden(ctx,next,&self.data_dir)
             || ctx.input(|input| input.pointer.any_down() || input.raw_scroll_delta != egui::Vec2::ZERO
                 || input.smooth_scroll_delta != egui::Vec2::ZERO)
             || !self.near_recent_history(ctx, &self.state) {
@@ -136,7 +136,7 @@ impl NotDiscordUi {
             0.
         };
         let incoming = self.draw_incoming_call_in_chat(ui, state);
-        let hidden_voice_chat=chat && super::voice::call_chat_hidden(ui.ctx(),state);
+        let hidden_voice_chat=chat && super::voice::call_chat_hidden(ui.ctx(),state,&self.data_dir);
         if !incoming && super::voice::call_panel_visible(state) {
             self.draw_call_in_height(
                 ui,
@@ -146,7 +146,7 @@ impl NotDiscordUi {
                     .max(80.)},
             );
         }
-        if hidden_voice_chat || chat && super::voice::call_chat_hidden(ui.ctx(),state) {
+        if hidden_voice_chat || chat && super::voice::call_chat_hidden(ui.ctx(),state,&self.data_dir) {
             // Hiding the surface retires only its transient input state. The
             // retained channel position, anchor and draft belong to the user.
             suspend_interactions(ui.ctx());
@@ -969,6 +969,7 @@ impl NotDiscordUi {
                                     }
                                     let more = ui.small_button("⋯").on_hover_text("Más opciones del registro");
                                     more_rect = more.rect;
+                                    if more.clicked() {super::menus::requested(ui.ctx(),popup_id);}
                                     egui::Popup::menu(&more).id(popup_id).show(|ui| self.message_menu(ui, m, state));
                                     return;
                                 }
@@ -1073,6 +1074,7 @@ impl NotDiscordUi {
                                 }
                                 let more = ui.small_button("⋯").on_hover_cursor(egui::CursorIcon::PointingHand);
                                 more_rect = more.rect;
+                                if more.clicked() {super::menus::requested(ui.ctx(),popup_id);}
                                 egui::Popup::menu(&more)
                                     .id(popup_id)
                                     .show(|ui| self.message_menu(ui, m, state));
@@ -1295,7 +1297,8 @@ impl NotDiscordUi {
                     && !m.components.iter().any(|component| matches!(component.kind,11..=13)
                         && notdiscord_core::parsing::same_media_resource(&component.url,url))
                     && !m.attachments.iter().any(|attachment| notdiscord_core::parsing::same_media_resource(&attachment.url,url)
-                        || attachment.preview_url.as_deref().is_some_and(|preview| notdiscord_core::parsing::same_media_resource(preview,url))) {
+                        || attachment.preview_url.as_deref().is_some_and(|preview| notdiscord_core::parsing::same_media_resource(preview,url))
+                        || notdiscord_core::parsing::media_descriptor(attachment).matches_url(url)) {
                     if let Some(index)=media.iter().position(|known|notdiscord_core::parsing::same_media_resource(known,url)) {
                         media[index]=notdiscord_core::parsing::prefer_media_url(&media[index],url).to_owned();
                     } else { media.push(url.to_owned()); }
@@ -1340,6 +1343,8 @@ impl NotDiscordUi {
         self.message_menu_with_text(ui, m, state, &m.content);
     }
     fn message_menu_with_text(&mut self, ui: &mut egui::Ui, m: &ChatMessage, state: &AppSnapshot, copy_text: &str) {
+        let mut sections=super::menus::Sections::new();
+        sections.section(ui,true);
         if m.deleted {
             if ui.button(RichText::new("Eliminar del registro").color(Color32::from_rgb(242, 63, 67))).clicked() {
                 self.confirm_deleted_log_purge(m);
@@ -1399,6 +1404,8 @@ impl NotDiscordUi {
             }
             ui.close();
         }
+        let own=state.current_user.as_ref().is_some_and(|person|person.id==m.author.id);
+        sections.section(ui,state.can_pin_messages || own && !m.forwarded);
         if state.can_pin_messages {
             if ui
                 .add_enabled(!m.deleted && state.signed_in && !state.busy, egui::Button::new(if m.pinned {
@@ -1445,6 +1452,7 @@ impl NotDiscordUi {
                 );
                 ui.close();
             }
+            sections.section(ui,true);
             if ui
                 .add_enabled(
                     writable && state.channel_access.can_send,
@@ -1459,6 +1467,7 @@ impl NotDiscordUi {
                 ui.close();
             }
         }
+        sections.section(ui,true);
         self.message_copy_menu(ui, m, state, copy_text);
     }
     fn message_copy_menu(&mut self, ui: &mut egui::Ui, m: &ChatMessage, state: &AppSnapshot, copy_text: &str) {
@@ -1622,7 +1631,8 @@ impl NotDiscordUi {
     ) {
         let max = egui::vec2(ui.available_width().min(360.), 220.);
         let size = media_slot_size(max, dimensions);
-        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+        let (rect, slot_response) = ui.allocate_exact_size(size, egui::Sense::hover());
+        let mut painted_rect=rect;
         if ui.is_rect_visible(rect) {
             let texture = self
                 .pictures
@@ -1637,6 +1647,7 @@ impl NotDiscordUi {
                     .min(rect.height() / image_size.y)
                     .min(1.);
                 let image_rect = egui::Rect::from_center_size(rect.center(), image_size * scale);
+                painted_rect=image_rect;
                 ui.painter().image(
                     texture.id(),
                     image_rect,
@@ -1665,7 +1676,10 @@ impl NotDiscordUi {
                 );
             }
         }
-        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let hit_rect=painted_rect.intersect(ui.clip_rect());
+        super::autoscroll::exclude(ui,hit_rect);
+        let response=ui.interact(hit_rect,slot_response.id.with("media-hit"),egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
         if response.clicked() {
             self.viewer = Some(Viewer {
                 url: url.into(),
@@ -1735,6 +1749,8 @@ impl NotDiscordUi {
         }
     }
     pub(super) fn media_menu(&mut self, ui: &mut egui::Ui, url: &str, name: &str) {
+        let mut sections=super::menus::Sections::new();
+        sections.section(ui,true);
         if ui.button("Abrir imagen").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             self.viewer = Some(Viewer {
                 url: url.into(),
@@ -1744,16 +1760,17 @@ impl NotDiscordUi {
             });
             ui.close();
         }
+        if ui.button("Guardar original").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            self.save_media(url, name);
+            ui.close();
+        }
+        sections.section(ui,true);
         if ui.button("Copiar imagen").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             self.copy_image(url);
             ui.close();
         }
         if ui.button("Copiar enlace").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             ui.ctx().copy_text(url.into());
-            ui.close();
-        }
-        if ui.button("Guardar original").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-            self.save_media(url, name);
             ui.close();
         }
     }
@@ -1849,7 +1866,7 @@ impl NotDiscordUi {
         if allowed && !self.background_blocked() && !egui::Popup::is_any_open(ui.ctx())
             && !ui.ctx().wants_keyboard_input()
             && initial_focus.is_none_or(|focus| focus == editor_id)
-            && ui.ctx().input(|input| composer_printable_input(input)
+            && ui.ctx().input(|input| composer_printable_input(input) || super::input_ownership::paste_input(input)
                 || contextual_enter && composer_send_enter(input) && !input.pointer.any_down()) {
             // Request before constructing TextEdit, so it receives this pass's
             // untouched Text/Enter event. Enter then uses the ordinary editor
@@ -1954,8 +1971,13 @@ impl NotDiscordUi {
                 .iter()
                 .any(|event| matches!(event, egui::Event::Paste(_)))
         });
+        // A mixed clipboard has one representation per field: text wins when
+        // egui delivered non-empty text; bitmap-only paste uses attachments.
+        let paste_has_text=ui.ctx().input(|input|input.events.iter().any(|event|
+            matches!(event,egui::Event::Paste(text) if !text.is_empty())));
         let mut paste = allowed
             && state.channel_access.can_attach
+            && !paste_has_text
             && paste_gesture(focused, previous.0, down, pressed, paste_event, previous.1)
             && crate::platform::clipboard_has_image();
         ui.ctx().data_mut(|d| {
@@ -2218,7 +2240,10 @@ impl NotDiscordUi {
                     send = false;
                     rejected_edit = true;
                 }
+                if response.secondary_clicked() {super::menus::requested(ui.ctx(),egui::Popup::default_response_id(&response));}
                 response.context_menu(|ui| {
+                    let mut sections=super::menus::Sections::new();
+                    sections.section(ui,true);
                     if ui
                         .add_enabled(
                             allowed && state.channel_access.can_attach,
@@ -2230,6 +2255,7 @@ impl NotDiscordUi {
                         paste = true;
                         ui.close();
                     }
+                    sections.section(ui,true);
                     if ui
                         .add_enabled(
                             !draft.text.is_empty()
@@ -2573,7 +2599,7 @@ fn take_post_send_text(input: &mut egui::InputState, capture_ready: bool, byte_l
     text
 }
 
-fn restore_post_send_text(draft: &mut Draft, text: &str, cursor: usize) {
+pub(super) fn restore_post_send_text(draft: &mut Draft, text: &str, cursor: usize) {
     if text.is_empty() { return; }
     let old = draft.text.clone();
     let mut chars = draft.text.chars().collect::<Vec<_>>();
@@ -2585,9 +2611,11 @@ fn restore_post_send_text(draft: &mut Draft, text: &str, cursor: usize) {
 }
 
 pub(super) fn composer_printable_input(input: &egui::InputState) -> bool {
+    // Text is already a confirmed character event. Alt+numpad and AltGr can
+    // produce it independently of physical key-up/down modifier snapshots.
     let alt_gr = cfg!(target_os="windows") && input.modifiers.ctrl && input.modifiers.alt && !input.modifiers.mac_cmd;
-    input.focused && (alt_gr || !input.modifiers.ctrl && !input.modifiers.command && !input.modifiers.alt)
-        && input.events.iter().any(|event| matches!(event, egui::Event::Text(text) if text.chars().any(|ch| !ch.is_control())))
+    input.focused && (alt_gr || !input.modifiers.ctrl && !input.modifiers.command)
+        && input.events.iter().any(|event| matches!(event, egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Commit(text)) if text.chars().any(|ch| !ch.is_control())))
 }
 
 pub(super) fn prepare_composer_input(ctx: &egui::Context) {
@@ -2914,13 +2942,14 @@ fn record_message_text_gesture(ctx:&egui::Context,response:&egui::Response) {
     let backspace_down = ctx.input(|input| input.key_down(egui::Key::Backspace));
     let double_clicked = response.double_clicked();
     let delete_clicked = response.clicked() && delete_down;
+    let backspace_clicked = response.clicked() && backspace_down;
     let secondary_clicked = response.secondary_clicked();
     ctx.data_mut(|data| {
         let key = egui::Id::new("message-text-shortcuts");
         let mut actions = data.get_temp::<MessageTextGesture>(key).unwrap_or_default();
         actions.double_clicked |= double_clicked;
         actions.delete_clicked |= delete_clicked;
-        actions.backspace_clicked |= response.clicked() && backspace_down;
+        actions.backspace_clicked |= backspace_clicked;
         actions.secondary_clicked |= secondary_clicked;
         data.insert_temp(key, actions);
     });
@@ -2938,13 +2967,26 @@ pub(super) fn register_history_label(ui: &egui::Ui, response: &egui::Response, p
     }
     active
 }
+#[derive(Clone,Default)]
+struct LinkHitRegions {frame:u64,under_pointer:HashSet<egui::Id>}
 fn selectable_link_label(ui: &mut egui::Ui, text: RichText, url: &str) -> egui::Response {
     // A link is still text: register the same galley in the history selection
     // while reserving the hand cursor and click action for an actual click.
     let (position, galley, response) = egui::Label::new(text).wrap().selectable(true)
         .sense(egui::Sense::click_and_drag()).layout_in_ui(ui);
     theme::bare_text_link_galley_feedback(ui, &response, position, &galley, ui.visuals().hyperlink_color);
-    context_menu::capture(ui, &response, || context_menu::Target::Link(url.into()));
+    let rects=galley.rows.iter().filter(|row|!row.glyphs.is_empty())
+        .map(|row|row.rect().translate(position.to_vec2()).intersect(ui.clip_rect())).collect::<Vec<_>>();
+    let over_text=ui.ctx().input(|input|input.pointer.interact_pos()).is_some_and(|point|rects.iter().any(|rect|rect.contains(point)));
+    super::autoscroll::allow_background(ui,response.id);
+    for rect in &rects {super::autoscroll::exclude(ui,*rect);}
+    let frame=ui.ctx().cumulative_frame_nr();
+    ui.ctx().data_mut(|data| {
+        let regions=std::sync::Arc::make_mut(data.get_temp_mut_or_default::<std::sync::Arc<LinkHitRegions>>(egui::Id::new("link-text-rects")));
+        if regions.frame!=frame {*regions=LinkHitRegions {frame,..Default::default()};}
+        if over_text && regions.under_pointer.len()<1024 {regions.under_pointer.insert(response.id);}
+    });
+    if over_text {context_menu::capture(ui, &response, || context_menu::Target::Link(url.into()));}
     if register_history_label(ui, &response, position, galley.clone()) {
         ui.ctx().data_mut(|data| {
             if let Some(label) = data.get_temp_mut_or_default::<HistoryFrame>(egui::Id::new("history-frame"))
@@ -2954,10 +2996,13 @@ fn selectable_link_label(ui: &mut egui::Ui, text: RichText, url: &str) -> egui::
         egui::text_selection::LabelSelectionState::label_text_selection(ui, &response, position, galley,
             ui.visuals().text_color(), egui::Stroke::NONE);
     }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    if over_text {response.on_hover_cursor(egui::CursorIcon::PointingHand)}else{response}
 }
 fn history_link_activated(response: &egui::Response) -> bool {
-    response.clicked() && !interaction::cancelling(&response.ctx) && !response.ctx.data(|data|
+    let frame=response.ctx.cumulative_frame_nr();
+    let over_text=response.ctx.data(|data|data.get_temp::<std::sync::Arc<LinkHitRegions>>(egui::Id::new("link-text-rects")))
+        .is_some_and(|regions|regions.frame==frame && regions.under_pointer.contains(&response.id));
+    response.clicked() && over_text && !interaction::cancelling(&response.ctx) && !response.ctx.data(|data|
         data.get_temp::<HistorySelection>(egui::Id::new("history-selection")))
         .is_some_and(|selection| selection.dragging && selection.anchor != selection.focus)
 }

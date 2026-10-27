@@ -155,6 +155,21 @@ pub fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path, limit: u
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default()
 }
+pub fn read_json_checked<T:serde::de::DeserializeOwned+Default>(path:&Path,limit:u64)->Result<T,String>{
+    let bytes=if let Some(result)=crate::shared_state::read_section_checked(path,limit){result?}else{
+        match File::open(path){
+            Ok(file)=>{
+                if file.metadata().map_err(|_|"No se pudo revisar el archivo de ajustes.")?.len()>limit{return Err("El archivo de ajustes supera el límite; se conserva sin cambios.".into());}
+                let mut bytes=Vec::new();file.take(limit.saturating_add(1)).read_to_end(&mut bytes).map_err(|_|"No se pudo leer el archivo de ajustes.")?;
+                if bytes.len() as u64>limit{return Err("El archivo de ajustes cambió o supera el límite; se conserva sin cambios.".into());}
+                Some(bytes)
+            },
+            Err(error) if error.kind()==std::io::ErrorKind::NotFound=>None,
+            Err(_)=>return Err("No se pudo abrir el archivo de ajustes; se conserva sin cambios.".into()),
+        }
+    };
+    bytes.map_or_else(||Ok(T::default()),|bytes|serde_json::from_slice(&bytes).map_err(|_|"El archivo de ajustes no es válido; se conserva sin cambios.".into()))
+}
 pub fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let value = serde_json::to_value(value).map_err(|_| "Datos no válidos.")?;
     if let Some(result) = crate::shared_state::write_section(path, value.clone()) { return result; }

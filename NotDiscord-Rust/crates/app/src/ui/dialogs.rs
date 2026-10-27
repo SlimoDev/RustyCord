@@ -847,24 +847,24 @@ impl NotDiscordUi {
             || result["generation"].as_u64() != Some(document.generation)
             || s(result, "submissionId") != pending.id
             || result["revision"].as_u64() != Some(pending.revision)
-            || document.draft.revision != pending.revision
             || s(result, "channelId") != document.channel
             || s(result, "messageId") != document.message
             || !matches!(&self.dialog, Some(Dialog::Prompt { action, .. })
                 if action.kind == "edit" && action.channel_id == document.channel && action.id == document.message)
         { return; }
-        if error.is_empty() {
+        if error.is_empty() && document.draft.revision==pending.revision {
             let ctx = self.ctx.clone();
             self.clear_edit_prompt(&ctx);
         } else {
             document.pending = None;
-            self.dialog_error = error.into();
+            self.dialog_error = if error.is_empty() {"La revisión enviada se guardó. Hay cambios posteriores que todavía no se han enviado.".into()}else{error.into()};
             self.ctx.data_mut(|data| data.insert_temp(edit_document_id(), document));
         }
     }
 
     pub(super) fn background_blocked(&self) -> bool {
         self.dialog.is_some() || self.picker.is_some() || self.viewer.is_some() || self.search_open
+            || crate::diagnostics::is_open(&self.ctx)
             || self.ctx.data(|data|data.get_temp::<u64>(egui::Id::new("overlay-dismissal-block")))
                 == Some(self.ctx.cumulative_frame_nr())
     }
@@ -922,6 +922,10 @@ impl NotDiscordUi {
             }
         }
         let mut cancel = false;
+        let tail_budget=self.draft_input_limit(&document.draft,None,document.history_reserve()).saturating_sub(document.draft.text.len());
+        let enter_tail=document.pending.is_none().then(||super::input_ownership::take_edit_submit(ctx,edit_text_id(),tail_budget)).flatten();
+        let enter=enter_tail.is_some();
+        let tail_bytes=enter_tail.as_ref().map_or(0,String::len);
         centered_dialog(ctx, title, "edit-message-dialog", egui::vec2(680., 480.))
             .vscroll(false).open(open).show(ctx, |ui| {
                 ui.label(description);
@@ -934,7 +938,7 @@ impl NotDiscordUi {
                 let allow_broadcast = mentions::everyone_allowed(state);
                 let spans = document.draft.mentions.clone();
                 let byte_limit = self.draft_input_limit(&document.draft, None,
-                    document.history_reserve());
+                    document.history_reserve()).saturating_sub(tail_bytes).max(document.draft.text.len());
                 let backup = super::text_budget::EditorBackup::new(ctx, edit_text_id(), document.draft.text.len(), byte_limit);
                 let mut outcome = None;
                 let undo_or_redo = ctx.input(|input| input.events.iter().any(|event| matches!(event,
@@ -952,7 +956,7 @@ impl NotDiscordUi {
                             let mut buffer = super::text_budget::Buffer::new(&mut document.draft.text, byte_limit);
                             ui.add(bordered(egui::TextEdit::multiline(&mut buffer)
                                 .id(edit_text_id()).font(egui::FontId::proportional(size))
-                                .desired_width(ui.available_width()).desired_rows(8).layouter(&mut layouter)));
+                                .desired_width(ui.available_width()).desired_rows(8).layouter(&mut layouter)).focus_id(edit_text_id()));
                             outcome = Some(buffer.finish());
                         });
                     });
@@ -980,7 +984,8 @@ impl NotDiscordUi {
                     });
                     let pending = document.pending.is_some();
                     dialog_action_row(ui, |ui| {
-                        if ui.add_enabled(content.is_ok() && !pending, egui::Button::new(if pending { "Guardando…" } else { "Continuar" })).clicked() {
+                        if (ui.add_enabled(content.is_ok() && !pending, egui::Button::new(if pending { "Guardando…" } else { "Continuar" })).clicked() || enter)
+                            && content.is_ok() && !pending && !outcome.rejected {
                             let mut request = action.clone();
                             request.text = mentions::outgoing(&document.draft);
                             let submission = uuid::Uuid::new_v4().simple().to_string();
@@ -1008,6 +1013,17 @@ impl NotDiscordUi {
                     else { ui.small(format!("{} / {}", content.as_ref().map_or(0,|text| text.encode_utf16().count()), state.upload_limit.message_char_limit())); }
                 });
             });
+        if let Some(tail)=enter_tail.filter(|tail|!tail.is_empty()) {
+            let before=document.draft.text.clone();
+            let old_mentions=document.draft.mentions.clone();
+            let mut editor=egui::TextEdit::load_state(ctx,edit_text_id()).unwrap_or_default();
+            let cursor=editor.cursor.char_range().map_or(document.draft.text.chars().count(),|range|range.primary.index);
+            chat::restore_post_send_text(&mut document.draft,&tail,cursor);
+            document.remember(edit_fingerprint(&before),old_mentions);
+            document.remember(edit_fingerprint(&document.draft.text),document.draft.mentions.clone());
+            editor.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(cursor+tail.chars().count()))));
+            editor.store(ctx,edit_text_id());
+        }
         self.prompt = document.draft.text.clone();
         if cancel { *open = false; }
         if *open { ctx.data_mut(|data| data.insert_temp(edit_document_id(), document)); }
@@ -1141,15 +1157,17 @@ impl NotDiscordUi {
                                 }
                             });
                     } else {
+                        let field_id=egui::Id::new(("prompt-primary",&action.kind,&action.id,&action.channel_id));
+                        let enter=!multiline && super::input_ownership::take_submit(ctx,field_id);
                         if multiline {
                             ui.add_sized(
                                 [ui.available_width(), 140.],
-                                bordered(egui::TextEdit::multiline(&mut self.prompt)
-                                    .char_limit(moderation::prompt_limit(&action).unwrap_or(usize::MAX))),
+                                bordered(egui::TextEdit::multiline(&mut self.prompt).id(field_id)
+                                    .char_limit(moderation::prompt_limit(&action).unwrap_or(usize::MAX))).focus_id(field_id),
                             );
                         } else {
-                            ui.add(bordered(egui::TextEdit::singleline(&mut self.prompt)
-                                .char_limit(moderation::prompt_limit(&action).unwrap_or(usize::MAX))));
+                            ui.add(bordered(egui::TextEdit::singleline(&mut self.prompt).id(field_id)
+                                .char_limit(moderation::prompt_limit(&action).unwrap_or(usize::MAX))).focus_id(field_id));
                         }
                         let policy_error = moderation::action_error(&action, state);
                         let field_error = moderation::prompt_error(&action,&self.prompt);
@@ -1157,7 +1175,8 @@ impl NotDiscordUi {
                         if let Some(error) = &policy_error {ui.add(egui::Label::new(error).wrap());}
                         if let Some(error) = &field_error {ui.add(egui::Label::new(error).wrap());}
                         if action.kind=="member-moderation" && !self.dialog_error.is_empty() {ui.colored_label(self.theme.accent,&self.dialog_error);}
-                        if ui.add_enabled(policy_error.is_none()&&field_error.is_none(),egui::Button::new("Continuar")).clicked() {
+                        if (ui.add_enabled(policy_error.is_none()&&field_error.is_none(),egui::Button::new("Continuar")).clicked() || enter)
+                            && policy_error.is_none() && field_error.is_none() {
                             if action.kind == "member-moderation" {
                                 match self.member_moderation_submission(&action,state) {
                                     Ok((action,confirmation)) => {
@@ -1426,7 +1445,7 @@ impl NotDiscordUi {
         reset_scroll
     }
     fn draw_search_popup(&mut self, ctx: &egui::Context, state: &AppSnapshot) {
-        if self.dialog.is_some() || self.picker.is_some() || self.viewer.is_some() {
+        if self.dialog.is_some() || self.picker.is_some() || self.viewer.is_some() || crate::diagnostics::is_open(ctx) {
             self.search_open = false;
         }
         let open_id = egui::Id::new("search-modal-was-open");
@@ -1460,8 +1479,9 @@ impl NotDiscordUi {
         }
         let keyboard_available=ctx.input(|input|input.focused && !input.pointer.any_down())
             && !egui::Popup::is_any_open(ctx);
+        let focus=ctx.memory(|memory|memory.focused());
         if !defer_header && keyboard_available
-            && (newly_opened || ctx.input(search_editing_input)) {
+            && (newly_opened || focus.is_none_or(|focus|focus==input_id) && ctx.input(search_editing_input)) {
             // Focus before TextEdit consumes this frame's input. The header
             // handoff is deferred when it already processed these same events.
             ctx.memory_mut(|memory|memory.request_focus(input_id));
@@ -1498,7 +1518,7 @@ impl NotDiscordUi {
                     egui::TextEdit::singleline(&mut self.search)
                         .id(input_id)
                         .hint_text("Escribe o combina filtros…"),
-                ));
+                ).focus_id(input_id));
                 if defer_header { input.request_focus(); }
                 self.search_focused = input.has_focus();
                 if let Some(cursor) = egui::TextEdit::load_state(ctx, input.id)
@@ -1757,46 +1777,98 @@ impl NotDiscordUi {
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(format!("{}\n{username}", person.name))
     }
-    fn history_path(&self) -> PathBuf {
-        let hash = format!("{:X}", Sha256::digest(self.picker_account.as_bytes()));
-        self.data_dir
-            .join("pickers")
-            .join(format!("{}.json", &hash[..24]))
+    fn picker_scope(&self, state: &AppSnapshot) -> Value {
+        serde_json::json!({"owner":state.current_user.as_ref().map_or("",|person|person.id.as_str()),"generation":state.notification_generation})
     }
-    pub(super) fn read_picker_history(&self) -> PickerHistory {
-        let mut h: PickerHistory = crate::storage::read_json(&self.history_path(), 256 * 1024);
-        h.emoji_recent.truncate(10);
-        h.gif_favorites.truncate(100);
-        h.gif_recent.truncate(32);
-        h
+    fn history_command(&mut self,kind:&str,mut extra:Value,state:&AppSnapshot){
+        extra["owner"]=self.picker_scope(state)["owner"].clone();
+        extra["generation"]=state.notification_generation.into();
+        self.send(kind,"","",extra.to_string(),"");
     }
-    fn save_picker_history(&mut self) {
-        let path = self.history_path();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
+    pub(super) fn receive_picker_history(&mut self,data:&Value){
+        if s(data,"owner")!=self.picker_account||data["generation"].as_u64()!=Some(self.state.notification_generation){return;}
+        if let Ok(history)=serde_json::from_value::<PickerHistory>(data["history"].clone()){
+            self.picker_history=history;
+            if let Some(picker)=&mut self.picker{picker.items_dirty=true;picker.history_revision=data["revision"].as_u64().unwrap_or(0);}
         }
-        let _ = crate::storage::save_json(&path, &self.picker_history);
     }
-    pub(super) fn open_picker(&mut self, gif: bool, state: &AppSnapshot) {
-        if let Some(importer) = &mut self.txt_import { importer.cancel(); }
-        self.picker = Some(Picker {
-            gif,
-            category: if gif { "trending".into() } else { "all".into() },
-            limit: 20,
-            ..Default::default()
-        });
-        if gif {
-            self.send(
-                "gif-catalog",
-                "",
-                "",
-                serde_json::json!({"mode":"trending","limit":20}).to_string(),
-                &state.selected_channel_id,
-            );
-            if let Some(p) = &mut self.picker {
-                p.pending = true;
+    pub(super) fn receive_gif_catalog(&mut self,data:&Value){
+        let Ok(stamp)=serde_json::from_value::<crate::pickers::CatalogRequest>(data["stamp"].clone())else{return};
+        if stamp.owner!=self.picker_account||stamp.generation!=self.state.notification_generation{return;}
+        let Some(picker)=&mut self.picker else{return};
+        if !picker.gif||picker.open_id!=stamp.opening||picker.request_id!=stamp.request
+            ||picker.category!=stamp.mode||picker.limit as usize!=stamp.limit{return;}
+        picker.pending=false;
+        if picker.query!=stamp.query{return;}
+        let error=s(data,"error");
+        if !error.is_empty(){picker.note=error.into();return;}
+        let Ok(page)=serde_json::from_value::<crate::pickers::GifPage>(data["page"].clone())else{picker.note="El catálogo no tiene un formato válido. Reintenta.".into();return};
+        for item in &page.items{resources::remember_source(&item.url,&item.animation_url);}
+        picker.remote_items=page.items.into_iter().filter_map(|item|serde_json::to_value(item).ok()).collect();
+        picker.categories=page.categories.into_iter().filter_map(|item|serde_json::to_value(item).ok()).collect();
+        picker.note=page.note;picker.has_more=page.has_more;picker.items_revision=picker.items_revision.wrapping_add(1);picker.items_dirty=true;
+    }
+    pub(super) fn receive_gif_favorites(&mut self,data:&Value){
+        if s(data,"owner")!=self.picker_account||data["generation"].as_u64()!=Some(self.state.notification_generation){return;}
+        if let Ok(page)=serde_json::from_value::<crate::pickers::GifPage>(data["page"].clone()){
+            self.remote_gif_favorites=page.items.into_iter().take(400).filter_map(|item|serde_json::to_value(item).ok()).collect();
+            if let Some(picker)=&mut self.picker{picker.items_dirty=true;}
+        }
+    }
+    pub(super) fn receive_gif_favorite_result(&mut self,data:&Value){
+        if s(data,"owner")!=self.picker_account||data["generation"].as_u64()!=Some(self.state.notification_generation){return;}
+        let id=egui::Id::new(("gif-removal",&self.picker_account,self.state.notification_generation));
+        let matches=self.ctx.data(|memory|memory.get_temp::<(String,String)>(id)).is_some_and(|(url,operation)|url==s(data,"url")&&operation==s(data,"operation"));
+        if !matches{return;}
+        self.ctx.data_mut(|memory|memory.remove::<(String,String)>(id));
+        if !s(data,"error").is_empty(){self.error=s(data,"error").into();}
+    }
+    fn request_gif_catalog(&mut self,picker:&mut Picker,state:&AppSnapshot){
+        picker.request_id=uuid::Uuid::new_v4().to_string();picker.pending=true;
+        let stamp=crate::pickers::CatalogRequest{
+            owner:state.current_user.as_ref().map_or("",|person|person.id.as_str()).into(),generation:state.notification_generation,
+            opening:picker.open_id.clone(),request:picker.request_id.clone(),mode:picker.category.clone(),query:picker.query.clone(),limit:picker.limit as usize,
+        };
+        self.send("gif-catalog","",stamp.query.clone(),serde_json::to_string(&stamp).unwrap_or_default(),&state.selected_channel_id);
+    }
+    fn rebuild_gif_items(&self,picker:&mut Picker){
+        if !picker.items_dirty{return;}
+        let mut values=match picker.category.as_str(){
+            "recent"=>self.picker_history.gif_recent.iter().filter_map(|value|serde_json::to_value(value).ok()).collect(),
+            "favorites"=>self.remote_gif_favorites.clone(),
+            _=>picker.remote_items.clone(),
+        };
+        picker.remote_favorites=self.remote_gif_favorites.iter().map(|value|s(value,"Url").to_owned()).collect();
+        if picker.category=="favorites"{
+            for value in &self.picker_history.gif_favorites{
+                if self.picker_history.gif_remote_removals.iter().any(|entry|entry.confirmed&&value.descriptor().matches_url(&entry.url)){continue;}
+                if !values.iter().any(|old|gif_value_descriptor(old).same_medium(&value.descriptor())){values.push(serde_json::to_value(value).unwrap_or_default());}
             }
         }
+        let mut seen=std::collections::HashSet::new();
+        values.retain(|value|seen.insert(gif_value_descriptor(value).logical_id));
+        for item in &mut values{
+            let descriptor=gif_value_descriptor(item);
+            let remote=self.remote_gif_favorites.iter().find(|value|gif_value_descriptor(value).same_medium(&descriptor)).map(|value|s(value,"Url")).unwrap_or("");
+            let local=self.picker_history.gif_favorites.iter().any(|value|value.descriptor().same_medium(&descriptor));
+            item["NotDiscordSaved"]=Value::Bool(local||!remote.is_empty());
+            item["NotDiscordRemoteUrl"]=remote.into();
+            if let Some(animation)=descriptor.animation_url{resources::remember_source(&gif_picker_value(item).value,&animation);}
+        }
+        picker.items=values;picker.items_dirty=false;
+    }
+    pub(super) fn open_picker(&mut self,gif:bool,state:&AppSnapshot){
+        if let Some(importer)=&mut self.txt_import{importer.cancel();}
+        let mut picker=Picker{gif,category:if gif{"trending".into()}else{"all".into()},limit:20,open_id:uuid::Uuid::new_v4().to_string(),items_dirty:true,..Default::default()};
+        self.history_command("picker-history",serde_json::json!({}),state);
+        if gif{
+            // Read remote stars independently; its response never replaces the
+            // active mode's catalog. Shared backend cache/coalescing bounds it.
+            let mut favorites=Picker{gif:true,category:"favorites".into(),limit:96,open_id:uuid::Uuid::new_v4().to_string(),..Default::default()};
+            self.request_gif_catalog(&mut favorites,state);
+            self.request_gif_catalog(&mut picker,state);
+        }
+        self.picker=Some(picker);
     }
     fn pick(
         &mut self,
@@ -1841,15 +1913,7 @@ impl NotDiscordUi {
                 egui::text::CCursor::new(cursor))));
             editor.store(&self.ctx, editor_id);
         }
-        let list = if gif {
-            &mut self.picker_history.gif_recent
-        } else {
-            &mut self.picker_history.emoji_recent
-        };
-        list.retain(|v| v.value != value.value);
-        list.insert(0, value);
-        list.truncate(if gif { 32 } else { 10 });
-        self.save_picker_history();
+        self.history_command("picker-recent",serde_json::json!({"value":value,"gif":gif}),state);
     }
     pub(super) fn draw_picker(&mut self, ctx: &egui::Context, state: &AppSnapshot) {
         let owner = state.current_user.as_ref().map_or("",|person|person.id.as_str());
@@ -1858,21 +1922,7 @@ impl NotDiscordUi {
             importer.poll(owner,state.notification_generation,picker_visible)) {
             match result {
                 Ok(values) => {
-                    let mut candidate = self.picker_history.clone();
-                    let mut changed = false;
-                    for value in values {
-                        if candidate.gif_favorites.len() < 100
-                            && !candidate.gif_favorites.iter().any(|existing|existing.value == value.value) {
-                            candidate.gif_favorites.push(value);
-                            changed = true;
-                        }
-                    }
-                    if changed {
-                        if serde_json::to_vec(&candidate).is_ok_and(|bytes|bytes.len() <= 256 * 1024) {
-                            self.picker_history = candidate;
-                            self.save_picker_history();
-                        } else { self.error = "Los enlaces importados superan el presupuesto de favoritos. La lista anterior se conserva.".into(); }
-                    }
+                    self.history_command("picker-import",serde_json::json!({"values":values}),state);
                 }
                 Err(error) => self.error = error,
             }
@@ -1920,6 +1970,7 @@ impl NotDiscordUi {
                             if ui.selectable_label(picker.category == key, name).clicked() {
                                 picker.category = key.into();
                                 picker.limit = 20;
+                                picker.items.clear();picker.remote_items.clear();picker.categories.clear();picker.items_dirty=true;
                                 request = true;
                             }
                         }
@@ -1947,25 +1998,7 @@ impl NotDiscordUi {
                                 && let Some(importer) = &mut self.txt_import { importer.cancel(); }
                         }
                     });
-                    if picker.category == "recent" {
-                        picker.items = self
-                            .picker_history
-                            .gif_recent
-                            .iter()
-                            .filter_map(|v| serde_json::to_value(v).ok())
-                            .collect();
-                        picker.pending = false;
-                    } else if picker.category == "favorites" {
-                        for v in &self.picker_history.gif_favorites {
-                            if !picker
-                                .items
-                                .iter()
-                                .any(|i| s(i, "Url") == v.value || s(i, "Value") == v.value)
-                            {
-                                picker.items.insert(0, serde_json::to_value(v).unwrap());
-                            }
-                        }
-                    }
+                    self.rebuild_gif_items(&mut picker);
                     if picker.pending {
                         ui.spinner();
                     }
@@ -2003,41 +2036,23 @@ impl NotDiscordUi {
                                                 .on_hover_text(name)
                                                 .clicked()
                                             {
-                                                choice = Some(PickerValue {
-                                                    value: url.into(),
-                                                    name: short(name, 150),
-                                                    image_url: thumb.into(),
-                                                });
+                                                choice = Some(gif_picker_value(item));
                                             }
-                                            let favorite = self
-                                                .picker_history
-                                                .gif_favorites
-                                                .iter()
-                                                .any(|v| v.value == url);
-                                            if ui
-                                                .small_button(if favorite {
-                                                    "★ Guardado"
-                                                } else {
-                                                    "☆ Guardar"
-                                                })
-                                                .clicked()
-                                            {
-                                                if favorite {
-                                                    self.picker_history
-                                                        .gif_favorites
-                                                        .retain(|v| v.value != url);
-                                                } else {
-                                                    self.picker_history.gif_favorites.insert(
-                                                        0,
-                                                        PickerValue {
-                                                            value: url.into(),
-                                                            name: short(name, 150),
-                                                            image_url: thumb.into(),
-                                                        },
-                                                    );
-                                                    self.picker_history.gif_favorites.truncate(100);
+                                            let remote_url=(!s(item,"NotDiscordRemoteUrl").is_empty()).then(||s(item,"NotDiscordRemoteUrl").to_owned());
+                                            let favorite=field(item,"NotDiscordSaved").and_then(Value::as_bool).unwrap_or(false);
+                                            let pending_id=egui::Id::new(("gif-removal",&self.picker_account,state.notification_generation));
+                                            let removing=self.ctx.data(|memory|memory.get_temp::<(String,String)>(pending_id).is_some());
+                                            if ui.add_enabled(!removing,egui::Button::new(if favorite{"★ Guardado"}else{"☆ Guardar"}).small())
+                                                .on_hover_text(if remote_url.is_some(){"Quitar de Discord y del guardado local"}else{"Guardar o quitar para esta cuenta de NotDiscord"}).clicked(){
+                                                if let Some(remote_url)=remote_url{
+                                                    let operation=uuid::Uuid::new_v4().to_string();
+                                                    self.ctx.data_mut(|memory|memory.insert_temp(pending_id,(remote_url.clone(),operation.clone())));
+                                                    let mut scope=self.picker_scope(state);scope["operation"]=operation.into();let extra=scope.to_string();
+                                                    self.send("gif-favorite-remove",remote_url,"",extra,"");
+                                                }else{
+                                                    let value=gif_picker_value(item);
+                                                    self.history_command("picker-favorite",serde_json::json!({"value":value,"saved":!favorite}),state);
                                                 }
-                                                self.save_picker_history();
                                             }
                                         });
                                     }
@@ -2052,7 +2067,7 @@ impl NotDiscordUi {
                             request = true;
                         }
                     }
-                    if picker.limit < 96 && ui.button("Cargar más").clicked() {
+                    if !matches!(picker.category.as_str(),"recent"|"favorites") && picker.has_more && !picker.pending && picker.limit < 96 && ui.button("Cargar más").clicked() {
                         picker.limit = if picker.limit < 50 { 50 } else { 96 };
                         request = true;
                     }
@@ -2175,6 +2190,7 @@ impl NotDiscordUi {
                                                     value: e.0.into(),
                                                     name: short(&e.2.replace('\t', " · "), 150),
                                                     image_url: String::new(),
+                                                    ..Default::default()
                                                 });
                                             }
                                         }
@@ -2219,6 +2235,7 @@ impl NotDiscordUi {
                                                 ),
                                                 name: name.into(),
                                                 image_url: url,
+                                                ..Default::default()
                                             });
                                         }
                                     }
@@ -2227,15 +2244,13 @@ impl NotDiscordUi {
                     }
                 }
             });
-        if request && picker.gif && !matches!(picker.category.as_str(), "recent") {
-            picker.pending = true;
-            self.send(
-                "gif-catalog",
-                "",
-                picker.query.clone(),
-                serde_json::json!({"mode":picker.category,"limit":picker.limit}).to_string(),
-                &state.selected_channel_id,
-            );
+        if request && picker.gif {
+            picker.remote_items.clear();picker.categories.clear();picker.items_dirty=true;picker.has_more=false;
+            if picker.category=="recent"{
+                picker.pending=false;picker.request_id.clear();
+                let mut cancel=self.picker_scope(state);cancel["opening"]=picker.open_id.clone().into();
+                self.send("gif-catalog-cancel","","",cancel.to_string(),"");
+            }else{self.request_gif_catalog(&mut picker,state);}
         }
         if let Some(choice) = choice {
             let closes = picker.gif || picker.react.is_some();
@@ -2245,8 +2260,10 @@ impl NotDiscordUi {
         if open {
             self.picker = Some(picker);
         } else {
-            self.emojis = Vec::new();
-            if let Some(importer) = &mut self.txt_import { importer.cancel(); }
+            let mut cancel=self.picker_scope(state);cancel["opening"]=picker.open_id.clone().into();
+            self.send("gif-catalog-cancel","","",cancel.to_string(),"");
+            self.emojis=Vec::new();
+            if let Some(importer)=&mut self.txt_import{importer.cancel();}
         }
     }
     pub(super) fn draw_viewer(&mut self, ctx: &egui::Context) {
@@ -2552,3 +2569,13 @@ impl NotDiscordUi {
         });
     }
 }
+
+fn gif_picker_value(value:&Value)->PickerValue{
+    let url=if s(value,"Url").is_empty(){s(value,"Value")}else{s(value,"Url")};
+    let thumbnail=if s(value,"ThumbnailUrl").is_empty(){s(value,"ImageUrl")}else{s(value,"ThumbnailUrl")};
+    let title=if s(value,"Title").is_empty(){s(value,"Name")}else{s(value,"Title")};
+    PickerValue{value:url.into(),name:short(title,150),image_url:thumbnail.into(),animation_url:s(value,"AnimationUrl").into(),
+        width:field(value,"Width").and_then(Value::as_i64).unwrap_or(0).clamp(0,8192)as i32,
+        height:field(value,"Height").and_then(Value::as_i64).unwrap_or(0).clamp(0,8192)as i32}
+}
+fn gif_value_descriptor(value:&Value)->notdiscord_core::parsing::MediaDescriptor{gif_picker_value(value).descriptor()}
