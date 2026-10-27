@@ -32,6 +32,12 @@ impl<T: Clone> SharedList<T> {
         Arc::try_unwrap(self.0).unwrap_or_else(|shared| shared.as_ref().clone())
     }
 }
+impl SharedList<super::ChatMessage> {
+    /// Identity is useful only inside a caller's matching snapshot scope. This
+    /// explicit API is restricted to the float-free message model; generic
+    /// PartialEq still compares values, including non-reflexive element types.
+    pub fn same_storage(&self, other: &Self) -> bool { Arc::ptr_eq(&self.0, &other.0) }
+}
 impl<T> From<Vec<T>> for SharedList<T> {
     fn from(value: Vec<T>) -> Self {
         Self(Arc::new(value))

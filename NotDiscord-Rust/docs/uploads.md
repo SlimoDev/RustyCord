@@ -45,3 +45,21 @@ La documentación antigua de límites generales aún presenta otros números. Se
 priorizaron la referencia API y las páginas específicas actualizadas. No se ha
 verificado la aceptación de tamaños con ninguna cuenta ni mediante pruebas
 funcionales.
+
+## Corrección integrada en 0.5.0
+
+El trabajo descrito en [límites pendientes](message-limits-pending.md) unifica
+texto de envío y edición con la suscripción: 2000 como base y 4000 sólo para
+Nitro completo. La política compartida valida el contenido final tras preparar
+menciones/emojis/enlaces y centraliza el límite de diez archivos y 1 GiB por lote.
+El editor conserva los adjuntos remotos ya alojados; editar texto no vuelve a
+subirlos. No se usa el nivel de servidor para ampliar el texto.
+
+La información de suscripción explícitamente desconocida vuelve al límite base;
+un evento parcial que omite ese campo conserva el dato anterior. Los rechazos
+conservan el texto y los adjuntos preparados. Una operación ya aceptada conserva
+su política durante la espera de transporte y Discord valida el resultado final.
+
+El usuario incorporó esta corrección al plan mediano 0.5.0 y autorizó compilar
+y publicar su instalador al terminar; no se ejecutan pruebas funcionales ni se
+utiliza una cuenta de Discord. La instalación se actualiza desde el cliente.

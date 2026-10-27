@@ -4,6 +4,9 @@ mod overlay;
 mod appearance;
 mod custom_text;
 mod mentions;
+mod markdown_cache;
+mod text_budget;
+mod txt_import;
 mod sound_settings;
 mod media_limit;
 mod dialogs;
@@ -303,6 +306,7 @@ pub struct NotDiscordUi {
     picker: Option<Picker>,
     picker_history: PickerHistory,
     picker_account: String,
+    txt_import: Option<txt_import::Importer>,
     profile_tab: usize,
     profile_editor: Option<profile_editor::Editor>,
     forward_scope: String,
@@ -482,6 +486,7 @@ impl NotDiscordUi {
             picker: None,
             picker_history: PickerHistory::default(),
             picker_account: String::new(),
+            txt_import: None,
             profile_tab: 0,
             profile_editor: None,
             forward_scope: String::new(),
@@ -753,6 +758,9 @@ impl NotDiscordUi {
                             != self.state.current_user.as_ref().map(|person| &person.id) {
                         chat::clear_reaction_users(ctx);
                         chat::clear_history_page_request(ctx);
+                        markdown_cache::clear(ctx);
+                        if let Some(importer) = &mut self.txt_import { importer.cancel(); }
+                        self.clear_edit_prompt(ctx);
                     }
                     // This ordered policy lane can be newer than a coalesced
                     // snapshot that was already flushed before its barrier.
@@ -775,6 +783,7 @@ impl NotDiscordUi {
                         self.prepare_latest_scroll_for(&snapshot.selected_channel_id);
                     } else if snapshot.view == "chat"
                         && snapshot.selected_channel_id == self.last_channel
+                        && !chat::same_message_storage(&self.state, &snapshot)
                         && snapshot.messages != self.state.messages
                         && snapshot.focus_message_version == self.focus_version
                         && self.focus_id.is_empty()
@@ -973,6 +982,7 @@ impl NotDiscordUi {
         }
     }
     fn data_update(&mut self, kind: &str, data: Value) {
+        if kind == "edit-result" { self.edit_result(&data); return; }
         if kind == "history-page-result" {chat::finish_history_page_request(&self.ctx,&data);return;}
         if kind == "reaction-users" {
             if self.state.signed_in && self.cjk_loaded != 3 && data["event"] != "invalidate"

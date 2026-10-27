@@ -4,6 +4,7 @@ use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
+    os::windows::fs::MetadataExt,
     path::Path,
 };
 use zeroize::Zeroize;
@@ -163,28 +164,75 @@ pub fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     )
 }
 pub fn load_session(dir: &Path) -> Option<zeroize::Zeroizing<String>> {
-    let bytes = read_bounded(&dir.join("session.dpapi"), 65536)?;
-    let plain = zeroize::Zeroizing::new(protect(&bytes, false, false).ok()?);
-    let token = std::str::from_utf8(&plain).ok()?;
+    let bytes = zeroize::Zeroizing::new(read_bounded(&dir.join("session.dpapi"), 65536)?);
+    open_session_secret(&bytes).ok()
+}
+pub(crate) fn open_session_secret(encrypted: &[u8]) -> Result<zeroize::Zeroizing<String>, String> {
+    let mut plain=zeroize::Zeroizing::new(protect(encrypted,false,false)?);
+    // String consumes the validated allocation instead of cloning its contents.
+    // Even a rejected UTF-8 allocation is wiped before being released.
+    let token=zeroize::Zeroizing::new(String::from_utf8(std::mem::take(&mut *plain)).map_err(|error| {
+        let mut rejected=error.into_bytes();
+        rejected.zeroize();
+        "La credencial guardada no es válida.".to_string()
+    })?);
     if token.len() < 20 || token.len() > 4096 || token.contains(['\r', '\n']) {
-        return None;
+        return Err("La credencial guardada no es válida.".into());
     }
-    Some(zeroize::Zeroizing::new(token.to_owned()))
+    Ok(token)
 }
 pub fn save_session(dir: &Path, token: &str) -> Result<(), String> {
     if token.len() < 20 || token.len() > 4096 || token.contains(['\r', '\n']) {
         return Err("La credencial no es válida.".into());
     }
-    let encrypted = protect(token.as_bytes(), false, true)?;
+    let encrypted = zeroize::Zeroizing::new(protect(token.as_bytes(), false, true)?);
     atomic_write(&dir.join("session.dpapi"), &encrypted)
 }
-/// Forget only the application session file. A missing file is already forgotten;
-/// permission, sharing and path errors must remain visible to the caller.
+fn session_temp(name: &std::ffi::OsStr) -> bool {
+    name.to_str().and_then(|name|name.strip_prefix("session.")).and_then(|name|name.strip_suffix(".tmp"))
+        .is_some_and(|id|id.len()==32 && id.bytes().all(|byte|byte.is_ascii_hexdigit()))
+}
+fn remove_session_file(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind()==std::io::ErrorKind::NotFound=>Ok(()),
+        Ok(meta) if meta.is_file() && meta.file_attributes()&0x400==0=>fs::remove_file(path)
+            .map_err(|_|"No se pudo eliminar una credencial local propia; comprueba sus permisos antes de volver a iniciar NotDiscord.".into()),
+        _=>Err("No se pudo comprobar una credencial local propia; no se siguieron enlaces ni se borraron datos ajenos.".into()),
+    }
+}
+/// Fixed credential filenames only; callers establish the owning root. Atomic
+/// temporary names must match atomic_write exactly. No recursive removal.
+pub(crate) fn remove_session_credentials(dir: &Path) -> Result<(), String> {
+    let mut failed=remove_session_file(&dir.join("session.dpapi")).is_err();
+    let entries=fs::read_dir(dir).map_err(|_|"No se pudieron comprobar los temporales propios de sesión.")?;
+    for (index,entry) in entries.enumerate() {
+        if index>=4096 {return Err("Hay demasiados archivos para completar la limpieza de temporales de sesión; las copias pendientes se conservaron.".into());}
+        let entry=match entry {Ok(entry)=>entry,Err(_)=>{failed=true;continue;}};
+        if session_temp(&entry.file_name()) && remove_session_file(&entry.path()).is_err() {failed=true;}
+    }
+    if failed {Err("No se pudo eliminar alguna credencial local propia. Puede seguir en disco; comprueba sus permisos antes de volver a iniciar NotDiscord.".into())} else {Ok(())}
+}
+/// Forget the active credential and identified local copies, preserving the
+/// anti-reimport marker. Original migration sources and all safety state remain.
 pub fn forget_session(dir: &Path) -> Result<(), String> {
-    match fs::remove_file(dir.join("session.dpapi")) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err("No se pudo eliminar la sesión guardada. La credencial local puede seguir en disco; comprueba sus permisos antes de volver a iniciar NotDiscord.".into()),
+    if matches!(fs::symlink_metadata(dir),Err(error) if error.kind()==std::io::ErrorKind::NotFound) {
+        fs::create_dir_all(dir).map_err(|_|"No se pudo conservar el bloqueo de reimportación de sesión.")?;
+    }
+    match fs::symlink_metadata(dir) {
+        Ok(meta) if meta.is_dir() && meta.file_attributes()&0x400==0=>{
+            let root=fs::canonicalize(dir).map_err(|_|"No se pudo comprobar la carpeta de sesión.")?;
+            let marker=root.join(".session-migrated");
+            let marker_ok=match fs::symlink_metadata(&marker) {
+                Err(error) if error.kind()==std::io::ErrorKind::NotFound=>atomic_write(&marker,b"1").is_ok(),
+                Ok(meta)=>meta.is_file() && meta.file_attributes()&0x400==0,
+                Err(_)=>false,
+            };
+            let credentials=remove_session_credentials(&root);
+            let backups=crate::shared_state::forget_session_backups(&root);
+            if !marker_ok {return Err("No se pudo conservar el bloqueo de reimportación de sesión. Se intentó retirar la credencial propia; comprueba sus permisos antes de volver a abrir la aplicación.".into());}
+            credentials.and(backups)
+        },
+        _=>Err("No se pudo comprobar la carpeta de sesión; no se siguieron enlaces ni se borraron datos ajenos.".into()),
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -293,6 +341,20 @@ mod tests {
         let session = dir.join("session.dpapi");
         fs::write(&session, b"synthetic encrypted session only").unwrap();
         fs::write(dir.join("preferences.json"), b"{}").unwrap();
+        let own_id="0123456789abcdef01234567";
+        let own=dir.join("migration-backups").join(own_id);
+        let foreign=dir.join("migration-backups").join("fedcba9876543210fedcba98");
+        let plus=dir.join("data-plus");
+        for folder in [&own,&foreign,&plus] {fs::create_dir_all(folder).unwrap();fs::write(folder.join("session.dpapi"),b"synthetic inherited encrypted session").unwrap();}
+        fs::write(dir.join("configuration.json"),serde_json::to_vec(&serde_json::json!({
+            "schema_version":1,"credential_backup_ids":[own_id],"sections":{},"migrated_sources":[]
+        })).unwrap()).unwrap();
+        let own_temp=dir.join("session.0123456789abcdef0123456789abcdef.tmp");
+        let backup_temp=own.join("session.0123456789abcdef0123456789abcdef.tmp");
+        let foreign_temp=dir.join("session.keep.tmp");
+        for path in [&own_temp,&backup_temp,&foreign_temp] {fs::write(path,b"synthetic encrypted temporary").unwrap();}
+        fs::write(own.join("network-safety.dpapi"),b"synthetic safety marker").unwrap();
+        fs::write(dir.join("network-safety.pending"),b"synthetic pending safety marker").unwrap();
         let held = OpenOptions::new()
             .read(true)
             .share_mode(0)
@@ -300,6 +362,10 @@ mod tests {
             .unwrap();
         assert!(forget_session(&dir).is_err());
         assert!(session.exists());
+        assert!(dir.join(".session-migrated").exists());
+        assert!(!own.join("session.dpapi").exists() && !own_temp.exists() && !backup_temp.exists());
+        assert!(foreign.join("session.dpapi").exists() && plus.join("session.dpapi").exists());
+        assert!(foreign_temp.exists() && own.join("network-safety.dpapi").exists() && dir.join("network-safety.pending").exists());
         drop(held);
         forget_session(&dir).unwrap();
         forget_session(&dir).unwrap();

@@ -18,14 +18,14 @@ use windows::{
     Win32::{
         Foundation::{E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
         System::{
-            Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
+            Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize},
             LibraryLoader::GetModuleHandleW,
         },
         UI::WindowsAndMessaging::*,
     },
     core::{PCWSTR, PWSTR, w},
 };
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 #[path = "auth_lifecycle.rs"]
 mod lifecycle;
@@ -47,10 +47,34 @@ impl Credential {
         self.0
     }
     fn from_handoff(encrypted: &[u8]) -> Result<Self, String> {
-        let plain = Zeroizing::new(crate::storage::protect(encrypted, false, false)?);
-        let token = std::str::from_utf8(&plain).map_err(|_| "La sesión recibida no es válida.")?;
-        Self::from_secret(Zeroizing::new(token.to_owned()))
+        Self::from_secret(crate::storage::open_session_secret(encrypted)?)
     }
+}
+/// Takes only the COM-owned Authorization value returned by GetHeader. The
+/// native UTF-16 allocation and our UTF-8 allocation both have explicit cleanup.
+unsafe fn take_authorization(source: PWSTR) -> Zeroizing<String> {
+    if source.is_null() {return Zeroizing::new(String::new());}
+    struct NativeSecret {pointer:PWSTR,len:usize}
+    impl Drop for NativeSecret {
+        fn drop(&mut self) {
+            unsafe {
+                std::slice::from_raw_parts_mut(self.pointer.0,self.len).zeroize();
+                CoTaskMemFree(Some(self.pointer.0.cast()));
+            }
+        }
+    }
+    // WebView2 owns a NUL-terminated CoTaskMem allocation until we free it,
+    // exactly as for take_pwstr; this variant also wipes its original storage.
+    let native=NativeSecret {pointer:source,len:unsafe {source.as_wide().len()}};
+    let mut text=Zeroizing::new(String::with_capacity(native.len.min(4096)));
+    if native.len>4096 {return text;}
+    for character in char::decode_utf16(unsafe {std::slice::from_raw_parts(native.pointer.0,native.len)}.iter().copied()) {
+        match character {
+            Ok(character)=>text.push(character),
+            Err(_)=>{text.zeroize();return text;}
+        }
+    }
+    text
 }
 impl std::fmt::Debug for Credential {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -315,11 +339,11 @@ fn run_login_window(profile: &Path, handoff: PathBuf) -> Result<(), String> {
                 if headers.GetHeader(w!("Authorization"), &mut header).is_err() {
                     return Ok(());
                 }
-                let token = Zeroizing::new(take_pwstr(header));
+                let token = take_authorization(header);
                 if token.len() < 20 || token.len() > 4096 || token.contains(['\r', '\n']) {
                     return Ok(());
                 }
-                if let Ok(encrypted) = crate::storage::protect(token.as_bytes(), false, true) {
+                if let Ok(encrypted) = crate::storage::protect(token.as_bytes(), false, true).map(Zeroizing::new) {
                     if crate::storage::atomic_write(&handoff, &encrypted).is_ok() {
                         capture_finished.set(true);
                         let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));

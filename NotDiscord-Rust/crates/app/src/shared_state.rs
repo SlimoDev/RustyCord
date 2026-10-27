@@ -1,6 +1,7 @@
 //! One compatible preference file and one per-user DPAPI session for both editions.
 //! Migration runs only after the desktop instance lease has been acquired. Source
 //! files are retained, and opaque backups are made before importing preferences.
+//! Credentials are migrated separately and are never added to those backups.
 use crate::storage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,6 +27,9 @@ struct Configuration {
     schema_version: u32,
     sections: BTreeMap<String, Value>,
     migrated_sources: BTreeSet<String>,
+    // Relative backup identifiers created by this migration layout, never paths
+    // to the legacy sources. Older compatible editions preserve this field.
+    credential_backup_ids: BTreeSet<String>,
     #[serde(flatten)]
     extensions: BTreeMap<String, Value>,
 }
@@ -111,16 +115,60 @@ fn plain_file(path: &Path, limit: u64) -> bool {
 fn stamp(path: &Path) -> SystemTime {
     fs::metadata(path).and_then(|meta| meta.modified()).unwrap_or(SystemTime::UNIX_EPOCH)
 }
+fn backup_id(source: &Path) -> String {
+    format!("{:x}", Sha256::digest(source.to_string_lossy().as_bytes()))[..24].to_owned()
+}
+fn valid_backup_id(id: &str) -> bool {
+    id.len()==24 && id.bytes().all(|byte|byte.is_ascii_hexdigit())
+}
 fn backup(root: &Path, source: &Path, relative: &Path, limit: u64) -> Result<(), String> {
+    // Keep this guard even when the caller's preference allowlist changes.
+    if relative==Path::new("session.dpapi") {return Ok(());}
     let path = source.join(relative);
     if !plain_file(&path, limit) { return Ok(()); }
-    let source_key = format!("{:x}", Sha256::digest(source.to_string_lossy().as_bytes()));
-    let dest = root.join("migration-backups").join(&source_key[..24]).join(relative);
+    let dest = root.join("migration-backups").join(backup_id(source)).join(relative);
     if !dest.exists() {
         let bytes = storage::read_bounded(&path, limit).ok_or("No se pudo respaldar un ajuste anterior; la migración se detuvo.")?;
         storage::atomic_write(&dest, &bytes)?;
     }
     Ok(())
+}
+/// Retire only credentials in this store's identified migration backups. Never
+/// visit or remove a source directory, and never recursively delete a backup.
+pub(crate) fn forget_session_backups(root: &Path) -> Result<(), String> {
+    let _guard=CONFIG_IO.lock().unwrap_or_else(|error|error.into_inner());
+    let config_path=root.join(CONFIG_NAME);
+    match fs::symlink_metadata(&config_path) {
+        Err(error) if error.kind()==std::io::ErrorKind::NotFound=>{},
+        Ok(meta) if meta.is_file() && meta.file_attributes()&0x400==0 && meta.len()<=MAX_CONFIG=>{},
+        _=>return Err("No se pudo comprobar el inventario de copias propias de sesión; se conservaron sin borrar datos ajenos.".into()),
+    }
+    let config=read_configuration(root)?;
+    let mut ids=config.credential_backup_ids.into_iter().filter(|id|valid_backup_id(id)).collect::<BTreeSet<_>>();
+    // Old records stored the canonical source in lowercase. This pure fallback
+    // identifies that spelling without opening, scanning or modifying sources.
+    ids.extend(config.migrated_sources.iter().map(|source|backup_id(Path::new(source))));
+    if ids.len()>256 {return Err("El inventario de copias propias de sesión supera el límite local; las copias pendientes se conservaron.".into());}
+    let backups=root.join("migration-backups");
+    match fs::symlink_metadata(&backups) {
+        Err(error) if error.kind()==std::io::ErrorKind::NotFound=>return Ok(()),
+        Ok(meta) if meta.is_dir() && meta.file_attributes()&0x400==0=>{},
+        _=>return Err("No se pudo comprobar la carpeta de copias propias de sesión; no se siguieron enlaces ni se borraron datos ajenos.".into()),
+    }
+    let canonical=fs::canonicalize(&backups).map_err(|_|"No se pudo abrir la carpeta de copias propias de sesión.")?;
+    if canonical.parent()!=Some(root) {return Err("La carpeta de copias de sesión no pertenece al almacén actual.".into());}
+    let mut failed=false;
+    for id in ids {
+        let folder=canonical.join(id);
+        match fs::symlink_metadata(&folder) {
+            Err(error) if error.kind()==std::io::ErrorKind::NotFound=>continue,
+            Ok(meta) if meta.is_dir() && meta.file_attributes()&0x400==0=>{},
+            _=>{failed=true;continue;}
+        }
+        if !fs::canonicalize(&folder).is_ok_and(|resolved|resolved.parent()==Some(canonical.as_path()))
+            || storage::remove_session_credentials(&folder).is_err() {failed=true;}
+    }
+    if failed {Err("No se pudo eliminar alguna copia propia de la credencial. Las preferencias, los marcadores de seguridad y las fuentes anteriores se conservaron.".into())} else {Ok(())}
 }
 fn preference_files(source: &Path) -> Vec<PathBuf> {
     let mut result = SECTIONS.iter().map(PathBuf::from).collect::<Vec<_>>();
@@ -185,7 +233,10 @@ pub fn initialize(root: &Path, sources: &[PathBuf]) -> Result<(), String> {
     for source in &sources {
         let Ok(source) = fs::canonicalize(source) else { continue };
         let source_id = source.to_string_lossy().to_lowercase();
-        if config.migrated_sources.contains(&source_id) { continue; }
+        if config.migrated_sources.contains(&source_id) {
+            config.credential_backup_ids.insert(backup_id(&source));
+            continue;
+        }
         let files = preference_files(&source);
         if !files.iter().any(|path| plain_file(&source.join(path), 256 * 1024))
             && !plain_file(&source.join("session.dpapi"), 65536)
@@ -203,10 +254,11 @@ pub fn initialize(root: &Path, sources: &[PathBuf]) -> Result<(), String> {
             let key = relative.to_string_lossy().replace('\\', "/");
             additions.entry(key).or_default().push((stamp(&path), value));
         }
-        for name in ["session.dpapi", "network-safety.dpapi", "network-safety.pending"] {
+        for name in ["network-safety.dpapi", "network-safety.pending"] {
             backup(&root, &source, Path::new(name), 65536)?;
         }
         backup(&root, &source, Path::new("pins.dpapi"), 2 * 1024 * 1024)?;
+        config.credential_backup_ids.insert(backup_id(&source));
         imported.push(source);
         config.migrated_sources.insert(source_id);
     }

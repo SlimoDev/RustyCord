@@ -20,6 +20,15 @@ impl UploadLimit {
         let guild=match guild_tier {Some(2)=>50*MIB,Some(3)=>100*MIB,_=>BASE_FILE_BYTES};
         Self {per_file:account.max(guild),premium_type:premium,guild_tier}
     }
+    pub fn message_char_limit(&self)->usize {
+        if self.premium_type==Some(2) {4000} else {2000}
+    }
+    pub fn validate_content(&self,text:&str)->Result<(),String> {
+        let limit=self.message_char_limit();
+        if text.encode_utf16().count()>limit {
+            Err(format!("El mensaje supera el límite de {limit} caracteres disponible para tu cuenta. El borrador se conserva."))
+        } else {Ok(())}
+    }
     pub fn label(&self)->String {
         let plan=match self.premium_type {Some(0)=>"Sin Nitro",Some(1)=>"Nitro Classic",Some(2)=>"Nitro",Some(3)=>"Nitro Basic",_=>"Suscripción sin confirmar"};
         format!("{} MiB por archivo · {plan}{}",self.per_file/MIB,
@@ -27,5 +36,10 @@ impl UploadLimit {
     }
     pub fn validate_file(&self,bytes:u64)->Result<(),String> {
         if bytes>self.per_file {Err(format!("El archivo supera el límite de {} MiB en este destino. El borrador se conserva.",self.per_file/MIB))}else{Ok(())}
+    }
+    pub fn validate_batch(&self,count:usize,bytes:u64)->Result<(),String> {
+        if count>MAX_ATTACHMENTS || bytes>LOCAL_BATCH_BYTES {
+            Err(format!("Máximo {MAX_ATTACHMENTS} adjuntos y 1 GiB por envío (límite local). El borrador se conserva."))
+        } else {Ok(())}
     }
 }

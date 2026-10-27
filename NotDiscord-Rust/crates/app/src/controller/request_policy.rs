@@ -233,6 +233,7 @@ pub(super) struct AckBatch {
     in_flight: HashSet<String>,
 }
 impl AckBatch {
+    pub(super) fn pending(&self)->bool { !self.pending.is_empty() || !self.in_flight.is_empty() }
     pub fn advance(&mut self, channel: &str, last: &str, now: Instant) {
         if self.pending.len() >= 128 && !self.pending.contains_key(channel) {
             return;

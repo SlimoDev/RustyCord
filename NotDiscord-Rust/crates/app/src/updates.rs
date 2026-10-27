@@ -1,6 +1,7 @@
 //! Public, unauthenticated update metadata. Downloads are explicit and never use
 //! Discord credentials. The installed, compiled manifest fixes the update lane.
 use eframe::egui;
+mod staging;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -504,8 +505,8 @@ fn prepare_update(
     fs::create_dir_all(&base)
         .map_err(|_| "La carpeta instalada no permite preparar la actualización")?;
     reject_reparse_ancestors(&base)?;
-    let work = base.join(uuid::Uuid::new_v4().simple().to_string());
-    fs::create_dir(&work).map_err(|_| "No se pudo crear la carpeta temporal de actualización")?;
+    let mut staging = staging::Staging::create(&base, release.bytes)?;
+    let work = staging.path().to_path_buf();
     let installer = work.join("setup.exe");
     let mut output = OpenOptions::new()
         .create_new(true)
@@ -606,6 +607,7 @@ fn prepare_update(
         return Err("El instalador no pasó la validación previa. Consulta %LOCALAPPDATA%\\NotDiscord\\updates".into());
     }
     launch_installer(&plan_path)?;
+    staging.hand_off()?;
     Ok(plan_path)
 }
 fn installer_command(plan: &Path, mode: &str) -> Result<Command, String> {

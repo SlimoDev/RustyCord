@@ -1,4 +1,4 @@
-# NotDiscord Rust 0.4.1
+# NotDiscord Rust 0.5.0
 
 Versión principal para Windows en Rust, rama `NotDiscord`. NotDiscord+ conserva su versión anterior en `codex/notdiscord-plus`; esta entrega no actualiza su rama ni su paquete.
 
@@ -8,7 +8,8 @@ Requiere Rust estable Windows x64 MSVC, herramientas C++ y SDK de Windows, WebVi
 
 ```powershell
 cargo build --workspace --release --locked -j1
-.\package.ps1 -RuntimeRoot .\media-host\runtime
+.\crates\media-addon\Prepare-Host.ps1 -ReferenceRuntime .\media-host\runtime -Destination .\target\prepared-runtime
+.\package.ps1 -RuntimeRoot .\target\prepared-runtime
 .\verify-package.ps1 -Root .\target\installer-payload
 .\build-installer.ps1 -PackageRoot .\target\installer-payload
 ```
@@ -21,11 +22,14 @@ NotDiscord utiliza `%LOCALAPPDATA%/NotDiscord/shared/configuration.json` y una s
 
 Plus continúa usando sus archivos anteriores. La sincronización continua y la exclusión bidireccional con Plus quedan pendientes hasta que se autorice actualizar esa variante. NotDiscord puede solicitar el cierre ordenado de una instancia anterior de su instalación y muestra el motivo.
 
-El manifiesto `version.json` identifica versión y rama. La distribución es un único `dist/NotDiscord-Setup-0.4.1.exe`, con el runtime requerido. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
+El manifiesto `version.json` identifica versión y rama. La distribución es un único `dist/NotDiscord-Setup-0.5.0.exe`, con el runtime requerido. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
 
 - [Interacción, inventario de scroll y organización de datos](docs/interaction-and-shared-state.md)
 - [Instalación y selección de ruta](docs/installer.md)
 - [Versiones y actualizaciones](docs/updates.md)
+- [Plan implementado y estado de 0.5.0](docs/plan-optimizacion-robustez-seguridad-2026-10-26.md)
+- [Baseline y mediciones pendientes](docs/profile-baseline-0.5.0.md)
+- [Diseño de firma pendiente de claves](docs/update-signing-design.md)
 - [GIFs y limitación de Klipy](docs/gif-rendering.md)
 - [Previsualizaciones de mensajes eliminados](docs/deleted-media-previews.md)
 - [Adjuntos, suscripciones y límites](docs/uploads.md)

@@ -249,10 +249,25 @@ pub fn spawn_with_safety(
         "wss://gateway.discord.gg/?v=9&encoding=json".into(),
     )
 }
+pub(crate) fn spawn_with_secret(
+    credential: Arc<Zeroizing<String>>,
+    initial_status: Option<String>,
+    safety: SafetyGate,
+) -> (GatewayHandle, mpsc::Receiver<GatewayEvent>) {
+    spawn_secret_at(credential,initial_status,safety,"wss://gateway.discord.gg/?v=9&encoding=json".into())
+}
 // Production callers can only select the fixed Discord origin above. The private
 // URL argument lets unit tests exercise a loopback WebSocket without an account.
 fn spawn_at(
     credential: String,
+    initial_status: Option<String>,
+    safety: SafetyGate,
+    url: String,
+) -> (GatewayHandle, mpsc::Receiver<GatewayEvent>) {
+    spawn_secret_at(Arc::new(Zeroizing::new(credential)),initial_status,safety,url)
+}
+fn spawn_secret_at(
+    credential: Arc<Zeroizing<String>>,
     initial_status: Option<String>,
     safety: SafetyGate,
     url: String,
@@ -272,7 +287,7 @@ fn spawn_at(
         }),
     };
     tokio::spawn(run_with_game_policy(
-        Zeroizing::new(credential),
+        credential,
         initial_status,
         rx,
         events,
@@ -318,10 +333,10 @@ async fn run(
     safety: SafetyGate,
     url: String,
 ) {
-    run_with_game_policy(token,initial_status,commands,events,cancel,ready,safety,url,Arc::new(GamePresencePolicy::default())).await;
+    run_with_game_policy(Arc::new(token),initial_status,commands,events,cancel,ready,safety,url,Arc::new(GamePresencePolicy::default())).await;
 }
 async fn run_with_game_policy(
-    token: Zeroizing<String>, initial_status: Option<String>, commands: mpsc::Receiver<Envelope>,
+    token: Arc<Zeroizing<String>>, initial_status: Option<String>, commands: mpsc::Receiver<Envelope>,
     events: mpsc::Sender<GatewayEvent>, cancel: CancellationToken, ready: Arc<AtomicBool>,
     safety: SafetyGate, url: String, game_presence: Arc<GamePresencePolicy>,
 ) {

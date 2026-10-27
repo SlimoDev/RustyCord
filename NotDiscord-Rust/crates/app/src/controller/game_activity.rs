@@ -38,8 +38,14 @@ pub(super) struct Detector {
     privacy_revoked:bool,
     last_privacy_attempt:Option<Instant>,
     scan_error: Option<String>,
+    identity_key: Option<(String,String,u64)>,
+    identity: Option<(crate::game_rpc::Identity,u64)>,
+    note_kind: u8,
+    note_detail: String,
+    presented_activity: Option<GamePresence>,
 }
 impl Detector {
+    pub(super) fn needs_fast_poll(&self)->bool {self.rpc.needs_fast_poll()}
     pub(super) fn new(enabled: bool) -> Self {
         Self {
             enabled,
@@ -55,6 +61,8 @@ impl Detector {
             privacy_revoked:false,
             last_privacy_attempt:None,
             scan_error: None,
+            identity_key: None, identity: None, note_kind: u8::MAX,
+            note_detail: String::new(), presented_activity: None,
         }
     }
     pub(super) fn set_enabled(&mut self, enabled: bool) {
@@ -83,6 +91,8 @@ impl Detector {
         self.last_automatic_attempt=None;
         self.manual_dirty=false;
         self.privacy_revoked=false;self.last_privacy_attempt=None;
+        self.identity_key=None;self.identity=None;self.note_kind=u8::MAX;
+        self.note_detail.clear();self.presented_activity=None;
     }
     pub(super) fn suspend_rpc(&mut self){self.rpc.close();}
     pub(super) async fn shutdown_rpc(&mut self){self.rpc.shutdown().await;}
@@ -155,11 +165,17 @@ impl Controller {
             .is_some_and(|gateway| gateway.is_ready())
             && self.safety_enforced == SafetyState::Allowed;
         let publishing = visible(&self.state) && ready;
-        let identity=self.state.current_user.as_ref().filter(|user|parsing::valid_id(&user.id)).map(|user|{
-            let username=if user.username.is_empty(){"Usuario"}else{&user.username};
-            (crate::game_rpc::Identity{id:user.id.clone(),username:username.chars().filter(|c|!c.is_control()).take(80).collect()},self.generation)
-        });
-        self.game_detector.rpc.poll(rpc_allowed(&self.state,self.game_detector.enabled,ready),identity).await;
+        let allowed=rpc_allowed(&self.state,self.game_detector.enabled,ready);
+        if let Some(user)=self.state.current_user.as_ref().filter(|user|allowed&&parsing::valid_id(&user.id)) {
+            let changed=self.game_detector.identity_key.as_ref().is_none_or(|key|
+                key.0!=user.id||key.1!=user.username||key.2!=self.generation);
+            if changed {
+                let username=if user.username.is_empty(){"Usuario"}else{&user.username};
+                self.game_detector.identity=Some((crate::game_rpc::Identity{id:user.id.clone(),username:username.chars().filter(|c|!c.is_control()).take(80).collect()},self.generation));
+                self.game_detector.identity_key=Some((user.id.clone(),user.username.clone(),self.generation));
+            }
+        } else {self.game_detector.identity_key=None;self.game_detector.identity=None;}
+        self.game_detector.rpc.poll_cached(allowed,self.game_detector.identity.as_ref()).await;
         let scanning =
             publishing && self.game_detector.enabled && self.game_detector.manual.is_none();
         if !scanning {
@@ -201,43 +217,56 @@ impl Controller {
             }
         }
         let activity = self.game_detector.rich_activity(publishing);
-        let note = if !self.state.signed_in {
-            "Inicia sesión para publicar actividad.".to_owned()
+        let (note_kind,detail) = if !self.state.signed_in {
+            (0,"")
         } else if !self.state.game_activity_configured {
-            "Discord aún no ha confirmado la visibilidad de actividad; la detección permanece pausada.".to_owned()
+            (1,"")
         } else if !self.state.game_activity_enabled {
-            "La actividad de juegos está oculta en Discord.".to_owned()
+            (2,"")
         } else if !matches!(self.state.self_presence.as_str(), "online" | "idle" | "dnd") {
-            "La actividad está pausada por el estado Invisible o sin conexión.".to_owned()
+            (3,"")
         } else if !ready {
-            "Esperando una conexión Gateway preparada para publicar actividad.".to_owned()
+            (4,"")
         } else if self.game_detector.manual.is_some() {
-            "La actividad personalizada tiene prioridad sobre la detección automática.".to_owned()
+            (5,"")
         } else if !self.game_detector.enabled {
-            "La detección de juegos está desactivada en este equipo.".to_owned()
+            (6,"")
         } else if self.game_detector.rpc.activity.as_ref().is_some_and(|rpc|activity.as_ref()==Some(rpc)) {
-            if activity.as_ref().is_some_and(rpc::idle_emulator){"RPCS3 está abierto; el emulador informa que está inactivo.".into()}
-            else{format!("Actividad recibida de {}.",activity.as_ref().unwrap().name)}
+            if activity.as_ref().is_some_and(rpc::idle_emulator){(7,"")}
+            else{(8,activity.as_ref().map_or("",|activity|activity.name.as_str()))}
         } else if let Some(error) = &self.game_detector.scan_error {
-            error.clone()
+            (9,error.as_str())
         } else if self.game_detector.rpcs3_open&&self.game_detector.detected.as_deref()==Some("RPCS3") {
-            "RPCS3 está abierto. No se ha confirmado qué juego está ejecutando.".to_owned()
+            (10,"")
         } else if let Some(game) = &self.game_detector.detected {
-            format!("Detectado: {game}.")
+            (11,game.as_str())
         } else if let Some(error)=&self.game_detector.rpc.error {
-            error.clone()
+            (9,error.as_str())
         } else {
-            "Buscando juegos compatibles cada 5 segundos; incluye RPCS3 cuando se reconoce un juego en ejecución.".to_owned()
+            (12,"")
         };
-        let note_changed = self.state.game_detection_note != note;
-        self.state.game_detection_note = note;
-        let label = activity.as_ref().map(GamePresence::summary).unwrap_or_default();
-        if self.state.custom_activity_label != label
-            || self.state.game_activity_running != activity.is_some()
-            || note_changed
-        {
-            self.state.custom_activity_label = label;
+        let note_changed=self.game_detector.note_kind!=note_kind||self.game_detector.note_detail!=detail;
+        if note_changed {
+            self.state.game_detection_note=match note_kind {
+                0=>"Inicia sesión para publicar actividad.".into(),
+                1=>"Discord aún no ha confirmado la visibilidad de actividad; la detección permanece pausada.".into(),
+                2=>"La actividad de juegos está oculta en Discord.".into(),
+                3=>"La actividad está pausada por el estado Invisible o sin conexión.".into(),
+                4=>"Esperando una conexión Gateway preparada para publicar actividad.".into(),
+                5=>"La actividad personalizada tiene prioridad sobre la detección automática.".into(),
+                6=>"La detección de juegos está desactivada en este equipo.".into(),
+                7=>"RPCS3 está abierto; el emulador informa que está inactivo.".into(),
+                8=>format!("Actividad recibida de {detail}."),9=>detail.into(),
+                10=>"RPCS3 está abierto. No se ha confirmado qué juego está ejecutando.".into(),
+                11=>format!("Detectado: {detail}."),
+                _=>"Buscando juegos compatibles cada 5 segundos; incluye RPCS3 cuando se reconoce un juego en ejecución.".into(),
+            };
+            self.game_detector.note_kind=note_kind;self.game_detector.note_detail=detail.into();
+        }
+        if self.game_detector.presented_activity!=activity || note_changed {
+            self.state.custom_activity_label=activity.as_ref().map(GamePresence::summary).unwrap_or_default();
             self.state.game_activity_running = activity.is_some();
+            self.game_detector.presented_activity=activity.clone();
             self.publish();
         }
         // Revoke queued/cached rich data before a privacy change can race reconnect.

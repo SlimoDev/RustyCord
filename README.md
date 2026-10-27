@@ -4,7 +4,7 @@ Proyecto Windows en Rust, dentro de `NotDiscord-Rust/`. Las ramas mantenidas son
 
 Las entregas de las dos variantes son:
 
-- `NotDiscord`: instalador único `NotDiscord-Rust/dist/NotDiscord-Setup-0.4.1.exe`, con selección de carpeta y actualización automática posterior.
+- `NotDiscord`: instalador único `NotDiscord-Rust/dist/NotDiscord-Setup-0.5.0.exe`, con selección de carpeta y actualización automática posterior.
 - `NotDiscord+`: `NotDiscord-Rust/dist/NotDiscord-Plus-20261025`, sin cambios en esta entrega.
 
 NotDiscord utiliza configuración centralizada y sesión protegida por Windows en `%LOCALAPPDATA%/NotDiscord/shared`; migra las preferencias antiguas al abrirse, con respaldo. Plus mantiene sus datos anteriores: la sincronización continua y la exclusión bidireccional entre variantes requieren una futura actualización de Plus. El versionamiento y el actualizador de esta entrega corresponden únicamente a la rama `NotDiscord`; consulta `NotDiscord-Rust/docs/updates.md`.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "NotDiscord · Planificación"
+  short_description: "Analiza NotDiscord y prepara tandas verificables"
+  default_prompt: "Usa $notdiscord-planificar para analizar este pedido y elaborar un plan proporcional con evidencia y criterios de aceptación."

@@ -216,6 +216,9 @@ pub(super) struct Calls {
     outcomes: VecDeque<(String,String,u64,EndReason)>,
 }
 impl Calls {
+    pub(super) fn needs_fast_maintenance(&self)->bool {
+        !self.outgoing.channel.is_empty() || self.incoming.values().any(|call|call.deadline.is_some())
+    }
     fn outcome(&mut self,channel:&str,user:&str,token:u64,reason:EndReason) {
         if self.outcomes.len()>=64 {self.outcomes.pop_front();}
         self.outcomes.push_back((channel.into(),user.into(),token,reason));

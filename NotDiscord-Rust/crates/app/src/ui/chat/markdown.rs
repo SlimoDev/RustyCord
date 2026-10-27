@@ -6,7 +6,7 @@ use notdiscord_core::markdown::{Block, BlockKind, Style};
 impl NotDiscordUi {
     pub(super) fn message_markdown(&mut self, ui: &mut egui::Ui, source: &str,
         message: &ChatMessage, state: &AppSnapshot) {
-        let document = notdiscord_core::markdown::parse(source);
+        let document = super::super::markdown_cache::document(ui.ctx(), source, &[]);
         let mut media = Vec::<String>::new();
         for (index, block) in document.blocks.iter().enumerate() {
             ui.push_id(("message-markdown", index), |ui| {

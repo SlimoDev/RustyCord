@@ -1,7 +1,12 @@
 # Plan de skills de NotDiscord
 
-Estado: `notdiscord-programar` creada, validada e instalada a petición del usuario.
-`notdiscord-planificar` continúa como diseño pendiente de creación.
+Estado: `notdiscord-programar` y `notdiscord-planificar` creadas, validadas e
+instaladas a petición del usuario. La skill de planificación se creó después del
+[plan de optimización, robustez y seguridad](plan-optimizacion-robustez-seguridad-2026-10-26.md)
+del 26 de octubre de 2026; sus fuentes están en `skills/notdiscord-planificar/`
+desde la raíz del repositorio y su copia personal en la carpeta de skills de Codex.
+Los apartados siguientes conservan el diseño de referencia; las instrucciones
+operativas vigentes están en los `SKILL.md` de cada skill.
 Preparado el 26 de octubre de 2026 a partir del flujo de NotDiscord 0.3.1.
 
 ## Objetivo y separación

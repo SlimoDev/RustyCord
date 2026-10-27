@@ -88,23 +88,56 @@ fn dialog_action_row<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::
 struct EditMentionDocument {
     message: String,
     channel: String,
+    owner: String,
+    generation: u64,
     draft: Draft,
+    pending: Option<EditSubmission>,
     // TextEdit's undo stack stores text only. Keep a small, local metadata
     // companion so undo/redo restores IDs without inferring IDs from names.
-    versions: Vec<(String, Vec<Mention>)>,
+    versions: Vec<([u8; 32], Vec<Mention>)>,
+}
+#[derive(Clone)]
+struct EditSubmission {
+    id: String,
+    revision: u64,
 }
 impl EditMentionDocument {
-    fn remember(&mut self, text: String, mentions: Vec<Mention>) {
-        if self.versions.last().is_some_and(|(previous, _)| *previous == text) { return; }
-        self.versions.push((text, mentions));
-        let weight = |versions: &[(String, Vec<Mention>)]| versions.iter().map(|(text, mentions)| {
-            text.len() + mentions.iter().map(|m| m.id.len() + m.label.len() + std::mem::size_of::<Mention>()).sum::<usize>()
-        }).sum::<usize>();
-        while self.versions.len() > 8 || weight(&self.versions) > 128 * 1024 { self.versions.remove(0); }
+    fn remember(&mut self, fingerprint: [u8; 32], mentions: Vec<Mention>) {
+        if self.versions.last().is_some_and(|(previous, _)| *previous == fingerprint) { return; }
+        self.versions.push((fingerprint, mentions));
+        // Keep the before/after pair even for a large permitted source. Only
+        // digests and mention metadata are retained here; TextEdit owns undo's
+        // text. The editor reserves this same metadata allowance in its budget.
+        while self.versions.len() > 8
+            || self.versions.len() > 2 && self.versions_bytes() > self.history_reserve() {
+            self.versions.remove(0);
+        }
     }
 }
 fn edit_document_id() -> egui::Id { egui::Id::new("edit-mention-document") }
 fn edit_text_id() -> egui::Id { egui::Id::new("edit-mention-text") }
+pub(super) fn edit_document_bytes(ctx: &egui::Context) -> usize {
+    ctx.data_mut(|data| {
+        let Some(document) = data.remove_temp::<EditMentionDocument>(edit_document_id()) else { return 0; };
+        let bytes = super::text_budget::weight(&document.draft).saturating_add(document.versions_bytes());
+        data.insert_temp(edit_document_id(), document);
+        bytes
+    })
+}
+impl EditMentionDocument {
+    fn versions_bytes(&self) -> usize {
+        self.versions.iter().map(|(_, mentions)| 32 + mentions.iter().map(|mention|
+            mention.id.len() + mention.label.len() + std::mem::size_of_val(mention)).sum::<usize>()).sum()
+    }
+    fn history_reserve(&self) -> usize {
+        let metadata = |mentions: &[Mention]| mentions.iter().map(|mention|
+            mention.id.len() + mention.label.len() + std::mem::size_of_val(mention)).sum::<usize>();
+        self.versions.iter().map(|(_,mentions)|metadata(mentions))
+            .chain(std::iter::once(metadata(&self.draft.mentions))).max().unwrap_or(0)
+            .saturating_mul(2).saturating_add(64).max(128 * 1024)
+    }
+}
+fn edit_fingerprint(text: &str) -> [u8; 32] { Sha256::digest(text.as_bytes()).into() }
 
 fn remap_cursor(old: &str, new: &str, index: usize) -> usize {
     let a: Vec<_> = old.chars().collect();
@@ -286,8 +319,11 @@ mod tests {
         let request = commands.try_recv().unwrap();
         assert_eq!((request.kind.as_str(), request.id.as_str(), request.channel_id.as_str()), ("edit", "100", "20"));
         assert_eq!(request.text, "Prefix Hello <@42> <@43>");
-        assert!(app.dialog.is_none());
-        assert!(ctx.data(|data| data.get_temp::<EditMentionDocument>(edit_document_id())).is_none());
+        assert!(matches!(app.dialog, Some(Dialog::Prompt { .. })));
+        let document = ctx.data(|data| data.get_temp::<EditMentionDocument>(edit_document_id())).unwrap();
+        let extra: Value = serde_json::from_str(&request.extra).unwrap();
+        assert_eq!(document.pending.as_ref().unwrap().id, s(&extra, "editSubmissionId"));
+        assert_eq!(document.draft.text, "Prefix Hello @Visible name @Later resolution");
     }
     #[test]
     fn long_edit_and_forward_lists_keep_actions_visible_after_resize_and_zoom() {
@@ -786,6 +822,47 @@ fn media_file_name(url: &str, suggested: &str) -> String {
 }
 
 impl NotDiscordUi {
+    pub(super) fn clear_edit_prompt(&mut self, ctx: &egui::Context) {
+        if matches!(&self.dialog, Some(Dialog::Prompt { action, .. }) if action.kind == "edit") {
+            self.dialog = None;
+            self.prompt.clear();
+            self.dialog_error.clear();
+        }
+        ctx.data_mut(|data| {
+            data.remove::<EditMentionDocument>(edit_document_id());
+            data.remove::<egui::text_edit::TextEditState>(edit_text_id());
+        });
+    }
+
+    pub(super) fn edit_result(&mut self, result: &Value) {
+        let Some(error) = result["error"].as_str() else { return; };
+        let Some(mut document) = self.ctx.data(|data| data.get_temp::<EditMentionDocument>(edit_document_id())) else { return; };
+        let Some(pending) = &document.pending else { return; };
+        // A generic error or a late reply to a closed/replaced editor must not
+        // discard newer work or open another account's message.
+        if !self.state.signed_in
+            || self.state.current_user.as_ref().map(|user| user.id.as_str()) != Some(document.owner.as_str())
+            || self.state.notification_generation != document.generation
+            || s(result, "owner") != document.owner
+            || result["generation"].as_u64() != Some(document.generation)
+            || s(result, "submissionId") != pending.id
+            || result["revision"].as_u64() != Some(pending.revision)
+            || document.draft.revision != pending.revision
+            || s(result, "channelId") != document.channel
+            || s(result, "messageId") != document.message
+            || !matches!(&self.dialog, Some(Dialog::Prompt { action, .. })
+                if action.kind == "edit" && action.channel_id == document.channel && action.id == document.message)
+        { return; }
+        if error.is_empty() {
+            let ctx = self.ctx.clone();
+            self.clear_edit_prompt(&ctx);
+        } else {
+            document.pending = None;
+            self.dialog_error = error.into();
+            self.ctx.data_mut(|data| data.insert_temp(edit_document_id(), document));
+        }
+    }
+
     pub(super) fn background_blocked(&self) -> bool {
         self.dialog.is_some() || self.picker.is_some() || self.viewer.is_some() || self.search_open
             || self.ctx.data(|data|data.get_temp::<u64>(egui::Id::new("overlay-dismissal-block")))
@@ -819,14 +896,18 @@ impl NotDiscordUi {
 
     }
     fn draw_edit_prompt(&mut self, ctx: &egui::Context, state: &AppSnapshot, title: &str, description: &str, action: &UiAction, open: &mut bool) -> bool {
+        let owner = state.current_user.as_ref().map_or("", |user| user.id.as_str());
         let explicit = state.messages.iter().chain(state.pinned_messages.iter())
             .find(|message| message.id == action.id && message.channel_id == action.channel_id)
             .map(|message| message.mentions.as_slice()).unwrap_or(&[]);
         let mut document = ctx.data_mut(|data| data.remove_temp::<EditMentionDocument>(edit_document_id()))
-            .filter(|document| document.message == action.id && document.channel == action.channel_id)
+            .filter(|document| document.message == action.id && document.channel == action.channel_id
+                && document.owner == owner && document.generation == state.notification_generation)
             .unwrap_or_else(|| EditMentionDocument {
                 message: action.id.clone(), channel: action.channel_id.clone(),
+                owner: owner.into(), generation: state.notification_generation,
                 draft: mentions::from_source(&self.prompt, explicit, state),
+                pending: None,
                 versions: Vec::new(),
             });
         let old = document.draft.text.clone();
@@ -840,7 +921,6 @@ impl NotDiscordUi {
                 }
             }
         }
-        let mut submit = false;
         let mut cancel = false;
         centered_dialog(ctx, title, "edit-message-dialog", egui::vec2(680., 480.))
             .vscroll(false).open(open).show(ctx, |ui| {
@@ -853,58 +933,89 @@ impl NotDiscordUi {
                 let ink = self.theme.ink;
                 let allow_broadcast = mentions::everyone_allowed(state);
                 let spans = document.draft.mentions.clone();
-                let before = document.draft.text.clone();
+                let byte_limit = self.draft_input_limit(&document.draft, None,
+                    document.history_reserve());
+                let backup = super::text_budget::EditorBackup::new(ctx, edit_text_id(), document.draft.text.len(), byte_limit);
+                let mut outcome = None;
                 let undo_or_redo = ctx.input(|input| input.events.iter().any(|event| matches!(event,
                     egui::Event::Key { key: egui::Key::Z | egui::Key::Y, pressed: true, modifiers, .. }
                     if (modifiers.command || modifiers.ctrl) && !modifiers.alt)));
                 let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, width: f32| {
-                    ui.fonts_mut(|fonts| fonts.layout_job(mentions::editor_job(text.as_str(), &spans, size, ink, allow_broadcast, width)))
+                    let job = mentions::editor_job_cached(ui.ctx(), text.as_str(), &spans, size, ink, allow_broadcast, width);
+                    ui.fonts_mut(|fonts| fonts.layout_job(job))
                 };
                 let height = body.available_height().max(1.);
                 theme::vertical_scroll(&mut body).id_salt("edit-message-scroll")
                     .max_height(height).min_scrolled_height(0.).auto_shrink([false, false])
                     .show(&mut body, |ui| {
-                        ui.add(bordered(egui::TextEdit::multiline(&mut document.draft.text)
-                            .id(edit_text_id()).font(egui::FontId::proportional(size))
-                            .char_limit(32 * 1024)
-                            .desired_width(ui.available_width()).desired_rows(8).layouter(&mut layouter)));
+                        ui.add_enabled_ui(document.pending.is_none(), |ui| {
+                            let mut buffer = super::text_budget::Buffer::new(&mut document.draft.text, byte_limit);
+                            ui.add(bordered(egui::TextEdit::multiline(&mut buffer)
+                                .id(edit_text_id()).font(egui::FontId::proportional(size))
+                                .desired_width(ui.available_width()).desired_rows(8).layouter(&mut layouter)));
+                            outcome = Some(buffer.finish());
+                        });
                     });
-                if before != document.draft.text {
+                let outcome = outcome.unwrap_or(super::text_budget::Outcome { before: None, rejected: false });
+                if outcome.rejected {
+                    backup.restore(ctx, edit_text_id());
+                    self.dialog_error = super::text_budget::ERROR.into();
+                }
+                if let Some(before) = outcome.before.filter(|before| before != &document.draft.text) {
+                    let fingerprint = edit_fingerprint(&document.draft.text);
                     let restored = undo_or_redo.then(|| document.versions.iter().rev()
-                        .find(|(text, _)| *text == document.draft.text).map(|(_, spans)| spans.clone())).flatten();
+                        .find(|(previous, _)| *previous == fingerprint).map(|(_, spans)| spans.clone())).flatten();
                     if let Some(spans) = restored { document.draft.mentions = spans; }
                     else { mentions::adjust(&before, &document.draft.text, &mut document.draft.mentions); }
-                    document.remember(before, spans);
-                    document.remember(document.draft.text.clone(), document.draft.mentions.clone());
+                    document.remember(edit_fingerprint(&before), spans);
+                    document.remember(fingerprint, document.draft.mentions.clone());
+                    document.draft.revision = document.draft.revision.saturating_add(1);
                 }
                 // Fixed actions are laid out from the bottom, ahead of any
                 // explanatory text. Long content/status never moves them.
                 footer.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    let content = mentions::outgoing(&document.draft);
-                    let valid = content.encode_utf16().count() <= 4000;
+                    let content = chat::submission_content(&document.draft).and_then(|content| {
+                        state.upload_limit.validate_content(&content)?;
+                        Ok(content)
+                    });
+                    let pending = document.pending.is_some();
                     dialog_action_row(ui, |ui| {
-                        if ui.add_enabled(valid, egui::Button::new("Continuar")).clicked() {
+                        if ui.add_enabled(content.is_ok() && !pending, egui::Button::new(if pending { "Guardando…" } else { "Continuar" })).clicked() {
                             let mut request = action.clone();
-                            request.text = content.clone();
-                            if self.command.send(request).is_ok() { submit = true; }
+                            request.text = mentions::outgoing(&document.draft);
+                            let submission = uuid::Uuid::new_v4().simple().to_string();
+                            request.extra = serde_json::json!({"editSubmissionId":submission,
+                                "editAccountId":document.owner,"editGeneration":document.generation,
+                                "editRevision":document.draft.revision}).to_string();
+                            if self.command.send(request).is_ok() {
+                                document.pending = Some(EditSubmission { id: submission, revision: document.draft.revision });
+                                self.dialog_error.clear();
+                            }
                             else { self.dialog_error = "El servicio de la aplicación se cerró.".into(); }
                         }
-                        if ui.button("Cancelar").clicked() { cancel = true; }
+                        if ui.button(if pending { "Cerrar" } else { "Cancelar" })
+                            .on_hover_text(if pending { "Cierra el editor; la operación ya enviada puede completarse y no se cancela." } else { "Descartar los cambios del editor." })
+                            .clicked() { cancel = true; }
                     });
                     if let Some(note) = note { ui.add(egui::Label::new(RichText::new(note).size(12.).color(self.theme.muted)).truncate()).on_hover_text(note); }
-                    if !self.dialog_error.is_empty() { ui.colored_label(Color32::from_rgb(242, 63, 67), &self.dialog_error); }
-                    else if !valid { ui.colored_label(Color32::from_rgb(242, 63, 67), "El mensaje supera 4000 caracteres. El texto se conserva."); }
-                    else { ui.small(format!("{} / 4000", content.encode_utf16().count())); }
+                    if !self.dialog_error.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(&self.dialog_error).color(Color32::from_rgb(242, 63, 67))).truncate()).on_hover_text(&self.dialog_error);
+                    }
+                    else if let Err(error) = &content {
+                        ui.add(egui::Label::new(RichText::new(error).color(Color32::from_rgb(242, 63, 67))).truncate()).on_hover_text(error);
+                    }
+                    else if pending { ui.small("Esperando confirmación; el texto se conserva hasta recibir el resultado."); }
+                    else { ui.small(format!("{} / {}", content.as_ref().map_or(0,|text| text.encode_utf16().count()), state.upload_limit.message_char_limit())); }
                 });
             });
         self.prompt = document.draft.text.clone();
         if cancel { *open = false; }
-        if !submit && *open { ctx.data_mut(|data| data.insert_temp(edit_document_id(), document)); }
+        if *open { ctx.data_mut(|data| data.insert_temp(edit_document_id(), document)); }
         else {
             self.prompt = String::new();
             ctx.data_mut(|data| data.remove::<egui::text_edit::TextEditState>(edit_text_id()));
         }
-        submit
+        false
     }
     pub(super) fn draw_dialog(&mut self, ctx: &egui::Context, state: &AppSnapshot) {
         self.draw_search_popup(ctx, state);
@@ -1667,6 +1778,7 @@ impl NotDiscordUi {
         let _ = crate::storage::save_json(&path, &self.picker_history);
     }
     pub(super) fn open_picker(&mut self, gif: bool, state: &AppSnapshot) {
+        if let Some(importer) = &mut self.txt_import { importer.cancel(); }
         self.picker = Some(Picker {
             gif,
             category: if gif { "trending".into() } else { "all".into() },
@@ -1702,9 +1814,9 @@ impl NotDiscordUi {
                 .map(|range| (range.primary.index.min(range.secondary.index),
                     range.primary.index.max(range.secondary.index)));
             let fallback = self.composer_cursor;
-            let Some(draft) = self.draft(&state.selected_channel_id) else {
-                return;
-            };
+            if self.draft(&state.selected_channel_id).is_none() { return; }
+            let mut draft = self.drafts.get(&state.selected_channel_id).cloned().unwrap_or_default();
+            let previous_draft = draft.clone();
             let mut chars: Vec<_> = draft.text.chars().collect();
             let (start, end) = selection.unwrap_or((fallback, fallback));
             let start = start.min(chars.len());
@@ -1718,6 +1830,11 @@ impl NotDiscordUi {
             let previous = std::mem::replace(&mut draft.text, chars.into_iter().collect());
             super::mentions::adjust(&previous, &draft.text, &mut draft.mentions);
             draft.revision += 1;
+            if !self.accepts_draft_edit(&previous_draft,&draft,Some(&state.selected_channel_id),0) {
+                self.error = super::text_budget::ERROR.into();
+                return;
+            }
+            self.drafts.insert(state.selected_channel_id.clone(),draft);
             self.composer_cursor = cursor;
             let mut editor = egui::TextEdit::load_state(&self.ctx, editor_id).unwrap_or_default();
             editor.cursor.set_char_range(Some(egui::text::CCursorRange::one(
@@ -1735,7 +1852,33 @@ impl NotDiscordUi {
         self.save_picker_history();
     }
     pub(super) fn draw_picker(&mut self, ctx: &egui::Context, state: &AppSnapshot) {
+        let owner = state.current_user.as_ref().map_or("",|person|person.id.as_str());
+        let picker_visible = self.picker.as_ref().is_some_and(|picker|picker.gif);
+        if let Some(result) = self.txt_import.as_mut().and_then(|importer|
+            importer.poll(owner,state.notification_generation,picker_visible)) {
+            match result {
+                Ok(values) => {
+                    let mut candidate = self.picker_history.clone();
+                    let mut changed = false;
+                    for value in values {
+                        if candidate.gif_favorites.len() < 100
+                            && !candidate.gif_favorites.iter().any(|existing|existing.value == value.value) {
+                            candidate.gif_favorites.push(value);
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        if serde_json::to_vec(&candidate).is_ok_and(|bytes|bytes.len() <= 256 * 1024) {
+                            self.picker_history = candidate;
+                            self.save_picker_history();
+                        } else { self.error = "Los enlaces importados superan el presupuesto de favoritos. La lista anterior se conserva.".into(); }
+                    }
+                }
+                Err(error) => self.error = error,
+            }
+        }
         let Some(mut picker) = self.picker.take() else {
+            if let Some(importer) = &mut self.txt_import { importer.cancel(); }
             self.emojis = Vec::new();
             return;
         };
@@ -1780,42 +1923,28 @@ impl NotDiscordUi {
                                 request = true;
                             }
                         }
-                        if ui.button("Importar enlaces").clicked() {
+                        let importing = self.txt_import.as_ref().is_some_and(super::txt_import::Importer::pending);
+                        if ui.add_enabled(!importing,egui::Button::new("Importar enlaces"))
+                            .on_hover_text("Archivo TXT UTF-8 de hasta 256 KiB. Se lee en segundo plano; un error conserva los favoritos.").clicked() {
                             if let Some(path) = rfd::FileDialog::new()
                                 .add_filter("Lista de enlaces", &["txt"])
                                 .pick_file()
                             {
-                                if let Ok(text) = std::fs::read_to_string(path) {
-                                    if text.len() <= 256 * 1024 {
-                                        for url in
-                                            text.lines().take(500).map(str::trim).filter(|l| {
-                                                l.starts_with("https://")
-                                                    && (l.contains("tenor.com/")
-                                                        || l.contains("giphy.com/")
-                                                        || l.contains("klipy.com/")
-                                                        || l.contains(".gif"))
-                                            })
-                                        {
-                                            if self.picker_history.gif_favorites.len() < 100
-                                                && !self
-                                                    .picker_history
-                                                    .gif_favorites
-                                                    .iter()
-                                                    .any(|v| v.value == url)
-                                            {
-                                                self.picker_history.gif_favorites.push(
-                                                    PickerValue {
-                                                        value: url.into(),
-                                                        name: "GIF importado".into(),
-                                                        image_url: url.into(),
-                                                    },
-                                                );
-                                            }
-                                        }
-                                        self.save_picker_history();
+                                if self.txt_import.is_none() {
+                                    match super::txt_import::Importer::new(ctx.clone()) {
+                                        Ok(importer) => self.txt_import = Some(importer),
+                                        Err(error) => self.error = error,
                                     }
                                 }
+                                if let Some(importer) = &mut self.txt_import {
+                                    if let Err(error) = importer.start(path,owner,state.notification_generation) { self.error = error; }
+                                }
                             }
+                        }
+                        if importing {
+                            ui.spinner(); ui.label("Importando enlaces…");
+                            if ui.button("Cancelar importación").clicked()
+                                && let Some(importer) = &mut self.txt_import { importer.cancel(); }
                         }
                     });
                     if picker.category == "recent" {
@@ -2117,6 +2246,7 @@ impl NotDiscordUi {
             self.picker = Some(picker);
         } else {
             self.emojis = Vec::new();
+            if let Some(importer) = &mut self.txt_import { importer.cancel(); }
         }
     }
     pub(super) fn draw_viewer(&mut self, ctx: &egui::Context) {

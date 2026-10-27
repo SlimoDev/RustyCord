@@ -3,9 +3,11 @@ param(
     [Parameter(Mandatory = $true)][string]$RuntimeRoot
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'scripts\runtime-inventory.ps1')
 $packageRoot = [IO.Path]::GetFullPath($Destination)
 if (Test-Path -LiteralPath $packageRoot) { throw 'El destino ya existe. Elige una carpeta nueva para conservar las versiones anteriores.' }
 $runtimeBase = (Resolve-Path -LiteralPath $RuntimeRoot).Path
+$inventory=Assert-RuntimeInventory $runtimeBase
 $runtimeEntries = @(Get-Item -LiteralPath $runtimeBase) + @(Get-ChildItem -LiteralPath $runtimeBase -Recurse -Force)
 if ($runtimeEntries | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) { throw 'El runtime debe contener archivos y carpetas locales, sin enlaces.' }
 $exe = Join-Path $PSScriptRoot 'target\release\NotDiscord.exe'
@@ -23,13 +25,15 @@ function Copy-PlusFile([string]$Source, [string]$Relative) {
 Copy-PlusFile $exe 'NotDiscord.exe'
 Copy-PlusFile $addon 'NotDiscord.Media.node'
 Copy-PlusFile (Join-Path $PSScriptRoot 'version.json') 'version.json'
-foreach ($item in $runtimeEntries | Where-Object { !$_.PSIsContainer -and $_.Extension -notin @('.log','.dmp','.tmp') }) {
-    $relative = [IO.Path]::GetRelativePath($runtimeBase, $item.FullName)
-    Copy-PlusFile $item.FullName (Join-Path 'media-runtime' $relative)
+foreach ($record in @($inventory.files)) {
+    $relative = $record.path.Replace('/','\')
+    Copy-PlusFile (Join-Path $runtimeBase $relative) (Join-Path 'media-runtime' $relative)
 }
 # The loader belongs to this source revision; third-party engines stay external.
 Copy-PlusFile (Join-Path $PSScriptRoot 'crates\media-addon\host\main.cjs') 'media-runtime\resources\app\main.cjs'
 Copy-PlusFile (Join-Path $PSScriptRoot 'crates\media-addon\host\package.json') 'media-runtime\resources\app\package.json'
+$null=Write-RuntimeInventory (Join-Path $packageRoot 'media-runtime') ('prepared-reference-sha256:'+(Get-FileHash -LiteralPath (Join-Path $runtimeBase $script:RuntimeInventoryName) -Algorithm SHA256).Hash.ToLowerInvariant())
+$null=Assert-RuntimeInventory (Join-Path $packageRoot 'media-runtime')
 foreach ($asset in @('discord.ico','UNICODE-LICENSE.txt','SYMPHONIA-LICENSE-MPL-2.0.txt')) { Copy-PlusFile (Join-Path $PSScriptRoot ('assets\' + $asset)) $asset }
 $utf8 = [Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText((Join-Path $packageRoot 'runtime.json'), "{`r`n  `"MediaHostExe`": `"media-runtime/NotDiscord.Media.exe`",`r`n  `"NativeRoot`": `"media-runtime`"`r`n}`r`n", $utf8)

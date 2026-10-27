@@ -236,19 +236,31 @@ pub async fn run(
     if let Some(token) = storage::load_session(&c.data) {
         c.connect_secret(token);
     }
-    let mut clock = tokio::time::interval(Duration::from_millis(20));
+    let mut next_tick = Instant::now();
     loop {
         tokio::select! {
             action=actions.recv()=>match action{Some(action)=>{if action.kind=="shutdown"{break}if let Err(error)=c.act(action.clone()).await{c.action_error(&action,error)}},None=>break},
             done=replies.recv()=>if let Some(done)=done{if c.accepts(&done){if let Some(credential)=done.credential {c.login_pending=false;c.disconnect().await;c.connect_secret(credential.into_secret());}else{match done.result{Ok(value)=>if let Err(error)=c.complete(done.action.clone(),value).await{c.complete_failed(&done.action).await;c.completion_error(&done.action,error)},Err(error)=>{c.complete_failed(&done.action).await;c.completion_error(&done.action,error)}}}}},
             event=async{match &mut c.gateway_rx{Some(rx)=>rx.recv().await,None=>std::future::pending().await}}=>match event{Some(GatewayEvent::Dispatch{kind,data})=>{if let Err(error)=c.dispatch(&kind,data).await{c.error(error)}},Some(GatewayEvent::Status(status))=>{c.state.connection=status;c.publish();},Some(GatewayEvent::Safety(state))=>{if let Some(api)=&c.api {api.safety().block(state);}},None=>{c.gateway_rx=None;}},
-            _=clock.tick()=>{c.tick().await;},
+            _=tokio::time::sleep_until(tokio::time::Instant::from_std(next_tick))=>{
+                c.tick().await;next_tick=Instant::now()+c.maintenance_delay();
+            },
         }
         c.sync_network_safety().await;
+        // New work shortens an idle deadline. Incoming events never postpone
+        // an already due tick, including under continuous Gateway traffic.
+        next_tick=next_tick.min(Instant::now()+c.maintenance_delay());
     }
     c.disconnect().await;
 }
 impl Controller {
+    fn maintenance_delay(&self)->Duration {
+        let fast=self.snapshot_dirty.load(Ordering::Relaxed) || self.state.busy || self.login_pending
+            || self.pending_credential.is_some() || self.media.is_some() || !self.voice_channel.is_empty()
+            || self.voice_lifecycle.needs_fast_maintenance() || self.game_detector.needs_fast_poll()
+            || self.sidebar_wait.is_some() || !self.typing.is_empty() || self.read_acks.pending();
+        Duration::from_millis(if fast {20} else {100})
+    }
     fn new(
         root: PathBuf,
         data: PathBuf,
@@ -547,6 +559,34 @@ impl Controller {
         let _ = self.updates.send(UiUpdate::Data(name.into(), value));
         self.ctx.request_repaint();
     }
+    fn edit_submission(action: &UiAction) -> Option<Value> {
+        let extra: Value=serde_json::from_str(&action.extra).ok()?;
+        let token=extra["editSubmissionId"].as_str()?;
+        if token.len()>128 || uuid::Uuid::parse_str(token).is_err() {return None;}
+        Some(extra)
+    }
+    fn validate_edit_scope(&self, action: &UiAction) -> Result<(), String> {
+        let extra: Value=serde_json::from_str(&action.extra).unwrap_or_default();
+        // Existing callers without an edit token keep their original path.
+        if extra.get("editSubmissionId").is_none() {return Ok(());}
+        if Self::edit_submission(action).is_none()
+            || s(&extra,"editAccountId")!=self.me()
+            || extra["editGeneration"].as_u64()!=Some(self.generation)
+            || extra["editRevision"].as_u64().is_none()
+            || !parsing::valid_id(&action.channel_id)
+            || action.channel_id!=self.state.selected_channel_id
+        {
+            return Err("El contexto de edición cambió o no es válido. El borrador se conserva.".into());
+        }
+        Ok(())
+    }
+    fn edit_result(&self, action: &UiAction, error: &str) {
+        if let Some(extra)=Self::edit_submission(action) {
+            self.data("edit-result",json!({"submissionId":extra["editSubmissionId"],
+                "owner":self.me(),"generation":self.generation,"revision":extra["editRevision"],
+                "channelId":action.channel_id,"messageId":action.id,"error":error}));
+        }
+    }
     fn error(&mut self, error: String) {
         self.state.status = error.clone();
         self.state.busy = false;
@@ -554,6 +594,7 @@ impl Controller {
         self.publish();
     }
     fn completion_error(&mut self, action: &UiAction, error: String) {
+        if action.kind=="__mutation" {self.edit_result(action,&error);}
         if action.kind=="__group-member-removed" {self.finish_group_member_removal(action);}
         if action.kind=="__private-ring" {self.private_ring_failed(action);}
         if action.kind=="__older" {self.finish_history_page(action);}
@@ -597,6 +638,7 @@ impl Controller {
         }
     }
     fn action_error(&mut self, action: &UiAction, error: String) {
+        if action.kind=="edit" {self.edit_result(action,&error);}
         if action.kind=="older" {self.finish_history_page(action);}
         if matches!(action.kind.as_str(), "voice" | "join-call" | "call-dm" | "call-dm-video" | "video-call") {
             self.report_voice_error(&error);
@@ -1275,9 +1317,11 @@ impl Controller {
         );
     }
     fn checked_content(&self, text: &str) -> Result<String, String> {
-        pickers::prepare_outgoing(text, |id| {
+        let content=pickers::prepare_outgoing(text, |id| {
             self.emoji_by_id_allowed(id)
-        })
+        })?;
+        self.upload_limit().validate_content(&content)?;
+        Ok(content)
     }
     fn refresh_messages(&mut self) {
         if self.state.view == "chat" {
@@ -1452,6 +1496,7 @@ impl Controller {
         if !self.state.signed_in {
             return Err("Inicia sesión para continuar.".into());
         }
+        if action.kind=="edit" {self.validate_edit_scope(&action)?;}
         if is_network_mutation(&action.kind) {
             if let Some(api) = &self.api {
                 api.safety().check().map_err(|error| error.to_string())?;
@@ -1688,7 +1733,7 @@ impl Controller {
                 if action.kind == "send-prepared"
                     && (!extra["paths"].is_array()
                         || items(&extra["paths"]).len() != paths.len()
-                        || paths.len() > 10)
+                        || paths.len() > notdiscord_core::uploads::MAX_ATTACHMENTS)
                 {
                     return Err("El borrador preparado no es válido.".into());
                 }
@@ -1696,11 +1741,8 @@ impl Controller {
                     self.require("attach")?;
                 }
                 let text = self.checked_content(&action.text)?;
-                if text.encode_utf16().count() > 4000 || text.trim().is_empty() && paths.is_empty()
-                {
-                    return Err(
-                        "Escribe un mensaje de hasta4000caracteres o prepara un archivo.".into(),
-                    );
+                if text.trim().is_empty() && paths.is_empty() {
+                    return Err("Escribe un mensaje o prepara un archivo. El borrador se conserva.".into());
                 }
                 let reply = if action.kind == "send" {
                     action.extra.clone()
@@ -1731,6 +1773,9 @@ impl Controller {
                     .into_iter()
                     .find(|m| m.id == id)
                     .ok_or("Mensaje no disponible.")?;
+                if action.kind == "edit" && original.deleted {
+                    return Err("El mensaje fue eliminado y ya no se puede editar. El texto se conserva.".into());
+                }
                 if original.author.id != self.me() {
                     return Err("Sólo puedes modificar tus propios mensajes.".into());
                 }
@@ -2158,7 +2203,10 @@ impl Controller {
                 self.data("send-ack",json!({"channelId":action.channel_id,"submissionId":extra["submissionId"],"revision":extra["revision"]}));
                 self.status("Mensaje enviado");
             }
-            "__mutation" => self.status("Operación completada"),
+            "__mutation" => {
+                self.edit_result(&action,"");
+                self.status("Operación completada");
+            }
             "__emojis" => {
                 if !self.request_current("emojis", action.extra.parse().unwrap_or(0)) {return Ok(());}
                 if !self.request_current(&format!("emoji-catalog/{}",action.id),action.text.parse().unwrap_or(0)) {return Ok(());}

@@ -67,6 +67,15 @@ pub(super) struct VoiceLifecycle {
     #[cfg(test)]
     preflight_fixture: Option<(String,Value)>,
 }
+impl VoiceLifecycle {
+    pub(super) fn needs_fast_maintenance(&self)->bool {
+        self.opening.is_some() || self.receiver_opening.is_some() || self.request_pending
+            || !self.resume.is_empty() || !self.pending_views.is_empty()
+            || self.pending_camera.is_some() || self.pending_share.is_some()
+            || self.switching.is_some() || self.leaving.is_some() || self.join_wait.is_some()
+            || !self.watch_stops.is_empty() || self.private_calls.needs_fast_maintenance()
+    }
+}
 struct VoiceLeave {
     guild: String,
     requested_at: Instant,

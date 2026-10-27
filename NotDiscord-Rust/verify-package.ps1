@@ -1,5 +1,6 @@
 param([string]$Root = (Join-Path $PSScriptRoot 'target\installer-payload'))
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'scripts\runtime-inventory.ps1')
 $packageRoot = (Resolve-Path -LiteralPath $Root).Path
 $base = [IO.Path]::GetFullPath($packageRoot).TrimEnd('\')
 function Package-Path([string]$Relative) {
@@ -19,4 +20,10 @@ $config=Get-Content -LiteralPath (Package-Path 'runtime.json') -Raw | ConvertFro
 $null=Package-Path $config.MediaHostExe
 $native=[IO.Path]::GetFullPath((Join-Path $base $config.NativeRoot))
 if(!$native.StartsWith($base+'\',[StringComparison]::OrdinalIgnoreCase) -or !(Test-Path -LiteralPath $native -PathType Container)){throw 'Runtime nativo fuera del paquete.'}
+$null=Assert-RuntimeInventory (Join-Path $base 'media-runtime')
+$allowedRoot=@('NotDiscord.exe','NotDiscord.Media.node','runtime.json','version.json','discord.ico','UNICODE-LICENSE.txt','SYMPHONIA-LICENSE-MPL-2.0.txt','ABRIR_NOTDISCORD_RUST.cmd','media-runtime')
+foreach($entry in Get-ChildItem -LiteralPath $base -Force){
+    if($allowedRoot -cnotcontains $entry.Name -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'El paquete contiene un componente inesperado o redirigido.'}
+    if($entry.PSIsContainer -and $entry.Name -cne 'media-runtime'){throw 'El paquete contiene una carpeta ajena.'}
+}
 [pscustomobject]@{Package=$base;ExeSha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash;AddonSha256=(Get-FileHash -LiteralPath $addon -Algorithm SHA256).Hash;StaticFilesValid=$true}|ConvertTo-Json -Compress

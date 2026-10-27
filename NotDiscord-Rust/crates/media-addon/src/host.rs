@@ -5,7 +5,6 @@ use crate::{
     settings::AudioSettings,
     stats,
 };
-use futures_util::{SinkExt, StreamExt};
 use napi::{
     Env, JsFunction, JsObject, JsUnknown,
     threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode},
@@ -24,8 +23,11 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio_tungstenite::tungstenite::Message;
+#[path = "host/dispatch_queue.rs"]
+mod dispatch_queue;
+#[path = "host/voice_socket.rs"]
+mod voice_socket;
 #[path = "video.rs"]
 pub(crate) mod video;
 
@@ -68,7 +70,7 @@ pub enum Event {
         ok: bool,
     },
 }
-type Sender = ThreadsafeFunction<Event, ErrorStrategy::Fatal>;
+type Sender = dispatch_queue::Sender;
 thread_local! {static HOST:RefCell<Option<Host>>=const{RefCell::new(None)};}
 pub struct Host {
     env: Env,
@@ -81,7 +83,7 @@ pub struct Host {
     runtime: tokio::runtime::Runtime,
     sessions: HashMap<u64, Session>,
     connections: HashMap<u64, ObjectRef>,
-    sockets: HashMap<u64, UnboundedSender<Message>>,
+    sockets: HashMap<u64, voice_socket::Socket>,
     voice: Option<u64>,
     share: Option<u64>,
     sequence: u64,
@@ -110,22 +112,35 @@ pub fn start(env: Env, engine: JsObject, pipe: String, data_dir: String) -> napi
     if !valid_pipe(&pipe) {
         return Err(napi::Error::from_reason("Invalid private media pipe."));
     }
+    let (output, receiver) = mpsc::channel::<Value>();
+    let closing = Arc::new(AtomicBool::new(false));
+    let mailbox = Arc::new(dispatch_queue::Mailbox::new(closing.clone(), output.clone()));
+    let dispatch_mailbox = mailbox.clone();
     let noop = env.create_function_from_closure("dispatch", |ctx| ctx.env.get_undefined())?;
-    let sender: Sender = noop.create_threadsafe_function(256, |ctx| {
+    let wake: ThreadsafeFunction<(), ErrorStrategy::Fatal> = noop.create_threadsafe_function(dispatch_queue::WAKE_CAPACITY, move |ctx| {
+        let _: () = ctx.value;
         trace("actor");
         HOST.with(|slot| {
             let current = slot.borrow_mut().take();
             if let Some(mut host) = current {
-                host.dispatch(ctx.value);
+                for _ in 0..dispatch_queue::BATCH {
+                    let Some(delivery) = dispatch_mailbox.pop() else { break; };
+                    let bytes = delivery.bytes;
+                    host.dispatch(delivery.event);
+                    dispatch_mailbox.complete(bytes);
+                    if host.closing.load(Ordering::Acquire) { break; }
+                }
+                let sender = host.sender.clone();
                 *slot.borrow_mut() = Some(host);
+                sender.finish_dispatch();
             } else {
                 trace("actor-empty");
+                dispatch_mailbox.actor_unavailable();
             }
         });
         Ok(Vec::<JsUnknown>::new())
     })?;
-    let (output, receiver) = mpsc::channel::<Value>();
-    let closing = Arc::new(AtomicBool::new(false));
+    let sender = Sender::new(wake, mailbox);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -232,13 +247,13 @@ pub fn start(env: Env, engine: JsObject, pipe: String, data_dir: String) -> napi
                                     Ok(v) => {
                                         let _ = io_sender.call(
                                             Event::Request(v),
-                                            ThreadsafeFunctionCallMode::Blocking,
+                                            ThreadsafeFunctionCallMode::NonBlocking,
                                         );
                                     }
                                     Err(_) => {
                                         let _ = io_sender.call(
                                             Event::Request(Value::Null),
-                                            ThreadsafeFunctionCallMode::Blocking,
+                                            ThreadsafeFunctionCallMode::NonBlocking,
                                         );
                                     }
                                 }
@@ -335,10 +350,14 @@ impl Host {
         let sender = self.sender.clone();
         self.env
             .create_function_from_closure("mediaCallback", move |ctx| {
+                if sender.is_closing() { return ctx.env.get_undefined(); }
                 let mut values = Vec::new();
                 for i in 0..ctx.length.min(8) {
                     let value = ctx.get::<JsUnknown>(i)?;
-                    values.push(native::read_value(*ctx.env, value).unwrap_or(Value::Null));
+                    match native::read_value(*ctx.env, value) {
+                        Ok(value) => values.push(value),
+                        Err(_) => { sender.reject_callback(); return ctx.env.get_undefined(); }
+                    }
                 }
                 let _ = sender.call(
                     Event::Callback(tag.clone(), values),
@@ -957,14 +976,22 @@ impl Host {
         self.emit(event);
     }
     fn send(&self, id: u64, op: u64, data: Value) {
-        if let Some(sender) = self.sockets.get(&id) {
-            let _ = sender.send(Message::Text(json!({"op":op,"d":data}).to_string().into()));
+        if let Some(socket) = self.sockets.get(&id) {
+            if let Err(error) = socket.send(Message::Text(json!({"op":op,"d":data}).to_string().into())) {
+                if socket.fail_once() {
+                    let _ = self.sender.call(Event::WsError(id, error), ThreadsafeFunctionCallMode::NonBlocking);
+                }
+            }
         }
     }
     fn send_binary(&self, id: u64, op: u8, bytes: &[u8]) -> Result<()> {
         let data = protocol::client_binary(op, bytes)?;
-        if let Some(sender) = self.sockets.get(&id) {
-            let _ = sender.send(Message::Binary(data.into()));
+        let socket = self.sockets.get(&id).ok_or_else(|| MediaError::new("VOICE_SEND_CLOSED", "La conexión de voz ya se cerró."))?;
+        if let Err(error) = socket.send(Message::Binary(data.into())) {
+            if socket.fail_once() {
+                let _ = self.sender.call(Event::WsError(id, error.clone()), ThreadsafeFunctionCallMode::NonBlocking);
+            }
+            return Err(error);
         }
         Ok(())
     }
@@ -1051,49 +1078,7 @@ impl Host {
         s.operation_token = p["token"].as_u64().unwrap_or(0);
         s.suspended_share = selection;
         self.emit(s.state_event("connecting", None));
-        let (tx, mut rx) = unbounded_channel::<Message>();
-        self.sockets.insert(id, tx);
-        let sender = self.sender.clone();
-        self.runtime.spawn(async move {
-            let error = match tokio::time::timeout(Duration::from_secs(30), tokio_tungstenite::connect_async(&endpoint)).await {
-                Ok(Ok((socket, _))) => {
-                    let _ = sender.call(Event::WsOpen(id), ThreadsafeFunctionCallMode::NonBlocking);
-                    let (mut write, mut read) = socket.split();
-                    loop {
-                        tokio::select! {
-                            out = rx.recv() => match out {
-                                Some(message) => {
-                                    let close = matches!(message, Message::Close(_));
-                                    if let Err(error) = write.send(message).await { break socket_failure(&error); }
-                                    if close { break socket_closed(None); }
-                                }
-                                None => break socket_closed(None),
-                            },
-                            incoming = read.next() => match incoming {
-                                Some(Ok(Message::Text(text))) => match protocol::json_frame(&text) {
-                                    Ok(frame) => { let _ = sender.call(Event::WsFrame(id, frame), ThreadsafeFunctionCallMode::Blocking); }
-                                    Err(error) => break error,
-                                },
-                                Some(Ok(Message::Binary(bytes))) => match protocol::binary_frame(&bytes) {
-                                    Ok(frame) => { let _ = sender.call(Event::WsFrame(id, frame), ThreadsafeFunctionCallMode::Blocking); }
-                                    Err(error) => break error,
-                                },
-                                Some(Ok(Message::Ping(bytes))) => {
-                                    if let Err(error) = write.send(Message::Pong(bytes)).await { break socket_failure(&error); }
-                                }
-                                Some(Ok(Message::Close(frame))) => break socket_closed(frame.as_ref().map(|frame| u16::from(frame.code))),
-                                Some(Err(error)) => break socket_failure(&error),
-                                None => break socket_closed(None),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                Ok(Err(error)) => socket_failure(&error),
-                Err(_) => MediaError::new("VOICE_SOCKET_TIMEOUT", "El servidor de voz no respondió a tiempo al abrir la conexión."),
-            };
-            let _ = sender.call(Event::WsError(id, error), ThreadsafeFunctionCallMode::NonBlocking);
-        });
+        self.sockets.insert(id, voice_socket::spawn(self.runtime.handle(), endpoint, id, self.sender.clone()));
         if s.receive() {
             self.watches.insert(s.credentials.stream_key.clone(), id);
         } else if stream {
@@ -1706,15 +1691,11 @@ impl Host {
         let Some(interval) = s.heartbeat_interval else {
             return Ok(());
         };
-        if s.heartbeat_pending
-            .is_some_and(|t| now.duration_since(t) > interval * 2)
-        {
-            return Err(MediaError::new(
-                "VOICE_HEARTBEAT_TIMEOUT",
-                "The voice server stopped acknowledging heartbeats.",
-            ));
-        }
-        s.heartbeat_pending = Some(now);
+        let socket = self.sockets.get(&s.id).ok_or_else(|| MediaError::new("VOICE_SEND_CLOSED", "La conexión de voz ya se cerró."))?;
+        // The first pending timestamp is not renewed by retransmission. Its
+        // watchdog also lives in the receiver task, independent of JS ticks.
+        socket.heartbeat.sent(now, interval)?;
+        s.heartbeat_pending = socket.heartbeat.first_pending();
         s.next_heartbeat = Some(now + interval);
         self.send(
             s.id,
@@ -1756,12 +1737,17 @@ impl Host {
             let _ = self.eng("setInputDevice", vec![json!("disabled")]);
         }
         s.closed = true;
+        s.heartbeat_pending = None;
+        s.next_heartbeat = None;
+        s.heartbeat_interval = None;
         s.local_ready = false;
         s.connected = false;
         s.credentials.voice_token.clear();
         s.credentials.session_id.clear();
-        if let Some(sender) = self.sockets.remove(&s.id) {
-            let _ = sender.send(Message::Close(None));
+        if let Some(socket) = self.sockets.remove(&s.id) {
+            // Cancellation and AbortHandle bypass both data and Pong backlog;
+            // dropping the split socket releases the transport immediately.
+            socket.cancel();
         }
         if let Some(conn) = self.connections.remove(&s.id) {
             if let Ok(obj) = conn.object(self.env) {
@@ -2766,6 +2752,7 @@ fn socket_failure(error: &tokio_tungstenite::tungstenite::Error) -> MediaError {
         Error::Http(response) => MediaError::new("VOICE_SOCKET_HTTP", format!("El servidor de voz rechazó la conexión (HTTP {}).", response.status().as_u16())),
         Error::Tls(_) => MediaError::new("VOICE_SOCKET_TLS", "No se pudo establecer la conexión segura con el servidor de voz."),
         Error::Io(_) => MediaError::new("VOICE_SOCKET_NETWORK", "La conexión de red con el servidor de voz falló o se interrumpió."),
+        Error::Capacity(_) | Error::WriteBufferFull(_) => MediaError::new("VOICE_SOCKET_LIMIT", "La señalización de voz superó los límites de tamaño del transporte."),
         _ => MediaError::new("VOICE_SOCKET_ERROR", "Falló la comunicación con el servidor de voz."),
     }
 }

@@ -537,8 +537,9 @@ impl Controller {
                 self.remember(p.clone());
                 if p.id == self.me() {
                     self.state.current_user = Some(p);
-                    if let Some(premium)=value.get("premium_type").and_then(Value::as_i64).filter(|premium|(0..=3).contains(premium)).and_then(|premium|i32::try_from(premium).ok()) {
-                        self.premium=premium;self.state.upload_limit.premium_type=Some(premium);self.refresh_emoji_access();
+                    if let Some(entitlement)=value.get("premium_type") {
+                        let premium=entitlement.as_i64().filter(|premium|(0..=3).contains(premium)).and_then(|premium|i32::try_from(premium).ok());
+                        self.premium=premium.unwrap_or(0);self.state.upload_limit.premium_type=premium;self.refresh_emoji_access();
                     }
                 }
                 self.decorate_dms();

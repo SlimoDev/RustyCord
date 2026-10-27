@@ -1,4 +1,4 @@
-# Publish only maintained project sources, docs and the project programming skill.
+# Publish only maintained project sources, docs and project skills.
 /*
 !/.gitignore
 !/README.md
@@ -6,3 +6,4 @@
 !/skills/
 /skills/*
 !/skills/notdiscord-programar/
+!/skills/notdiscord-planificar/

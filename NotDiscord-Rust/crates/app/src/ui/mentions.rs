@@ -428,6 +428,7 @@ pub(super) fn refresh_names(draft: &mut Draft, explicit: &[Person], state: &AppS
 
 /// TextEdit paints these ranges using the same font, baseline and ink as chat.
 /// The editable buffer contains names; span metadata serializes their IDs.
+#[cfg(test)]
 pub(super) fn editor_job(
     text: &str,
     spans: &[Mention],
@@ -436,6 +437,14 @@ pub(super) fn editor_job(
     allow_broadcast: bool,
     wrap_width: f32,
 ) -> LayoutJob {
+    editor_job_impl(None, text, spans, size, ink, allow_broadcast, wrap_width)
+}
+pub(super) fn editor_job_cached(ctx: &egui::Context, text: &str, spans: &[Mention], size: f32,
+    ink: Color32, allow_broadcast: bool, wrap_width: f32) -> LayoutJob {
+    editor_job_impl(Some(ctx), text, spans, size, ink, allow_broadcast, wrap_width)
+}
+fn editor_job_impl(ctx: Option<&egui::Context>, text: &str, spans: &[Mention], size: f32,
+    ink: Color32, allow_broadcast: bool, wrap_width: f32) -> LayoutJob {
     let mut ranges: Vec<std::ops::Range<usize>> = spans
         .iter()
         .filter_map(|span| {
@@ -458,13 +467,8 @@ pub(super) fn editor_job(
     // Mention display names are metadata atoms, even if a name contains * or
     // _. Mask only the parser's recognition copy with equal-length ASCII; all
     // ranges and all emitted characters still refer to the original buffer.
-    let mut recognition = text.to_owned();
-    for range in ranges.iter().rev() {
-        if recognition.get(range.clone()).is_some() {
-            recognition.replace_range(range.clone(), &"x".repeat(range.len()));
-        }
-    }
-    let document = notdiscord_core::markdown::parse(&recognition);
+    let document = ctx.map_or_else(|| std::sync::Arc::new(super::markdown_cache::parse(text, &ranges)),
+        |ctx| super::markdown_cache::document(ctx, text, &ranges));
     let plain = theme::markdown_format(Default::default(), size, ink, false);
     let mut base = LayoutJob::default();
     let mut end = 0;

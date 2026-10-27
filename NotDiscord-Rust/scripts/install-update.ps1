@@ -15,6 +15,7 @@ $installationCommitted=$false
 $oldExecutableHash=$null
 $oldRuntimeFingerprint=$null
 $setupStarted=$false
+$stagingLease=$null
 function Assert-NoLinks([string]$Path) {
     $current=[IO.Path]::GetFullPath($Path)
     while($current) {
@@ -41,6 +42,15 @@ function Verify-Installer {
     if($plan.executable_sha256 -notmatch '^[a-fA-F0-9]{64}$'){throw 'El manifiesto no identifica el ejecutable que se instalará.'}
     $stream=[IO.File]::OpenRead($setup)
     try{if($stream.ReadByte() -ne 77 -or $stream.ReadByte() -ne 90){throw 'La descarga no contiene un instalador de Windows.'}}finally{$stream.Dispose()}
+}
+function Set-StagingState([string]$State) {
+    $markerPath=Join-Path $work 'staging.json'
+    Assert-NoLinks $markerPath
+    if(!(Test-Path -LiteralPath $markerPath -PathType Leaf) -or (Get-Item -LiteralPath $markerPath).Length -gt 4096){throw 'No existe un staging propio válido.'}
+    $marker=Get-Content -LiteralPath $markerPath -Raw -Encoding UTF8|ConvertFrom-Json
+    if($marker.schema -ne 1 -or $marker.owner -cne 'NotDiscord.Standard.UpdateStaging'){throw 'El staging no pertenece a esta actualización.'}
+    $marker.state=$State
+    [IO.File]::WriteAllText($markerPath,($marker|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
 }
 function Start-Client {
     $start=New-Object Diagnostics.ProcessStartInfo
@@ -135,6 +145,12 @@ try {
         [IO.File]::WriteAllText((Join-Path $work 'prepared'),'verified-windows-installer')
         exit 0
     }
+    $leasePath=Join-Path $work 'lease.lock'
+    Assert-NoLinks $leasePath
+    # Read/share-RW interoperates with the parent's open writer and denies
+    # deletion for the entire install, rollback and restart transaction.
+    $stagingLease=[IO.File]::Open($leasePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+    Set-StagingState 'active'
     if(!(Test-Path -LiteralPath (Join-Path $work 'prepared') -PathType Leaf)){throw 'No existe una preparación validada.'}
     $admissionMutex=New-Object Threading.Mutex($false,[string]$plan.admission_mutex)
     $admissionHeld=Take-UpdateMutex $admissionMutex
@@ -200,11 +216,13 @@ try {
     if($version.schema -ne 2 -or $version.variant -cne $plan.variant -or $version.branch -cne $plan.branch -or $version.version -cne $plan.version){throw 'La versión instalada no coincide con la publicación.'}
     [IO.File]::WriteAllText((Join-Path $work 'installed'),[string]$plan.version)
     $installationCommitted=$true
+    Set-StagingState 'installed'
     Release-UpdateLocks
     Start-Client
     exit 0
 }catch{
     $message=$_.Exception.Message
+    if($stagingLease){try{Set-StagingState $(if($cancelled){'cancelled'}else{'failed'})}catch{}}
     if($workValidated){try{[IO.File]::WriteAllText((Join-Path $work 'error.txt'),$message)}catch{}}
     $canReopenOld=$false
     if($parentExited -and !$installationCommitted -and $oldExecutableHash){
@@ -226,4 +244,4 @@ try {
         }catch{}
     }
     exit 1
-}finally{Release-UpdateLocks}
+}finally{Release-UpdateLocks;if($stagingLease){$stagingLease.Dispose()}}

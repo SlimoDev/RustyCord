@@ -5,7 +5,7 @@ ejecutable y accesos directos anteriores; todavía no participa en el actualizad
 ni en la configuración y exclusión bidireccionales nuevas.
 
 La distribución actual es exclusivamente el instalador
-**NotDiscord-Setup-0.4.1.exe**. No se publica una edición portable de esta versión.
+**NotDiscord-Setup-0.5.0.exe**. No se publica una edición portable de esta versión.
 La instalación permite elegir una carpeta y, por defecto, utiliza Programs del
 usuario para no requerir elevación. Una ruta protegida necesita el consentimiento
 normal de Windows; el actualizador no intenta eludir UAC.
@@ -51,11 +51,11 @@ El manifiesto publicado tiene esta estructura:
       "schema": 2,
       "variant": "standard",
       "branch": "NotDiscord",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "release": {
         "kind": "installer",
-        "tag": "NotDiscord-v0.4.1",
-        "url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.4.1/NotDiscord-Setup-0.4.1.exe",
+        "tag": "NotDiscord-v0.5.0",
+        "url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.5.0/NotDiscord-Setup-0.5.0.exe",
         "sha256": "<SHA-256 del Setup.exe>",
         "bytes": 123,
         "executable_sha256": "<SHA-256 del NotDiscord.exe que instala>"
@@ -95,11 +95,11 @@ de ejecución siguen idénticos. Los registros permanecen en la carpeta de prepa
 
 Para preparar la publicación, después de compilar el cliente y el instalador:
 
-    .\prepare-update-release.ps1 -Installer 'dist\NotDiscord-Setup-0.4.1.exe' -Executable 'ruta-del-payload\NotDiscord.exe' -Destination 'ruta-nueva\version.json'
+    .\prepare-update-release.ps1 -Installer 'dist\NotDiscord-Setup-0.5.0.exe' -Executable 'ruta-del-payload\NotDiscord.exe' -Destination 'ruta-nueva\version.json'
 
 El script únicamente lee los ejecutables compilados y escribe el manifiesto; no
 ejecuta, sube o publica nada, ni crea un ZIP. Se publica el Setup.exe como asset de
-NotDiscord-v0.4.1 y después el manifiesto generado en la rama NotDiscord. Primero
+NotDiscord-v0.5.0 y después el manifiesto generado en la rama NotDiscord. Primero
 se compila con release null, se empaqueta y se calculan los hashes; el manifiesto
 con el hash del instalador no se vuelve a incluir en ese mismo instalador, evitando
 un ciclo de hashes. Los hashes verifican integridad respecto de la publicación;
@@ -108,3 +108,26 @@ no sustituyen la confianza en quienes pueden publicar en el repositorio.
 Por indicación del usuario no se ejecutan pruebas funcionales, el instalador ni
 el cliente. La compilación y revisión estática no verifican instalación, UAC,
 cierre, llamadas o reinicio reales. Su funcionamiento queda pendiente de confirmación.
+
+## Endurecimiento de 0.5.0
+
+El paquete consume un runtime preparado en staging nuevo y con inventario
+permitido de archivos, tamaños y SHA-256. La verificación del paquete y la
+compilación de Setup rechazan componentes inesperados o reparse points. La
+preparación no decide la identidad del motor sólo por longitud de archivo.
+
+Los nuevos staging del actualizador llevan marcador de propiedad y lease
+abierto por cliente y helper. La retención limita a seis carpetas/2 GiB y retira
+las que superan siete días cuando están inactivas; bajo presión retira primero
+las propias más antiguas con al menos un minuto. Un staging activo o carpeta
+ajena/legada no se borra, y si no hay espacio seguro la descarga se rechaza.
+Sólo se retiran archivos de una lista plana conocida, sin borrado recursivo.
+
+La política se aplica al código nuevo: las carpetas antiguas sin propiedad
+reconstruible se conservan. La descarga de 0.5.0 desde un cliente anterior sigue
+su helper anterior; no se cambia ese binario antes de instalar la entrega.
+
+La [firma de manifiestos](update-signing-design.md) tiene un diseño de custodia,
+rotación y recuperación pendiente de claves. Esta versión mantiene hashes y
+HTTPS; no anuncia verificación de firmas ni protección completa ante compromiso
+de publicación. No se creó una clave privada de producción en este trabajo.

@@ -1,6 +1,7 @@
 //! Ownership records and bounded cleanup for this executable's login jobs.
 //! No browser-wide scans, user credentials, process names or external profiles.
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 use std::{
     fs::{self, File, OpenOptions},
     os::windows::fs::{MetadataExt, OpenOptionsExt},
@@ -357,12 +358,12 @@ impl Resources {
             .as_mut()
             .expect("login child attached before waiting")
     }
-    pub(super) fn read_handoff(&self) -> Option<Vec<u8>> {
+    pub(super) fn read_handoff(&self) -> Option<Zeroizing<Vec<u8>>> {
         let path = self.job.as_ref()?.paths.handoff();
         if !plain_file(&path) {
             return None;
         }
-        crate::storage::read_bounded(&path, 65536)
+        crate::storage::read_bounded(&path, 65536).map(Zeroizing::new)
     }
     pub(super) async fn finish(self) -> Result<(), String> {
         let (send, receive) = tokio::sync::oneshot::channel();

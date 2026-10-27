@@ -155,8 +155,8 @@ impl Api {
         crate::gateway::GatewayHandle,
         tokio::sync::mpsc::Receiver<crate::gateway::GatewayEvent>,
     ) {
-        crate::gateway::spawn_with_safety(
-            self._credential.to_string(),
+        crate::gateway::spawn_with_secret(
+            self._credential.clone(),
             initial_status,
             self.safety(),
         )
@@ -420,13 +420,14 @@ impl Api {
     )->Result<Value,ServiceError> {
         if !crate::parsing::valid_id(channel)
             || paths.is_empty()
-            || paths.len() > 10
             || nonce.is_empty()
             || nonce.len() > 25
             || !reply_id.is_empty() && !crate::parsing::valid_id(reply_id)
         {
             return Err(ServiceError::new("Envío preparado inválido."));
         }
+        limit.validate_content(content).map_err(ServiceError::new)?;
+        limit.validate_batch(paths.len(),0).map_err(ServiceError::new)?;
         self.safety.check()?;
         let path = format!("channels/{channel}/messages");
         let endpoint = self.endpoint(&path)?;
@@ -447,10 +448,8 @@ impl Api {
             }
             limit.validate_file(metadata.len()).map_err(ServiceError::new)?;
             total = total.saturating_add(metadata.len());
+            limit.validate_batch(paths.len(),total).map_err(ServiceError::new)?;
             prepared.push((file,metadata.len(),path.file_name().unwrap_or_default().to_string_lossy().into_owned()));
-        }
-        if total > crate::uploads::LOCAL_BATCH_BYTES {
-            return Err(ServiceError::new("Este envío supera el máximo local de 1 GiB. Divide los adjuntos en mensajes separados."));
         }
         let mut body = json!({"content":content,"nonce":nonce,"enforce_nonce":true,"allowed_mentions":{"parse":["users","roles"],"replied_user":false},"attachments":paths.iter().enumerate().map(|(index,path)|json!({"id":index.to_string(),"filename":path.file_name().unwrap_or_default().to_string_lossy()})).collect::<Vec<_>>()});
         body["allowed_mentions"] = crate::mentions::allowed_mentions(content, mention_everyone);

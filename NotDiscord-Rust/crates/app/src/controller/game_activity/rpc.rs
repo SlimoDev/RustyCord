@@ -83,9 +83,12 @@ impl Receiver {
         true
     }
     pub async fn poll(&mut self,allowed:bool,identity:Option<(game_rpc::Identity,u64)>){
+        self.poll_cached(allowed,identity.as_ref()).await;
+    }
+    pub(super) fn needs_fast_poll(&self)->bool {self.listener.is_some()||self.starting.is_some()||self.stopping}
+    pub async fn poll_cached(&mut self,allowed:bool,identity:Option<&(game_rpc::Identity,u64)>){
         let Some((identity,generation))=identity.filter(|_|allowed) else{self.shutdown().await;return;};
-        let owner=(identity.id.clone(),generation);
-        if self.stopping||self.owner.as_ref().is_some_and(|previous|previous!=&owner){self.shutdown().await;self.retry_at=Instant::now();}
+        if self.stopping||self.owner.as_ref().is_some_and(|previous|previous.0!=identity.id||previous.1!=*generation){self.shutdown().await;self.retry_at=Instant::now();}
         if self.starting.as_ref().is_some_and(|task|task.is_finished()){
             if let Some(task)=self.starting.take(){match task.await{
                 Ok(Ok(listener))=>self.install(listener),
@@ -95,7 +98,7 @@ impl Receiver {
         }
         if self.listener.is_some()&&!self.read(){self.shutdown().await;self.retry_at=Instant::now()+Duration::from_secs(60);}
         if self.listener.is_none()&&self.starting.is_none()&&Instant::now()>=self.retry_at{
-            self.owner=Some(owner);self.starting=Some(tokio::spawn(game_rpc::start(identity)));
+            self.owner=Some((identity.id.clone(),*generation));self.starting=Some(tokio::spawn(game_rpc::start(identity.clone())));
         }
     }
 }

@@ -6,6 +6,7 @@ param(
 )
 # Compile only. Never runs Setup, the application, an account or a device.
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'scripts\runtime-inventory.ps1')
 function Assert-NoLinks([string]$Path) {
     $current=[IO.Path]::GetFullPath($Path)
     while($current){
@@ -15,6 +16,7 @@ function Assert-NoLinks([string]$Path) {
     }
 }
 $package=(Resolve-Path -LiteralPath $PackageRoot).Path.TrimEnd('\')
+$null=Assert-RuntimeInventory (Join-Path $package 'media-runtime')
 $compilerPath=(Resolve-Path -LiteralPath $Compiler).Path
 $output=[IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\')
 $build=[IO.Path]::GetFullPath($BuildDirectory).TrimEnd('\')

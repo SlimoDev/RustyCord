@@ -15,6 +15,16 @@ mod markdown;
 mod scroll_follow;
 pub(super) use reaction_tooltip::{clear_reaction_users, reaction_panel_open, reaction_panel_rect, reaction_users_result};
 
+pub(super) fn same_message_storage(previous: &AppSnapshot, next: &AppSnapshot) -> bool {
+    previous.notification_generation == next.notification_generation
+        && previous.signed_in == next.signed_in
+        && previous.current_user.as_ref().map(|person| &person.id) == next.current_user.as_ref().map(|person| &person.id)
+        && previous.selected_channel_id == next.selected_channel_id
+        && previous.selected_guild_id == next.selected_guild_id
+        && previous.view == next.view
+        && previous.messages.same_storage(&next.messages)
+}
+
 pub(super) fn suspend_interactions(ctx: &egui::Context) {
     interaction::suspend(ctx);
     context_menu::clear(ctx);
@@ -120,6 +130,7 @@ impl NotDiscordUi {
                 ui,
                 self.drafts.get(&state.selected_channel_id),
                 self.prefs.chat_size,
+                super::mentions::everyone_allowed(state),
             )
         } else {
             0.
@@ -1484,10 +1495,9 @@ impl NotDiscordUi {
         });
     }
     fn reply_to(&mut self, m: &ChatMessage) {
-        let Some(d) = self.draft(&m.channel_id) else {
-            return;
-        };
-        d.reply = Some(MessageReplyPreview {
+        if self.draft(&m.channel_id).is_none() { return; }
+        let mut candidate = self.drafts.get(&m.channel_id).cloned().unwrap_or_default();
+        candidate.reply = Some(MessageReplyPreview {
             message_id: m.id.clone(),
             channel_id: m.channel_id.clone(),
             author: Some(m.author.clone()),
@@ -1495,7 +1505,13 @@ impl NotDiscordUi {
             mentions: m.mentions.clone(),
             ..Default::default()
         });
-        d.revision += 1;
+        let previous = &self.drafts[&m.channel_id];
+        if !self.accepts_draft_edit(previous,&candidate,Some(&m.channel_id),0) {
+            self.error = super::text_budget::ERROR.into();
+            return;
+        }
+        candidate.revision += 1;
+        self.drafts.insert(m.channel_id.clone(),candidate);
     }
     fn jump_message(&mut self, channel: &str, id: &str) {
         self.send("jump-message", id, "", "", channel);
@@ -1741,6 +1757,19 @@ impl NotDiscordUi {
             ui.close();
         }
     }
+    fn attach_to_draft(&mut self, draft: &mut Draft, path: PathBuf,
+        limit: notdiscord_core::uploads::UploadLimit, channel: &str) {
+        let budget = self.draft_input_limit(draft,Some(channel),0)
+            .saturating_add(super::text_budget::weight(draft).saturating_sub(draft.text.len()));
+        let count = draft.paths.len();
+        let revision = draft.revision;
+        add_attachment(draft,path,&mut self.error,limit);
+        if super::text_budget::weight(draft) > budget {
+            draft.paths.truncate(count);
+            draft.revision = revision;
+            self.error = super::text_budget::ERROR.into();
+        }
+    }
     pub(super) fn poll_clipboard_attachments(&mut self) {
         for mut pasted in self.pictures.take_pasted() {
             let path = match pasted.take_result() {
@@ -1770,7 +1799,7 @@ impl NotDiscordUi {
             // validates its real destination; never apply another guild's cap.
             let limit=if pasted.channel==self.state.selected_channel_id {self.state.upload_limit}
                 else {notdiscord_core::uploads::UploadLimit {per_file:notdiscord_core::uploads::LOCAL_BATCH_BYTES,..Default::default()}};
-            add_attachment(&mut draft, path.clone(), &mut self.error, limit);
+            self.attach_to_draft(&mut draft, path.clone(), limit, &pasted.channel);
             if !draft.paths.contains(&path) {
                 self.cleanup_temporary(&[path]);
             }
@@ -1899,7 +1928,9 @@ impl NotDiscordUi {
             && self.submissions.len() < 64
             && (!draft.text.trim().is_empty() || !draft.paths.is_empty())
             && (self.mention_closed || completion::query(&draft.text, self.composer_cursor).is_none());
-        let after_enter = ui.ctx().input_mut(|input| take_post_send_text(input, capture_ready));
+        let byte_limit = self.draft_input_limit(&draft, Some(channel), 0);
+        let after_enter = ui.ctx().input_mut(|input| take_post_send_text(input, capture_ready,
+            byte_limit.saturating_sub(draft.text.len())));
         let focused = ui.is_enabled()
             && ui.memory(|m| m.has_focus(editor_id))
             && ui.ctx().input(|i| i.focused)
@@ -1937,9 +1968,11 @@ impl NotDiscordUi {
             });
         }
         let mut send = false;
+        let mut rejected_edit = false;
         let mut discard = false;
         let mut reply_jump = None;
-        let editor_height = composer_text_height(ui, &draft.text, self.prefs.chat_size);
+        let editor_height = composer_text_height(ui, &draft.text, &draft.mentions, self.prefs.chat_size,
+            super::mentions::everyone_allowed(state));
         egui::Frame::new()
             .fill(self.theme.surface)
             .corner_radius(8)
@@ -2077,7 +2110,9 @@ impl NotDiscordUi {
                             });
                         });
                 }
-                let old = draft.text.clone();
+                let text_limit = self.draft_input_limit(&draft, Some(channel), after_enter.len());
+                let backup = super::text_budget::EditorBackup::new(ui.ctx(), editor_id, draft.text.len(), text_limit);
+                let mut edit_outcome = None;
                 let response = ui
                     .horizontal_top(|ui| {
                         let controls = composer_control_sizes(ui.ctx(), ui.style());
@@ -2088,13 +2123,13 @@ impl NotDiscordUi {
                                 allowed && state.channel_access.can_attach,
                                 egui::Button::new("+").min_size(controls[0]),
                             )
-                            .on_hover_text(format!("Adjuntar archivos\n{}\nDiscord valida el límite definitivo; no se reintenta un rechazo de tamaño.",state.upload_limit.label()))
+                            .on_hover_text(format!("Adjuntar archivos\n{}\n{} caracteres por mensaje\nDiscord valida el límite definitivo; no se reintenta un rechazo de tamaño.",state.upload_limit.label(),state.upload_limit.message_char_limit()))
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
                         {
                             if let Some(paths) = rfd::FileDialog::new().pick_files() {
                                 for path in paths {
-                                    add_attachment(&mut draft, path, &mut self.error, state.upload_limit);
+                                    self.attach_to_draft(&mut draft, path, state.upload_limit, channel);
                                 }
                             }
                         }
@@ -2109,15 +2144,16 @@ impl NotDiscordUi {
                                 let ink = self.theme.ink;
                                 let broadcast = super::mentions::everyone_allowed(state);
                                 let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-                                    let mut job = super::mentions::editor_job(text.as_str(), &spans, size, ink, broadcast, wrap_width);
+                                    let mut job = super::mentions::editor_job_cached(ui.ctx(), text.as_str(), &spans, size, ink, broadcast, wrap_width);
                                     // A long URL or emoji token must wrap inside
                                     // its editor instead of moving the controls.
                                     job.wrap.break_anywhere = true;
                                     ui.fonts_mut(|fonts| fonts.layout_job(job))
                                 };
-                                ui.add_enabled(
+                                let mut buffer = super::text_budget::Buffer::new(&mut draft.text, text_limit);
+                                let response = ui.add_enabled(
                                     allowed,
-                                    egui::TextEdit::multiline(&mut draft.text)
+                                    egui::TextEdit::multiline(&mut buffer)
                                         .id(editor_id)
                                         .font(egui::FontId::proportional(self.prefs.chat_size))
                                         .frame(false)
@@ -2134,7 +2170,9 @@ impl NotDiscordUi {
                                         } else {
                                             &state.channel_access.reason
                                         }).color(self.theme.muted)),
-                                )
+                                );
+                                edit_outcome = Some(buffer.finish());
+                                response
                             })
                             .inner;
                         if ui
@@ -2173,6 +2211,13 @@ impl NotDiscordUi {
                         response
                     })
                     .inner;
+                let edit_outcome = edit_outcome.unwrap_or(super::text_budget::Outcome { before: None, rejected: false });
+                if edit_outcome.rejected {
+                    backup.restore(ui.ctx(), editor_id);
+                    self.error = super::text_budget::ERROR.into();
+                    send = false;
+                    rejected_edit = true;
+                }
                 response.context_menu(|ui| {
                     if ui
                         .add_enabled(
@@ -2207,7 +2252,7 @@ impl NotDiscordUi {
                 if let Some(range) = output.and_then(|s| s.cursor.char_range()) {
                     self.composer_cursor = range.primary.index.min(draft.text.chars().count());
                 }
-                if response.changed() {
+                if let Some(old) = edit_outcome.before.filter(|before| before != &draft.text) {
                     adjust_mentions(&old, &draft.text, &mut draft.mentions);
                     draft.revision += 1;
                     self.mention_closed = false;
@@ -2277,7 +2322,14 @@ impl NotDiscordUi {
                 }
                 if let Some(index) = choose {
                     if let Some((start, _)) = mention {
+                        let previous = draft.clone();
                         let Some(cursor)=completion::insert(&mut draft,start,self.composer_cursor,&choices[index]) else {return;};
+                        if !self.accepts_draft_edit(&previous,&draft,Some(channel),after_enter.len()) {
+                            draft = previous;
+                            self.error = super::text_budget::ERROR.into();
+                            rejected_edit = true;
+                            return;
+                        }
                         self.composer_cursor = cursor;
                         let editor_id = egui::Id::new(("composer", channel));
                         if let Some(mut editor) = egui::TextEdit::load_state(ui.ctx(), editor_id) {
@@ -2297,6 +2349,7 @@ impl NotDiscordUi {
                     }
                 }
             });
+        if rejected_edit { send = false; }
         if discard {
             self.cleanup_unreferenced_temporary(&draft.paths);
             draft = Draft::default();
@@ -2312,7 +2365,7 @@ impl NotDiscordUi {
             }
         }) {
             if let Some(path) = dropped.path {
-                add_attachment(&mut draft, path, &mut self.error, state.upload_limit);
+                self.attach_to_draft(&mut draft, path, state.upload_limit, channel);
             }
         }
         if paste {
@@ -2330,15 +2383,15 @@ impl NotDiscordUi {
             }
         }
         if send && allowed && (!draft.text.trim().is_empty() || !draft.paths.is_empty()) {
-            let text = outgoing_mentions(&draft);
-            if text.encode_utf16().count() > 4000 {
-                self.error="El mensaje con sus menciones supera el límite de 4000 caracteres. El borrador se conserva.".into();
+            if let Err(error) = validate_submission(&draft, state) {
+                self.error = error;
                 restore_post_send_text(&mut draft, &after_enter, self.composer_cursor);
                 self.drafts.insert(channel.clone(), draft);
                 return;
             }
             if self.submissions.len() >= 64 {
                 self.error = "Hay 64 envíos pendientes. Reintenta o descarta uno; el borrador actual se conserva.".into();
+                restore_post_send_text(&mut draft, &after_enter, self.composer_cursor);
             } else {
                 let submission = uuid::Uuid::new_v4().simple().to_string();
                 let mut captured = std::mem::take(&mut draft);
@@ -2346,7 +2399,7 @@ impl NotDiscordUi {
                 self.submitted_paths.insert(submission.clone(), captured.paths.clone());
                 self.submissions.insert(submission.clone(), (channel.clone(), captured.revision));
                 self.sent_drafts.insert(submission.clone(), captured);
-                if self.send_captured_draft(&submission, channel) {
+                if self.send_captured_draft(&submission, channel, state) {
                     self.go_to_latest_for(channel, latest_window(ui.ctx(), state));
                 }
                 draft.text = after_enter.clone();
@@ -2381,8 +2434,21 @@ impl NotDiscordUi {
             );
         }
     }
-    fn send_captured_draft(&mut self, submission: &str, channel: &str) -> bool {
+    fn send_captured_draft(&mut self, submission: &str, channel: &str, state: &AppSnapshot) -> bool {
         let Some(draft) = self.sent_drafts.get(submission) else { return false; };
+        // Painting temporarily moves self.state out of the app. Use the drawn
+        // snapshot, and never validate a queued send against another channel.
+        let validation = if state.selected_channel_id == channel
+            && self.submissions.get(submission).is_some_and(|(owner, revision)| owner == channel && *revision == draft.revision) {
+            validate_submission(draft, state)
+        } else {
+            Err("Vuelve al canal del mensaje pendiente para comprobar sus límites y reintentarlo. El borrador se conserva.".into())
+        };
+        if let Err(error) = validation {
+            self.failed_submissions.insert(submission.to_owned());
+            self.error = error;
+            return false;
+        }
         let text = outgoing_mentions(draft);
         let extra = serde_json::json!({"replyId":draft.reply.as_ref().map(|r|r.message_id.as_str()).unwrap_or(""),
             "paths":draft.paths.iter().map(|p|p.to_string_lossy()).collect::<Vec<_>>(),
@@ -2411,7 +2477,7 @@ impl NotDiscordUi {
                     ui.horizontal_wrapped(|ui| {
                         if ui.add_enabled(state.channel_access.can_send && !state.busy, egui::Button::new("Reintentar")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             // Same submission -> same server nonce, including after ambiguous failure.
-                            if self.send_captured_draft(&id, channel) {
+                            if self.send_captured_draft(&id, channel, state) {
                                 self.go_to_latest_for(channel, latest_window(ui.ctx(), state));
                             }
                         }
@@ -2476,7 +2542,7 @@ fn history_manual_input(ctx: &egui::Context, scope: egui::Id, layer: egui::Layer
     selection || middle || drag || gesture
 }
 
-fn take_post_send_text(input: &mut egui::InputState, capture_ready: bool) -> String {
+fn take_post_send_text(input: &mut egui::InputState, capture_ready: bool, byte_limit: usize) -> String {
     if !capture_ready { return String::new(); }
     let Some(enter) = input.events.iter().position(|event| matches!(event,
         egui::Event::Key { key: egui::Key::Enter, pressed: true, repeat: false, modifiers, .. }
@@ -2488,7 +2554,11 @@ fn take_post_send_text(input: &mut egui::InputState, capture_ready: bool) -> Str
         | egui::Event::Key { key: egui::Key::Enter, pressed: false, .. })) {
         return String::new();
     }
-    let mut text = String::new();
+    let bytes = tail.iter().fold(0_usize, |bytes, event| bytes.saturating_add(match event {
+        egui::Event::Text(value) | egui::Event::Paste(value) => value.len(), _ => 0,
+    }));
+    if bytes > byte_limit { return String::new(); }
+    let mut text = String::with_capacity(bytes);
     for event in tail {
         if let egui::Event::Text(value) | egui::Event::Paste(value) = event { text.push_str(value); }
     }
@@ -3280,7 +3350,7 @@ pub(super) fn minimum_chat_pane_width(ctx: &egui::Context) -> f32 {
     composer_control_sizes(ctx, &style).iter().map(|size|size.x).sum::<f32>()
         + style.spacing.item_spacing.x * 4. + 100. + 16. + 32.
 }
-fn composer_text_height(ui: &egui::Ui, text: &str, font_size: f32) -> f32 {
+fn composer_text_height(ui: &egui::Ui, text: &str, mentions: &[Mention], font_size: f32, broadcast: bool) -> f32 {
     let controls = composer_control_sizes(ui.ctx(), ui.style());
     let scroll = ui.spacing().scroll;
     // Predict with the same measured action strip and text margins as the
@@ -3288,18 +3358,17 @@ fn composer_text_height(ui: &egui::Ui, text: &str, font_size: f32) -> f32 {
     let width = (ui.available_width() - 16. - controls.iter().map(|size|size.x).sum::<f32>()
         - ui.spacing().item_spacing.x * 4. - 8.
         - scroll.bar_width - scroll.bar_inner_margin - scroll.bar_outer_margin).max(24.);
-    ui.fonts_mut(|fonts| {
-        let mut job = super::mentions::editor_job(text, &[], font_size, Color32::WHITE, false, width);
-        job.wrap.break_anywhere = true;
-        fonts.layout_job(job)
-    })
+    let mut job = super::mentions::editor_job_cached(ui.ctx(), text, mentions, font_size, Color32::WHITE, broadcast, width);
+    job.wrap.break_anywhere = true;
+    ui.fonts_mut(|fonts| fonts.layout_job(job))
     .size()
     .y
     .clamp(font_size * 1.45, 130.)
         + 10.
 }
-fn composer_height(ui: &egui::Ui, draft: Option<&Draft>, font_size: f32) -> f32 {
-    composer_text_height(ui, draft.map(|d| d.text.as_str()).unwrap_or(""), font_size)
+fn composer_height(ui: &egui::Ui, draft: Option<&Draft>, font_size: f32, broadcast: bool) -> f32 {
+    composer_text_height(ui, draft.map(|d| d.text.as_str()).unwrap_or(""),
+        draft.map_or(&[],|draft|draft.mentions.as_slice()),font_size,broadcast)
         .max(composer_control_height(ui))
         + 16.
         + if draft.is_some_and(|d| d.reply.is_some()) {
@@ -3358,26 +3427,42 @@ fn add_attachment(d: &mut Draft, path: PathBuf, error: &mut String, limit:notdis
     if d.paths.contains(&path) {
         return;
     }
-    let Ok(meta) = std::fs::metadata(&path) else {
-        *error = "No se pudo leer el archivo.".into();
-        return;
-    };
-    let total: u64 = d
-        .paths
-        .iter()
-        .filter_map(|p| std::fs::metadata(p).ok())
-        .map(|m| m.len())
-        .sum();
-    if !meta.is_file()
-        || d.paths.len() >= 10
-        || total.saturating_add(meta.len()) > notdiscord_core::uploads::LOCAL_BATCH_BYTES
-    {
-        *error = "Máximo diez adjuntos y 1 GiB por envío (límite local). El borrador se conserva.".into();
-        return;
-    }
-    if let Err(message)=limit.validate_file(meta.len()) { *error=message;return; }
+    let mut candidate = d.paths.clone();
+    candidate.push(path.clone());
+    if let Err(message) = validate_attachment_paths(&candidate, limit) { *error = message; return; }
     d.paths.push(path);
     d.revision += 1;
+}
+
+fn validate_attachment_paths(paths: &[PathBuf], limit: notdiscord_core::uploads::UploadLimit) -> Result<(), String> {
+    limit.validate_batch(paths.len(), 0)?;
+    let mut total = 0_u64;
+    for path in paths {
+        let metadata = std::fs::metadata(path).map_err(|_| format!("No se pudo leer el archivo «{}». El borrador se conserva.",path.file_name().unwrap_or_default().to_string_lossy()))?;
+        if !metadata.is_file() { return Err("Sólo se pueden adjuntar archivos. El borrador se conserva.".into()); }
+        limit.validate_file(metadata.len())?;
+        total = total.saturating_add(metadata.len());
+    }
+    limit.validate_batch(paths.len(), total)
+}
+
+// Count exactly the normalized content submitted to the backend, after mention
+// IDs are restored. Emoji availability/permissions are still checked there.
+pub(super) fn submission_content(draft: &Draft) -> Result<String, String> {
+    crate::pickers::prepare_outgoing(&outgoing_mentions(draft), |_| true)
+}
+
+fn validate_submission(draft: &Draft, state: &AppSnapshot) -> Result<(), String> {
+    if !state.signed_in || !state.channel_access.can_view || !state.channel_access.can_send {
+        return Err("No hay permiso para enviar en este canal. El borrador se conserva.".into());
+    }
+    let content = submission_content(draft)?;
+    state.upload_limit.validate_content(&content)?;
+    if !draft.paths.is_empty() {
+        if !state.channel_access.can_attach { return Err("No hay permiso para adjuntar archivos en este canal. El borrador se conserva.".into()); }
+        validate_attachment_paths(&draft.paths, state.upload_limit)?;
+    }
+    Ok(())
 }
 fn mention_token(text: &str, cursor: usize) -> Option<(usize, String)> {
     super::mentions::query(text, cursor)
@@ -3547,7 +3632,7 @@ mod tests {
             for _ in 0..2 {
                 let output = ctx.run(egui::RawInput { screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(width,500.))), ..Default::default() }, |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        let expected = composer_height(ui, app.drafts.get("200"), app.prefs.chat_size);
+                        let expected = composer_height(ui, app.drafts.get("200"), app.prefs.chat_size, false);
                         let top = ui.cursor().top();
                         app.draw_composer(ui, &state);
                         measured.push((ui.cursor().top() - top, expected));
@@ -3772,7 +3857,8 @@ mod tests {
         app.drafts.insert("200".into(), Draft { text: "new work".into(), ..Default::default() });
         app.data_update("send-error", serde_json::json!({"submissionId":"capture","channelId":"200","revision":7}));
         assert!(app.failed_submissions.contains("capture"));
-        app.send_captured_draft("capture", "200");
+        let (_, state) = message_fixture();
+        app.send_captured_draft("capture", "200", &state);
         let action = commands.try_recv().unwrap();
         let extra: Value = serde_json::from_str(&action.extra).unwrap();
         assert_eq!(extra["submissionId"], "capture");
@@ -4802,7 +4888,7 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    expected = composer_height(ui, app.drafts.get("200"), app.prefs.chat_size);
+                    expected = composer_height(ui, app.drafts.get("200"), app.prefs.chat_size, false);
                     let top = ui.cursor().top();
                     app.draw_composer(ui, &state);
                     actual = ui.cursor().top() - top;
@@ -5992,7 +6078,7 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    height = composer_height(ui, app.drafts.get("200"), app.prefs.chat_size);
+                    height = composer_height(ui, app.drafts.get("200"), app.prefs.chat_size, false);
                     app.draw_composer(ui, &state);
                 });
             },
@@ -6019,7 +6105,7 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    expanded = composer_height(ui, app.drafts.get("200"), app.prefs.chat_size);
+                    expanded = composer_height(ui, app.drafts.get("200"), app.prefs.chat_size, false);
                     app.draw_composer(ui, &state);
                 });
             },

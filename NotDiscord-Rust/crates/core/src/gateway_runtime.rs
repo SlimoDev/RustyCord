@@ -398,11 +398,11 @@ async fn writer(
                     }
                     continue;
                 };
-                let counted=matches!(control,Message::Text(_));
+                let counted=control.is_text();
                 if counted && !budget.control_allowed() {safety.block(SafetyState::SynchronizationRequired);break;}
                 if counted {budget.record(false,false);}
                 if identify {identify_window.begin(policy.write);}
-                write(&mut sink,control,&safety,&cancel,policy.write).await?;
+                control.write(&mut sink,&safety,&cancel,policy.write).await?;
                 if identify {identify_window.confirmed();}
             },
             envelope=users.recv(),if pending.len()<USER_QUEUE && (admissions_since_flush<8 || user_at>Instant::now())=>{
@@ -443,8 +443,68 @@ async fn writer(
     Ok(())
 }
 enum Control {
-    Send { message: Message, identify: bool },
+    Send { message: ControlMessage, identify: bool },
     Flush,
+}
+struct AuthenticationText(Zeroizing<String>);
+impl std::fmt::Debug for AuthenticationText {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AuthenticationText([REDACTED])")
+    }
+}
+enum ControlMessage {
+    Plain(Message),
+    Authentication(AuthenticationText),
+}
+impl ControlMessage {
+    fn is_text(&self) -> bool {matches!(self,Self::Plain(Message::Text(_))|Self::Authentication(_))}
+    async fn write<S>(self,sink:&mut S,safety:&SafetyGate,cancel:&CancellationToken,timeout:Duration)->Result<(),ServiceError>
+    where S:Sink<Message>+Unpin {
+        match self {
+            Self::Plain(message)=>write(sink,message,safety,cancel,timeout).await,
+            Self::Authentication(secret)=>{
+                // The queue owns a wipeable buffer. Only the transport boundary
+                // gets its required owned copy; its internal buffers are not
+                // controlled by zeroize. Never log the message or that buffer.
+                let message=Message::Text(secret.0.as_str().to_owned().into());
+                let result=write(sink,message,safety,cancel,timeout).await;
+                drop(secret);
+                result
+            }
+        }
+    }
+}
+#[derive(serde::Serialize)]
+struct AuthenticationEnvelope<T> {op:u8,d:T}
+#[derive(serde::Serialize)]
+struct ResumeAuthentication<'a> {token:&'a str,session_id:&'a str,seq:Option<i64>}
+#[derive(serde::Serialize)]
+struct IdentifyAuthentication<'a> {
+    token:&'a str,capabilities:u8,compress:bool,properties:IdentifyProperties,
+    #[serde(skip_serializing_if="Option::is_none")]
+    presence:Option<IdentifyPresence<'a>>,
+}
+#[derive(serde::Serialize)]
+struct IdentifyProperties {os:&'static str,browser:&'static str,device:&'static str,system_locale:&'static str}
+#[derive(serde::Serialize)]
+struct IdentifyPresence<'a> {status:&'a str,since:u8,activities:[u8;0],afk:bool}
+fn authentication_text(token:&str,session_id:Option<&str>,sequence:Option<i64>,status:&str)->Result<AuthenticationText,ServiceError> {
+    // Borrow the credential instead of putting a cloned token into a JSON Value.
+    let text=Zeroizing::new(if let Some(id)=session_id {
+        serde_json::to_string(&AuthenticationEnvelope {op:6,d:ResumeAuthentication {token,session_id:id,seq:sequence}})
+    } else {
+        serde_json::to_string(&AuthenticationEnvelope {op:2,d:IdentifyAuthentication {token,capabilities:0,compress:false,
+            properties:IdentifyProperties {os:"Windows",browser:"NotDiscordTerminal",device:"NotDiscordTerminal",system_locale:"es-ES"},
+            presence:settings_proto::valid_presence(status).then_some(IdentifyPresence {status,since:0,activities:[],afk:false})}})
+    }.map_err(|_|ServiceError::new("No se pudo preparar la autenticación del Gateway."))?);
+    Ok(AuthenticationText(text))
+}
+fn authentication_control(tx:&mpsc::Sender<Control>,token:&str,session_id:Option<&str>,sequence:Option<i64>,status:&str,safety:&SafetyGate)->bool {
+    if safety.check().is_err() {return false;}
+    let Ok(secret)=authentication_text(token,session_id,sequence,status) else {safety.block(SafetyState::SynchronizationRequired);return false;};
+    if secret.0.len()>MAX_PAYLOAD_BYTES || tx.try_send(Control::Send {
+        message:ControlMessage::Authentication(secret),identify:session_id.is_none(),
+    }).is_err() {safety.block(SafetyState::SynchronizationRequired);false} else {true}
 }
 fn control(tx: &mpsc::Sender<Control>, payload: Value, safety: &SafetyGate) -> bool {
     if safety.check().is_err() {
@@ -455,7 +515,7 @@ fn control(tx: &mpsc::Sender<Control>, payload: Value, safety: &SafetyGate) -> b
     if text.len() > MAX_PAYLOAD_BYTES
         || tx
             .try_send(Control::Send {
-                message: Message::Text(text.into()),
+                message: ControlMessage::Plain(Message::Text(text.into())),
                 identify,
             })
             .is_err()
@@ -506,7 +566,7 @@ fn close_action(code: u16) -> CloseAction {
 }
 
 pub(super) async fn run(
-    token: Zeroizing<String>,
+    token: impl Into<Arc<Zeroizing<String>>>,
     initial_status: Option<String>,
     mut commands: mpsc::Receiver<Envelope>,
     events: mpsc::Sender<GatewayEvent>,
@@ -517,6 +577,7 @@ pub(super) async fn run(
     policy: Policy,
     game_policy: Arc<GamePresencePolicy>,
 ) {
+    let token=token.into();
     let initial_url = url.clone();
     let mut delivery = Delivery::new(events.clone());
     let mut sequence = None;
@@ -613,13 +674,10 @@ pub(super) async fn run(
                                     hello_at=None;ready_at=Some(Instant::now()+policy.ready);heartbeat_interval=interval;heartbeat_at=Some(Instant::now()+interval.mul_f64(rand::random::<f64>()));
                                     resume_handshake=Some(session_id.is_some());
                                     drain_disconnected_clears(&mut commands,&mut status,&mut activity,&mut presence_requested,&game_policy);
-                                    let payload=if let Some(id)=&session_id {json!({"op":6,"d":{"token":token.as_str(),"session_id":id,"seq":sequence}})} else {
+                                    if session_id.is_none() {
                                         *subscription_wire.lock().unwrap_or_else(|error|error.into_inner())=SubscriptionState::default();
-                                        let mut d=json!({"token":token.as_str(),"capabilities":0,"compress":false,"properties":{"os":"Windows","browser":"NotDiscordTerminal","device":"NotDiscordTerminal","system_locale":"es-ES"}});
-                                        if settings_proto::valid_presence(&status) {d["presence"]=json!({"status":status,"since":0,"activities":[],"afk":false});}
-                                        json!({"op":2,"d":d})
-                                    };
-                                    if !control(&controls,payload,&safety) {break;}
+                                    }
+                                    if !authentication_control(&controls,token.as_str(),session_id.as_deref(),sequence,&status,&safety) {break;}
                                 },
                                 11=>{heartbeat_ack=true;acknowledged=true;},
                                 1=>{if !control(&controls,json!({"op":1,"d":sequence}),&safety) {break;}},
@@ -771,3 +829,26 @@ pub(super) async fn run(
 #[cfg(test)]
 #[path = "gateway_runtime_tests.rs"]
 mod tests;
+#[cfg(test)]
+mod authentication_tests {
+    use super::*;
+    #[test]
+    fn borrowed_authentication_preserves_wire_fields_and_redacts_debug() {
+        let token="synthetic-credential-with-quote\"-and-backslash\\";
+        let identify=authentication_text(token,None,None,"online").unwrap();
+        assert_eq!(format!("{identify:?}"),"AuthenticationText([REDACTED])");
+        let value:Value=serde_json::from_str(&identify.0).unwrap();
+        assert_eq!(value["op"],2);
+        assert_eq!(value["d"]["token"],token);
+        assert_eq!(value["d"]["capabilities"],0);
+        assert_eq!(value["d"]["compress"],false);
+        assert_eq!(value["d"]["properties"]["browser"],"NotDiscordTerminal");
+        assert_eq!(value["d"]["presence"]["status"],"online");
+        let resume=authentication_text(token,Some("synthetic-session"),Some(42),"").unwrap();
+        let value:Value=serde_json::from_str(&resume.0).unwrap();
+        assert_eq!(value,json!({"op":6,"d":{"token":token,"session_id":"synthetic-session","seq":42}}));
+        let absent=authentication_text(token,None,None,"").unwrap();
+        let value:Value=serde_json::from_str(&absent.0).unwrap();
+        assert!(value["d"].get("presence").is_none());
+    }
+}

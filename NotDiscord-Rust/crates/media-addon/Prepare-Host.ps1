@@ -1,38 +1,43 @@
-param([string]$Root=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,[string]$ReferenceRuntime='',[string]$ReferenceNativeRoot='')
+﻿param(
+    [string]$Root=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
+    [string]$ReferenceRuntime='',
+    [string]$ReferenceNativeRoot='',
+    [string]$Destination=''
+)
 $ErrorActionPreference='Stop'
-$runtime=Join-Path $Root 'media-host\runtime'
-$app=Join-Path $runtime 'resources\app'
-if(!$ReferenceRuntime){$ReferenceRuntime=$runtime}
+. (Join-Path $Root 'scripts\runtime-inventory.ps1')
+if(!$ReferenceRuntime){$ReferenceRuntime=Join-Path $Root 'media-host\runtime'}
 if(!$ReferenceNativeRoot){$ReferenceNativeRoot=$ReferenceRuntime}
+if(!$Destination){$Destination=Join-Path $Root 'target\prepared-runtime'}
 $sourceRuntime=(Resolve-Path -LiteralPath $ReferenceRuntime).Path
-$sourceNative=Join-Path $ReferenceNativeRoot 'resources\standalone_modules\discord_voice'
-if(!(Test-Path -LiteralPath (Join-Path $sourceRuntime 'NotDiscord.Media.exe') -PathType Leaf) -or !(Test-Path -LiteralPath (Join-Path $sourceNative 'discord_voice.node') -PathType Leaf)){throw 'Indica un runtime multimedia compatible completo con -ReferenceRuntime y -ReferenceNativeRoot.'}
-$reuseRuntime=[IO.Path]::GetFullPath($sourceRuntime).TrimEnd('\').Equals([IO.Path]::GetFullPath($runtime).TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase)
-New-Item -ItemType Directory -Path $runtime,$app -Force | Out-Null
-# Only immutable third-party runtime files. The previous owned app.asar is excluded.
-foreach($file in Get-ChildItem -LiteralPath $sourceRuntime -File){
-  $target=Join-Path $runtime $file.Name
-  if(!(Test-Path -LiteralPath $target) -or (Get-Item -LiteralPath $target).Length -ne $file.Length){Copy-Item -LiteralPath $file.FullName -Destination $target}
+$sourceNative=(Resolve-Path -LiteralPath (Join-Path $ReferenceNativeRoot 'resources\standalone_modules\discord_voice')).Path
+$runtime=[IO.Path]::GetFullPath($Destination).TrimEnd('\')
+Assert-RuntimeNoLinks $runtime
+Assert-RuntimeNoLinks $sourceNative
+$null=Get-RuntimeTree $sourceRuntime -AllowReferenceDebugLog
+if(Test-Path -LiteralPath $runtime){throw 'El staging de destino ya existe; usa una carpeta nueva para conservar el runtime anterior.'}
+if($sourceRuntime.TrimEnd('\').Equals($runtime,[StringComparison]::OrdinalIgnoreCase) -or
+    $runtime.StartsWith($sourceRuntime.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)){
+    throw 'La preparación debe estar fuera del runtime de referencia.'
 }
-if(!$reuseRuntime){
-  foreach($directory in Get-ChildItem -LiteralPath $sourceRuntime -Directory | Where-Object Name -ne 'resources'){
-    Copy-Item -LiteralPath $directory.FullName -Destination $runtime -Recurse -Force
-  }
+$nativeNames=@($script:RuntimeVendorFiles | Where-Object {$_ -like 'resources\standalone_modules\discord_voice\*'} | ForEach-Object {[IO.Path]::GetFileName($_)})
+foreach($entry in Get-ChildItem -LiteralPath $sourceNative -Force){
+    if($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $nativeNames -cnotcontains $entry.Name){throw "Componente nativo inesperado: $($entry.Name)"}
 }
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'host\package.json') -Destination (Join-Path $app 'package.json') -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'host\main.cjs') -Destination (Join-Path $app 'main.cjs') -Force
-$nativeModule=Join-Path $runtime 'resources\standalone_modules\discord_voice'
-New-Item -ItemType Directory -Path $nativeModule -Force | Out-Null
-foreach($file in Get-ChildItem -LiteralPath $sourceNative -File){
-  $target=Join-Path $nativeModule $file.Name
-  if(!(Test-Path -LiteralPath $target) -or (Get-Item -LiteralPath $target).Length -ne $file.Length){Copy-Item -LiteralPath $file.FullName -Destination $target}
+New-Item -ItemType Directory -Path $runtime -Force|Out-Null
+foreach($relative in @($script:RuntimeVendorFiles)+@($script:RuntimeProjectFiles)){
+    $source=if($script:RuntimeProjectFiles -ccontains $relative){Join-Path $PSScriptRoot ('host\'+[IO.Path]::GetFileName($relative))}
+        elseif($relative -like 'resources\standalone_modules\discord_voice\*'){Join-Path $sourceNative ([IO.Path]::GetFileName($relative))}
+        else{Join-Path $sourceRuntime $relative}
+    Assert-RuntimeNoLinks $source
+    if(!(Test-Path -LiteralPath $source -PathType Leaf)){throw "Falta el componente de referencia: $relative"}
+    $expected=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+    $target=Join-Path $runtime $relative
+    New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force|Out-Null
+    Copy-Item -LiteralPath $source -Destination $target
+    if((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -cne $expected){throw "La copia no coincide con su referencia: $relative"}
 }
-$binary=Join-Path $Root 'target\release\notdiscord_media_addon.dll'
-if(Test-Path -LiteralPath $binary){
-  $bin=Join-Path $Root 'bin'
-  New-Item -ItemType Directory -Path $bin -Force | Out-Null
-  Copy-Item -LiteralPath $binary -Destination (Join-Path $bin 'NotDiscord.Media.node') -Force
-  Copy-Item -LiteralPath $binary -Destination (Join-Path $Root 'NotDiscord.Media.node') -Force
-}
-[pscustomobject]@{MediaHostExe='media-host/runtime/NotDiscord.Media.exe';NativeRoot='media-host/runtime'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Root 'runtime.json') -Encoding UTF8
-[pscustomobject]@{Runtime=$runtime;Loader=(Join-Path $app 'main.cjs');OldOwnedHelperIncluded=$false} | ConvertTo-Json -Compress
+# Written last: interrupted preparations have no valid inventory and cannot pack.
+$inventory=Write-RuntimeInventory $runtime 'explicit-local-runtime-and-native-reference'
+$null=Assert-RuntimeInventory $runtime
+[pscustomobject]@{Runtime=$runtime;Inventory=(Join-Path $runtime $script:RuntimeInventoryName);Files=@($inventory.files).Count;HostFileVersion=$inventory.host_file_version;HostMachine=$inventory.host_machine;NativeMachine=$inventory.native_machine;ReferencePreserved=$true;Executed=$false}|ConvertTo-Json -Compress
