@@ -120,9 +120,28 @@ desde el extremo superior, sin otra carga o restauración pendiente.
 
 ## Comprobaciones y alcance
 
-Se revisan las fuentes, se compilan los destinos Rust y el instalador y se
-comparan sus hashes. La skill se valida con el validador oficial y una evaluación
-independiente en seco de su clasificación y límites. No se ejecutan cliente,
+Se revisaron las fuentes y pasaron `cargo check --workspace --all-targets
+--release --offline --locked -j1` (41,21 s) y la compilación de producción
+`cargo build --workspace --release --offline --locked -j1` (8 min 54 s).
+El paquete de 39 archivos pasó `verify-package.ps1` y se compiló el instalador
+con Inno Setup. Los 151 archivos Rust conservaron sus hashes durante la
+compilación y el empaquetado. La skill pasó el validador oficial, una evaluación
+independiente en seco de su clasificación y límites, y la comparación entre
+sus cuatro archivos instalados y los del repositorio.
+
+| Artefacto | Identidad verificada |
+|---|---|
+| `NotDiscord-Setup-0.4.0.exe` | 118 408 751 bytes; SHA-256 `c28100f98128ddccbd2f132816bc1b439da4a846e9da8386d827f557d82f9d7c` |
+| `NotDiscord.exe` del paquete | SHA-256 `7d85d0ea3bfcafc3c64a39846fcd67f7d4664b45d46bd43bf7370969c399b0b5` |
+| `NotDiscord.Media.node` | SHA-256 `936db4bb5aefc990401296b86f167fa49c47ac326b5b5d886371dd9e76693a31`, igual a la entrega anterior |
+
+La [release 0.4.0](https://github.com/SlimoDev/RustyCord/releases/tag/NotDiscord-v0.4.0)
+contiene el instalador con estado `uploaded`, tamaño y digest SHA-256 remoto
+coincidentes. El manifiesto que lo anuncia se publicó después de esa comparación;
+el instalador y el ejecutable se compilaron previamente con `release: null` para
+evitar incluir el hash de Setup dentro de sí mismo.
+
+No se ejecutaron cliente,
 instalador, dispositivos, cuenta o pruebas funcionales para esta entrega.
 La presentación y funcionamiento en la aplicación quedan pendientes de
 confirmación del usuario. NotDiscord+ mantiene su rama y artefactos anteriores.
