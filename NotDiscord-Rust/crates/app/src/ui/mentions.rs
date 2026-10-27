@@ -81,9 +81,6 @@ pub(super) fn styled_label(ui: &mut egui::Ui, name: &str, size: f32, style: notd
     .selectable(true)
     .sense(egui::Sense::click_and_drag())
     .layout_in_ui(ui);
-    if navigable {
-        theme::text_link_galley_feedback(ui, &response, position, &galley, format(size).color);
-    }
     if !super::chat::register_history_label(ui, &response, position, galley.clone()) {
         egui::text_selection::LabelSelectionState::label_text_selection(
             ui,
@@ -94,6 +91,8 @@ pub(super) fn styled_label(ui: &mut egui::Ui, name: &str, size: f32, style: notd
             egui::Stroke::NONE,
         );
     }
+    // Mention chips already have a background; only bare links receive hover
+    // underlining. Explicit Markdown underline in `style` remains content.
     response.on_hover_cursor(if navigable { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Text })
 }
 pub(super) fn everyone_allowed(state: &AppSnapshot) -> bool {

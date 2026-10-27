@@ -66,6 +66,13 @@ Si corresponde generar instalador o publicar una versión, sigue
 obliga a compilar el producto. La petición de código no autoriza por sí sola
 publicación, instalación en el equipo o acceso a cuentas.
 
+Para una entrega **Pequeña** autorizada, genera y publica el instalador y su
+manifiesto; deja que el usuario actualice la instalación desde NotDiscord.
+Conserva la instalación, los accesos directos y las otras copias de uso del
+usuario salvo que pida actualizarlos. Los binarios temporales de compilación y
+empaquetado siguen siendo necesarios para producir el instalador. Para los
+demás tipos, resuelve los entregables según el pedido vigente.
+
 Entrega la variante y versión acordadas e indica causa, corrección, evidencia,
 comprobaciones y limitaciones. Distingue lo implementado de lo verificado y de
 lo pendiente de confirmación del usuario. Actualiza el estado de la tanda para

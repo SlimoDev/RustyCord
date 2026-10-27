@@ -796,7 +796,7 @@ impl NotDiscordUi {
             let name_rect=egui::Rect::from_min_max(egui::pos2(left,rect.top()+3.),egui::pos2(right.max(left),rect.top()+25.));
             let name=guild_settings::visible_name(&member.user,&member.nickname);
             super::shell::fitted_text(ui,name_rect,name,14.,self.theme.ink);
-            theme::fitted_link_feedback(ui,&response,name_rect,name,14.,self.theme.ink);
+            theme::highlighted_control_feedback(&response);
             if !game.is_empty(){
                 super::shell::fitted_text(ui,egui::Rect::from_min_max(egui::pos2(left,rect.top()+26.),egui::pos2(rect.right()-5.,rect.bottom()-3.)),&game,11.,self.theme.muted);
             }

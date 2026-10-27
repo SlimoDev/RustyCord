@@ -5,7 +5,7 @@ ejecutable y accesos directos anteriores; todavía no participa en el actualizad
 ni en la configuración y exclusión bidireccionales nuevas.
 
 La distribución actual es exclusivamente el instalador
-**NotDiscord-Setup-0.4.0.exe**. No se publica una edición portable de esta versión.
+**NotDiscord-Setup-0.4.1.exe**. No se publica una edición portable de esta versión.
 La instalación permite elegir una carpeta y, por defecto, utiliza Programs del
 usuario para no requerir elevación. Una ruta protegida necesita el consentimiento
 normal de Windows; el actualizador no intenta eludir UAC.
@@ -29,10 +29,21 @@ no muestran esa fila.
 Una vez confirmada la actualización, se conservan la fila, su progreso y el
 control ↻ durante la descarga, preparación o reintento; desaparecen si una nueva
 consulta confirma que ya no hay actualización. No hay avisos repetidos sobre la
-misma versión. Esta entrega de 0.3.2 a 0.4.0 reúne el ajuste del panel y las mejoras
-de mensajes, Markdown y seguimiento del historial: se clasifica como Mediana por
+misma versión. La entrega anterior de 0.3.2 a 0.4.0 reunió el ajuste del panel y las mejoras
+de mensajes, Markdown y seguimiento del historial: se clasificó como Mediana por
 elección explícita del usuario.
 El criterio de versiones está en [el plan de skills](plan-skills.md).
+
+En 0.4.1 se corrige el subrayado de controles con resaltado. Es una entrega
+Pequeña (cambio menor) por elección del usuario. Su instalador se genera y
+publica para actualizar después desde NotDiscord; la preparación de la entrega
+conserva la instalación y los accesos directos del equipo.
+
+La aplicación descarga Setup ya compilado y verificado. Subir código fuente
+no cambia la aplicación instalada. Este repositorio no contiene actualmente un
+workflow de CI que produzca el instalador: la compilación de desarrollo y el
+payload temporal siguen siendo necesarios. Un futuro CI autorizado podría
+producir esos mismos artefactos y evitar repetir esa compilación local.
 
 El manifiesto publicado tiene esta estructura:
 
@@ -40,11 +51,11 @@ El manifiesto publicado tiene esta estructura:
       "schema": 2,
       "variant": "standard",
       "branch": "NotDiscord",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "release": {
         "kind": "installer",
-        "tag": "NotDiscord-v0.4.0",
-        "url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.4.0/NotDiscord-Setup-0.4.0.exe",
+        "tag": "NotDiscord-v0.4.1",
+        "url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.4.1/NotDiscord-Setup-0.4.1.exe",
         "sha256": "<SHA-256 del Setup.exe>",
         "bytes": 123,
         "executable_sha256": "<SHA-256 del NotDiscord.exe que instala>"
@@ -84,11 +95,11 @@ de ejecución siguen idénticos. Los registros permanecen en la carpeta de prepa
 
 Para preparar la publicación, después de compilar el cliente y el instalador:
 
-    .\prepare-update-release.ps1 -Installer 'dist\NotDiscord-Setup-0.4.0.exe' -Executable 'ruta-del-payload\NotDiscord.exe' -Destination 'ruta-nueva\version.json'
+    .\prepare-update-release.ps1 -Installer 'dist\NotDiscord-Setup-0.4.1.exe' -Executable 'ruta-del-payload\NotDiscord.exe' -Destination 'ruta-nueva\version.json'
 
 El script únicamente lee los ejecutables compilados y escribe el manifiesto; no
 ejecuta, sube o publica nada, ni crea un ZIP. Se publica el Setup.exe como asset de
-NotDiscord-v0.4.0 y después el manifiesto generado en la rama NotDiscord. Primero
+NotDiscord-v0.4.1 y después el manifiesto generado en la rama NotDiscord. Primero
 se compila con release null, se empaqueta y se calculan los hashes; el manifiesto
 con el hash del instalador no se vuelve a incluir en ese mismo instalador, evitando
 un ciclo de hashes. Los hashes verifican integridad respecto de la publicación;

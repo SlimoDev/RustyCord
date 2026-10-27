@@ -4,6 +4,24 @@ Aplicar sólo las partes requeridas por la tarea. Leer los scripts y docs actual
 antes de ejecutar; las rutas y nombres de versión siguientes se resuelven desde
 el repositorio, no desde esta skill instalada.
 
+## Entrega y aplicación de cambios pequeños
+
+En una entrega **Pequeña**, la preferencia del usuario es publicar el instalador
+y el manifiesto para aplicar la actualización después desde el botón de
+NotDiscord. Generar Setup no implica ejecutarlo ni reemplazar la instalación,
+accesos directos o paquetes locales de uso del usuario. Mantener los temporales
+de build y payload separados de esas instalaciones.
+
+El cliente descarga un instalador ya compilado: subir fuentes a GitHub no genera
+un binario por sí solo y la aplicación instalada no compila Rust. Antes de
+entregar, comprobar si existe un flujo CI autorizado que produzca artefactos
+para la revisión exacta. Si lo hay, se pueden recuperar y verificar esos
+artefactos sin repetir la compilación local. Si no lo hay, compilar en el entorno
+de desarrollo y publicar el instalador resultante. Crear una automatización CI
+es un cambio separado; no se presupone al pedir una corrección pequeña.
+
+## Procedimiento de publicación
+
 1. Fijar tipo de actualización y versión según el usuario y la variante. Para
    agrupar cambios en una entrega usar su clasificación vigente; los cambios de
    requisitos posteriores prevalecen sobre una inferencia anterior. Antes de

@@ -67,12 +67,19 @@ pub(super) fn markdown_text(text: impl Into<String>, size: f32, color: Color32, 
     text
 }
 
-/// Feedback only: the existing response retains its complete click/selection
-/// semantics. Call only for text that actually opens a destination, never a row
-/// or button decoration. Wrapped text uses its separate galley rows below.
-pub(super) fn text_link_feedback(ui: &egui::Ui, response: &egui::Response, text_rect: egui::Rect, color: Color32) {
+/// Filled rows, chips and buttons already communicate their click target with
+/// a background/highlight. They keep the hand without a second text decoration.
+/// This classification is semantic, independent of the current selected state.
+pub(super) fn highlighted_control_feedback(response: &egui::Response) {
+    if response.enabled() && response.hovered() { response.clone().on_hover_cursor(egui::CursorIcon::PointingHand); }
+}
+
+/// Bare text links use underlining as their hover/focus feedback. Call only for
+/// the text's own target, never for a containing row, chip or filled control.
+/// Feedback only: all existing click and selection semantics remain unchanged.
+pub(super) fn bare_text_link_feedback(ui: &egui::Ui, response: &egui::Response, text_rect: egui::Rect, color: Color32) {
     if !response.enabled() { return; }
-    if response.hovered() { response.clone().on_hover_cursor(egui::CursorIcon::PointingHand); }
+    highlighted_control_feedback(response);
     if (response.hovered() || response.has_focus()) && text_rect.is_positive() {
         let y = text_rect.bottom() - 1.;
         ui.painter().with_clip_rect(ui.clip_rect()).line_segment(
@@ -81,27 +88,13 @@ pub(super) fn text_link_feedback(ui: &egui::Ui, response: &egui::Response, text_
     }
 }
 
-pub(super) fn text_link_galley_feedback(ui: &egui::Ui, response: &egui::Response,
+pub(super) fn bare_text_link_galley_feedback(ui: &egui::Ui, response: &egui::Response,
     position: egui::Pos2, galley: &egui::Galley, color: Color32) {
     for row in &galley.rows {
         if !row.glyphs.is_empty() {
-            text_link_feedback(ui, response, row.rect().translate(position.to_vec2()), color);
+            bare_text_link_feedback(ui, response, row.rect().translate(position.to_vec2()), color);
         }
     }
-}
-
-/// Match a one-line fitted label without underlining the unused part of its
-/// containing row. Reuses egui's layout cache and leaves all hit testing intact.
-pub(super) fn fitted_link_feedback(ui: &egui::Ui, response: &egui::Response,
-    rect: egui::Rect, text: &str, size: f32, color: Color32) {
-    if !response.enabled() || !(response.hovered() || response.has_focus()) { return; }
-    let mut job = egui::text::LayoutJob::simple(text.split_whitespace().collect::<Vec<_>>().join(" "),
-        egui::FontId::proportional(size), color, rect.width().max(0.));
-    job.wrap.max_rows = 1;
-    job.wrap.break_anywhere = true;
-    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-    let position = rect.left_center() - egui::vec2(0., galley.size().y / 2.);
-    text_link_galley_feedback(ui, response, position, &galley, color);
 }
 
 fn center_scrollbar_in_frame(ui: &mut egui::Ui, horizontal: bool) {

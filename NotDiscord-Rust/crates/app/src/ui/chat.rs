@@ -671,7 +671,7 @@ impl NotDiscordUi {
                                                     .truncate()
                                                     .sense(egui::Sense::click()),
                                                 );
-                                            theme::text_link_feedback(ui, &author, author.rect, self.theme.ink);
+                                            theme::bare_text_link_feedback(ui, &author, author.rect, self.theme.ink);
                                             context_menu::capture(ui, &author, || context_menu::Target::Person(m.author.clone()));
                                             if author.clicked() {
                                                 self.send(
@@ -1154,7 +1154,7 @@ impl NotDiscordUi {
                                                 )
                                                 .sense(egui::Sense::click()),
                                             );
-                                        theme::text_link_feedback(ui, &author, author.rect, self.theme.ink);
+                                        theme::bare_text_link_feedback(ui, &author, author.rect, self.theme.ink);
                                         context_menu::capture(ui, &author, || context_menu::Target::Person(m.author.clone()));
                                         if author.clicked() {
                                             self.send(
@@ -1195,7 +1195,7 @@ impl NotDiscordUi {
                                                 }),
                                             );
                                             if available {
-                                                theme::text_link_feedback(ui, &link, link.rect, self.theme.accent);
+                                                theme::bare_text_link_feedback(ui, &link, link.rect, self.theme.accent);
                                             }
                                             if available
                                                 && link
@@ -2873,7 +2873,7 @@ fn selectable_link_label(ui: &mut egui::Ui, text: RichText, url: &str) -> egui::
     // while reserving the hand cursor and click action for an actual click.
     let (position, galley, response) = egui::Label::new(text).wrap().selectable(true)
         .sense(egui::Sense::click_and_drag()).layout_in_ui(ui);
-    theme::text_link_galley_feedback(ui, &response, position, &galley, ui.visuals().hyperlink_color);
+    theme::bare_text_link_galley_feedback(ui, &response, position, &galley, ui.visuals().hyperlink_color);
     context_menu::capture(ui, &response, || context_menu::Target::Link(url.into()));
     if register_history_label(ui, &response, position, galley.clone()) {
         ui.ctx().data_mut(|data| {
@@ -3183,9 +3183,6 @@ fn reply_preview(
     );
     if available && response.hovered() {
         ui.painter().rect_filled(rect, 4., hover);
-    }
-    if available {
-        theme::text_link_galley_feedback(ui, &response, rect.min + padding, &galley, foreground);
     }
     ui.painter().galley(rect.min + padding, galley, foreground);
     if available {

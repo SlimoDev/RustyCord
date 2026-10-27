@@ -1733,7 +1733,7 @@ impl NotDiscordUi {
             let mut top = rect.center().y - text_height / 2.;
             let name_rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, 20.));
             fitted_text(ui, name_rect, &item.name, 16., text_color);
-            theme::fitted_link_feedback(ui, &response, name_rect, &item.name, 16., text_color);
+            theme::highlighted_control_feedback(&response);
             top += 20.;
             if item.has_active_call {
                 let call_rect = egui::Rect::from_min_size(
@@ -1770,7 +1770,7 @@ impl NotDiscordUi {
                 egui::pos2(right.max(left), rect.bottom()),
             );
             fitted_text(ui, name_rect, &item.name, 16., text_color);
-            theme::fitted_link_feedback(ui, &response, name_rect, &item.name, 16., text_color);
+            theme::highlighted_control_feedback(&response);
         }
         if voice_join.as_ref().is_some_and(|(_,clicked)|*clicked) {
             self.navigate(item);
@@ -2322,7 +2322,7 @@ impl NotDiscordUi {
         );
         let name_color = self.readable_role(member.role_color);
         fitted_text(ui, name_rect, &name, name_size, name_color);
-        theme::fitted_link_feedback(ui, &response, name_rect, &name, name_size, name_color);
+        theme::highlighted_control_feedback(&response);
         let fallback = presence_label(presence);
         self.presence_line(
             ui,

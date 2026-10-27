@@ -229,3 +229,16 @@ raíz del repositorio y se instaló en el directorio de skills del usuario. Incl
 el flujo y criterio de versiones acordados; ambas tareas actuales se ejecutan
 con ella. La skill de planificación permanece pendiente hasta que se solicite
 crearla; su diseño y separación de responsabilidades se conservan aquí.
+
+## Preferencia de entrega para cambios pequeños
+
+Desde la petición de 0.4.1, en las entregas Pequeñas autorizadas se genera y
+publica el instalador con su manifiesto. El usuario aplica la versión desde
+NotDiscord; generar la entrega conserva la instalación, accesos directos y
+paquetes de uso del equipo. Los binarios del build y el payload temporal son
+parte de la producción de Setup, separados de la instalación del usuario.
+
+El actualizador consume un instalador compilado. Si un CI autorizado produce
+los artefactos de la revisión exacta, se verifican y reutilizan; en el flujo
+actual sin ese CI se compila localmente. La preferencia no crea automatizaciones
+ni altera los entregables de cambios Medianos o Grandes por sí sola.
