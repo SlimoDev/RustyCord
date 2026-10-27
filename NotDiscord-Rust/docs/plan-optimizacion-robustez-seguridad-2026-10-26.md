@@ -298,8 +298,22 @@ un escaneo completo de versiones retiradas ni una auditoría del motor nativo.
 Las revisiones cruzadas no ejecutaron clientes, cuentas, hardware o pruebas.
 La primera comprobación cargo check del componente multimedia pasó en 25,71 s;
 la primera comprobación del workspace y todos los destinos pasó en 57,29 s.
-Se repetirá lo necesario tras los ajustes de revisión y se registrará abajo el
-resultado definitivo de compilación, paquete, instalador y publicación.
+Después de los ajustes, cargo check --workspace --all-targets --release --offline --locked pasó en 32,34 s. La compilación de producción pasó en 10 min 49 s. Los ocho scripts modificados pasaron revisión de sintaxis de PowerShell. No se ejecutó ninguna prueba funcional ni los tests sintéticos; los destinos de tests sólo se comprobaron con cargo check.
 
 Referencia primaria del hallazgo añadido:
 [RUSTSEC-2026-0384](https://rustsec.org/advisories/RUSTSEC-2026-0384.html).
+### Entrega compilada
+
+- Fuentes de producción: commit `9bf1ec6d1f50314ceaad732ba5acdce85273e175` de `NotDiscord`, manifiesto incorporado 0.5.0 con `release: null`. La revisión de metadatos de publicación posterior no requiere recompilar ese artefacto.
+- `cargo build --workspace --release --offline --locked -j 1`: éxito. Advertencias de código sin uso registradas; no se ejecutó la aplicación.
+- `package.ps1` y `verify-package.ps1`: 40 archivos, inventario estricto y copias por hashes válidos; sin datos de usuario, cachés, logs ni fixtures de diagnóstico.
+- `build-installer.ps1` con Inno Setup 6.7.3: generó sólo `NotDiscord-Setup-0.5.0.exe`, 118484800 bytes, sin ejecutarlo ni generar distribución portable.
+- Setup SHA-256: `3b90adb357448ba8c698f7789e83cc62ba104dca5881d12c7d75a190f7ebc39b`.
+- Ejecutable SHA-256: `709352f33d636007ff816ad27f13002d607747f855d5b55893b9f60b263710c5`.
+- Addon propio SHA-256: `1b977c7476336ee72d1e8a800b2cb586bb4874039d071bad0717d4c6c7ae517f`.
+- Plus: rama `d35c06ac7e824c17198791b3d9208f732bc8be81` y 38 archivos con huella agregada `FEFB209E0B35C77498DEFC90169B7BBC7519E32BE9C449AFFFDF8ABFBC11C605`, iguales a la referencia. Legacy no recibió cambios.
+
+La identidad del binario y el inventario se verificaron estáticamente. Instalación, actualización, UI, voz, saturación/cierre real y ahorros de recursos quedan pendientes de confirmación. El helper numérico no se ejecutó y la firma de manifiestos no está habilitada. No se usó una cuenta de Discord, no se cambiaron accesos directos ni se aplicó la actualización a la instalación del usuario.
+### Publicación verificada
+
+Release: [NotDiscord 0.5.0](https://github.com/SlimoDev/RustyCord/releases/tag/NotDiscord-v0.5.0), tag sobre las fuentes `9bf1ec6d1f50314ceaad732ba5acdce85273e175`. GitHub devolvió el asset en estado uploaded, 118484800 bytes y digest SHA-256 idéntico al local. Tras esa verificación se publica el manifiesto generado en la rama NotDiscord para ofrecer la actualización. El instalador incorpora el manifiesto con release null de la compilación; no se reconstruye con su propio hash.

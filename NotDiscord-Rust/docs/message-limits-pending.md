@@ -1,4 +1,4 @@
-# Límites de envío y edición pendientes de integración
+# Límites de envío y edición integrados en 0.5.0
 
 Estado: corrección integrada en la entrega conjunta 0.5.0 del plan mediano.
 El usuario autorizó ahora compilación y publicación del instalador al terminar,
