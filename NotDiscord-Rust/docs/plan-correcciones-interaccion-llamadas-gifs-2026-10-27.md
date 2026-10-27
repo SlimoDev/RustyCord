@@ -272,10 +272,11 @@ Entregable actual: este plan dentro del proyecto. Entrega futura propuesta: camb
 - [x] Retirar F12 y su fix de actualización por indicación posterior del usuario; sin más verificaciones de ese punto.
 - [x] Registrar tamaño Mediana y eliminación de favoritos también en Discord por decisión del usuario.
 - [x] Revisar el plan con agentes independientes y corregir la ruta de voz y la reconciliación de éxito remoto con fallo de persistencia local.
-- [ ] Causa raíz de caída de voz y freeze por clic derecho: diagnóstico/reproducción pendientes, sin atribución al juego ni al separador visual.
+- [x] Causa de bloqueo por reentrada de Response.clicked dentro de data_mut identificada y corregida; ver seguimiento. Confirmación funcional pendiente.
+- [ ] Causa específica de la caída de voz anterior: pendiente de nuevos diagnósticos saneados; no se atribuye al juego o al aviso.
 - [ ] Confirmar versión ejecutada en el incidente de llamada si hace falta distinguir código de binario instalado.
-- [ ] Establecer con evidencia el contrato de eliminación/conflicto de favoritos settings tipo 2 antes de enviar una mutación.
-- [ ] Implementar y comprobar las tandas sólo cuando se solicite programación; actualizar este estado sin repetir trabajo ya terminado.
+- [x] Contrato de favoritos tipo 2 establecido mediante artefacto público; transformación precisa, revisión y conciliación implementadas sin enviar pruebas a una cuenta.
+- [x] Implementación y comprobaciones permitidas registradas; compilación e instalador publicados con autorización posterior. No se ejecutaron pruebas funcionales.
 
 Huellas de referencia: `app/src/updates.rs` SHA-256 `6cc845a9a8825dd010756bf5816abdafb6e95ba6c3ebdb8c1f83ae4e10b87aca`; `app/src/ui/chat/context_menu.rs` `fa145b68f68040da8df075e4c6270fa0c8f8cee034e74daa2d3f7ee5f955cc37`; `media-addon/src/host.rs` `a05781b2c0af81a28ee3f921c92eba1d940a2e07b3061ef3d73095d3a0da0cf9`. Revalidar funciones afectadas y baseline al continuar.
 
@@ -322,3 +323,22 @@ La revisión independiente encontró además y corrigió: cola después de Enter
 
 Toda comprobación funcional de interacción, voz, GIFs/favoritos y entrada Windows queda para el usuario. No se ejecutaron cliente, instalador, tests sintéticos o funcionales, ni se utilizó una cuenta de Discord. No se tocó la instalación, accesos directos o datos de Plus. La compilación de producción, el instalador y publicación se registran después de generarlos y verificar sus identidades.
 Último check tras reservar el presupuesto futuro de escritores de diagnóstico activos: pasó en 46,05 s. Se mantienen los límites aun si coinciden ejecuciones explícitas; fuentes congeladas para producción.
+
+### Entrega compilada y publicación verificada
+
+Fuentes: commit `972ee6091e41f21db26b829088ae35417681c400` de NotDiscord. La compilación de producción fijó ese identificador y 423 archivos de entrada; la huella del inventario de fuentes fue `3e8bbfb6dcd747070473c315056d2c6eb554293589499d8439b5e18e84c37582`. Los archivos se contrastaron de nuevo tras compilar.
+
+`cargo build --workspace --release --offline --locked -j 1` terminó correctamente en 5 min 33 s. Package y verify-package validaron 41 archivos, incluidos los avisos/licencias del parche de entrada y el inventario estricto del runtime. El temporal creado inicialmente mediante una ruta relativa se reubicó por rutas absolutas y se volvió a verificar antes de compilar Setup; no se ejecutó ningún componente del paquete.
+
+| Artefacto | Identidad |
+|---|---|
+| Instalador | `NotDiscord-Setup-0.6.0.exe`, 118659139 bytes |
+| SHA-256 instalador | `5bdac05023bb93582544ce9aee869005015106a96967fe1c533112292ced51d8` |
+| SHA-256 ejecutable | `8ba5ff02519a2ad42225af989d1195b0b9b970d3027feb739eab69ca70f7dee2` |
+| SHA-256 addon propio | `0ab369b57973d1837b68b34881f3168e1a68b2a94e7d3441c7a1607131cc75d5` |
+
+Release: [NotDiscord 0.6.0](https://github.com/SlimoDev/RustyCord/releases/tag/NotDiscord-v0.6.0). Se verificaron el título exacto, el tag sobre las fuentes compiladas y el asset remoto uploaded, tamaño y digest idénticos. Después de esa comprobación se publica el manifiesto generado en la rama NotDiscord. El instalador conserva release null incorporado en la compilación; no se reconstruye con su propio hash.
+
+NotDiscord+ conserva el ref `d35c06ac7e824c17198791b3d9208f732bc8be81`; la referencia de sus 38 archivos es `FEFB209E0B35C77498DEFC90169B7BBC7519E32BE9C449AFFFDF8ABFBC11C605`. No hay cambios dirigidos a legacy, instalación, accesos directos o datos de usuario. Sólo se publica el instalador, sin portable.
+
+No se ejecutaron el instalador, el cliente ni pruebas funcionales/sintéticas, y no se usó una cuenta de Discord. La compilación y revisión estática no confirman recepción de voz/vídeo, entrada nativa, acciones remotas, geometría o rendimiento real. Esas comprobaciones y la causa específica del incidente anterior de voz permanecen explícitamente pendientes de confirmación/evidencia del usuario.
