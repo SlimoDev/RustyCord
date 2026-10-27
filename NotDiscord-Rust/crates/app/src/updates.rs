@@ -213,8 +213,22 @@ impl UpdateManager {
             ctx.request_repaint();
         });
     }
-    /// Shared footer control. The surrounding sidebar reserves its own height.
+    /// Only a validated newer version with an installer owns footer space.
+    /// Keep that space during its download, preparation or retry, until a
+    /// successful check confirms that no update remains available.
+    pub fn control_visible(&self) -> bool {
+        self.manifest.as_ref().is_some_and(|manifest| manifest.release.is_some())
+    }
+
+    pub fn can_check(&self) -> bool {
+        !self.busy && !matches!(self.status, Status::Ready)
+    }
+
+    /// Shared footer control. The surrounding sidebar uses control_visible too.
     pub fn button(&mut self, ui: &mut egui::Ui) {
+        if !self.control_visible() {
+            return;
+        }
         let (enabled, label, hint) = match &self.status {
             Status::Idle => (
                 false,
@@ -281,7 +295,7 @@ impl UpdateManager {
             }
             if ui
                 .add_enabled(
-                    !self.busy && !matches!(self.status, Status::Ready),
+                    self.can_check(),
                     egui::Button::new("↻"),
                 )
                 .on_hover_text("Consultar o reintentar la búsqueda de actualizaciones")

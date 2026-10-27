@@ -71,16 +71,19 @@ pub(super) fn format(size: f32) -> TextFormat {
     }
 }
 pub(super) fn label(ui: &mut egui::Ui, name: &str, size: f32) -> egui::Response {
+    styled_label(ui, name, size, Default::default(), true)
+}
+pub(super) fn styled_label(ui: &mut egui::Ui, name: &str, size: f32, style: notdiscord_core::markdown::Style, navigable: bool) -> egui::Response {
     let (position, galley, response) = egui::Label::new(
-        RichText::new(format!("@{name}"))
-            .size(size)
-            .line_height(Some(size * 1.45))
-            .color(format(size).color)
+        theme::markdown_text(format!("@{name}"), size, format(size).color, style)
             .background_color(format(size).background),
     )
     .selectable(true)
     .sense(egui::Sense::click_and_drag())
     .layout_in_ui(ui);
+    if navigable {
+        theme::text_link_galley_feedback(ui, &response, position, &galley, format(size).color);
+    }
     if !super::chat::register_history_label(ui, &response, position, galley.clone()) {
         egui::text_selection::LabelSelectionState::label_text_selection(
             ui,
@@ -91,7 +94,7 @@ pub(super) fn label(ui: &mut egui::Ui, name: &str, size: f32) -> egui::Response 
             egui::Stroke::NONE,
         );
     }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    response.on_hover_cursor(if navigable { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Text })
 }
 pub(super) fn everyone_allowed(state: &AppSnapshot) -> bool {
     notdiscord_core::mentions::everyone_allowed(&state.selected_guild_id, &state.channel_access)
@@ -354,6 +357,7 @@ pub(super) fn outgoing(draft: &Draft) -> String {
     mentions.sort_by_key(|m| std::cmp::Reverse(m.start));
     for m in mentions {
         if notdiscord_core::parsing::valid_id(&m.id)
+            && char_byte(&draft.text, m.start).is_some_and(|start| plain_text_at(&draft.text, start))
             && chars
                 .get(m.start..m.end)
                 .is_some_and(|s| s.iter().collect::<String>() == m.label)
@@ -452,24 +456,57 @@ pub(super) fn editor_job(
         }
     }
     ranges.sort_by_key(|range| range.start);
+    // Mention display names are metadata atoms, even if a name contains * or
+    // _. Mask only the parser's recognition copy with equal-length ASCII; all
+    // ranges and all emitted characters still refer to the original buffer.
+    let mut recognition = text.to_owned();
+    for range in ranges.iter().rev() {
+        if recognition.get(range.clone()).is_some() {
+            recognition.replace_range(range.clone(), &"x".repeat(range.len()));
+        }
+    }
+    let document = notdiscord_core::markdown::parse(&recognition);
+    let plain = theme::markdown_format(Default::default(), size, ink, false);
+    let mut base = LayoutJob::default();
+    let mut end = 0;
+    for block in &document.blocks {
+        let content_size = match &block.kind {
+            notdiscord_core::markdown::BlockKind::Heading { level } => size * match level { 1 => 1.6, 2 => 1.35, _ => 1.15 },
+            notdiscord_core::markdown::BlockKind::Subtext => (size * 0.85).max(11.),
+            _ => size,
+        };
+        for span in &block.spans {
+            if span.range.start < end { continue; }
+            let Some(value) = text.get(span.range.clone()) else { continue; };
+            if span.range.start > end { base.append(&text[end..span.range.start], 0., plain.clone()); }
+            base.append(value, 0., theme::markdown_format(span.style, if span.syntax { size } else { content_size }, ink, span.syntax));
+            end = span.range.end;
+        }
+    }
+    base.append(&text[end..], 0., plain);
+    // Overlay mention colours without replacing the Markdown font or changing
+    // a single source character: TextEdit caret/selection offsets stay exact.
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap_width;
-    let plain = TextFormat {
-        font_id: egui::FontId::proportional(size),
-        color: ink,
-        line_height: Some(size * 1.45),
-        ..Default::default()
-    };
-    let mut end = 0;
-    for range in ranges {
-        if range.start < end {
-            continue;
+    let mut range_index = 0;
+    for section in base.sections {
+        let mut cursor = section.byte_range.start;
+        while cursor < section.byte_range.end {
+            while range_index < ranges.len() && ranges[range_index].end <= cursor { range_index += 1; }
+            let mention = ranges.get(range_index);
+            let highlighted = mention.is_some_and(|range| range.start <= cursor && cursor < range.end);
+            let next = mention.map_or(section.byte_range.end, |range|
+                if highlighted { range.end.min(section.byte_range.end) } else { range.start.min(section.byte_range.end) });
+            if next <= cursor { break; }
+            let mut text_format = section.format.clone();
+            if highlighted && text_format.font_id.family != egui::FontFamily::Monospace {
+                text_format.color = format(size).color;
+                text_format.background = format(size).background;
+            }
+            job.append(&text[cursor..next], 0., text_format);
+            cursor = next;
         }
-        job.append(&text[end..range.start], 0., plain.clone());
-        job.append(&text[range.clone()], 0., format(size));
-        end = range.end;
     }
-    job.append(&text[end..], 0., plain);
     job
 }
 fn char_byte(text: &str, index: usize) -> Option<usize> {

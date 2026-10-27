@@ -1,5 +1,6 @@
 use notdiscord_core::models::{ChatMessage, Person};
 use std::{collections::HashMap, sync::Mutex};
+use super::feature_history::{PurgedLogs, filter_purged_messages, is_purged, scrub_purged_reference};
 
 #[derive(Default)]
 struct Window {
@@ -11,6 +12,7 @@ struct Window {
 struct CacheState {
     channels: HashMap<String, Window>,
     clock: u64,
+    purged: PurgedLogs,
 }
 /// Global baseline limits: 3 channels, 200 messages, 4 MiB estimated UTF-16
 /// text/metadata. This estimate must not be presented as process memory.
@@ -65,12 +67,20 @@ impl MessageCache {
             id,
         )
     }
+    /// Remove the complete local payload and prevent stale replies from putting
+    /// it back. This does not issue a Discord deletion or touch any files.
+    pub fn purge_deleted_log(&mut self, channel: &str, id: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.purged.entry(channel.to_owned()).or_default().insert(id.to_owned());
+        cache_remove(&mut state, channel, id);
+        let CacheState { channels, purged, .. } = &mut *state;
+        for window in channels.values_mut() {
+            filter_purged_messages(&mut window.messages, purged);
+            window.bytes = window.messages.iter().map(estimate).sum();
+        }
+    }
     pub fn clear(&mut self) {
-        self.state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .channels
-            .clear()
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = CacheState::default();
     }
     pub fn count(&self) -> usize {
         self.state
@@ -108,7 +118,9 @@ fn cache_remove(state: &mut CacheState, channel: &str, id: &str) {
         }
     }
 }
-fn cache_upsert(state: &mut CacheState, message: ChatMessage) {
+fn cache_upsert(state: &mut CacheState, mut message: ChatMessage) {
+    if is_purged(&state.purged, &message.channel_id, &message.id) { return; }
+    scrub_purged_reference(&mut message, &state.purged);
     let cost = estimate(&message);
     let channel = message.channel_id.clone();
     if cost > 4 * 1024 * 1024 {

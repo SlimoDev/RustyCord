@@ -2,6 +2,108 @@ use eframe::egui::{self, Color32};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+const AUTHOR_FONT: &str = "notdiscord-message-author";
+const AUTHOR_FONT_FILE: &str = r"C:\Windows\Fonts\segoeuib.ttf";
+const ITALIC_FONT: &str = "notdiscord-message-italic";
+const ITALIC_FONT_FILE: &str = r"C:\Windows\Fonts\segoeuii.ttf";
+const BOLD_ITALIC_FONT: &str = "notdiscord-message-bold-italic";
+const BOLD_ITALIC_FONT_FILE: &str = r"C:\Windows\Fonts\segoeuiz.ttf";
+static ITALIC_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static BOLD_ITALIC_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+pub(super) fn author_text(text: impl Into<String>, size: f32) -> egui::RichText {
+    egui::RichText::new(text).size(size)
+        .family(egui::FontFamily::Name(AUTHOR_FONT.into())).strong()
+}
+
+/// Keep real bold Latin glyphs separate from the ordinary body family, and
+/// retain all currently loaded proportional fallbacks for names in other scripts.
+pub(super) fn configure_author_font(fonts: &mut egui::FontDefinitions) {
+    let fallbacks = fonts.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default();
+    let monospace = fonts.families.entry(egui::FontFamily::Monospace).or_default();
+    for fallback in fallbacks {
+        if !monospace.contains(&fallback) { monospace.push(fallback); }
+    }
+    for (name, file) in [(AUTHOR_FONT, AUTHOR_FONT_FILE), (ITALIC_FONT, ITALIC_FONT_FILE), (BOLD_ITALIC_FONT, BOLD_ITALIC_FONT_FILE)] {
+        let mut family = fonts.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default();
+        let font = super::font_files::load(file);
+        if file == ITALIC_FONT_FILE { let _ = ITALIC_AVAILABLE.set(font.is_some()); }
+        if file == BOLD_ITALIC_FONT_FILE { let _ = BOLD_ITALIC_AVAILABLE.set(font.is_some()); }
+        if let Some(data) = font {
+            fonts.font_data.entry(file.into()).or_insert_with(|| data.into());
+            family.insert(0, file.into());
+        } else if name == BOLD_ITALIC_FONT && fonts.font_data.contains_key(AUTHOR_FONT_FILE) {
+            family.insert(0, AUTHOR_FONT_FILE.into());
+        }
+        fonts.families.insert(egui::FontFamily::Name(name.into()), family);
+    }
+}
+
+/// One source of formatting for received Markdown and the editable composer.
+/// Syntax stays present in TextEdit with its own grey ink and normal weight.
+pub(super) fn markdown_format(style: notdiscord_core::markdown::Style, size: f32, color: Color32, syntax: bool) -> egui::text::TextFormat {
+    let style = if syntax { notdiscord_core::markdown::Style::default() } else { style };
+    let (family, italic_fallback) = if style.code { (egui::FontFamily::Monospace, false) }
+        else if style.bold && style.italic { (egui::FontFamily::Name(BOLD_ITALIC_FONT.into()), !BOLD_ITALIC_AVAILABLE.get().copied().unwrap_or(false)) }
+        else if style.bold { (egui::FontFamily::Name(AUTHOR_FONT.into()), false) }
+        else if style.italic { (egui::FontFamily::Name(ITALIC_FONT.into()), !ITALIC_AVAILABLE.get().copied().unwrap_or(false)) }
+        else { (egui::FontFamily::Proportional, false) };
+    let color = if syntax { Color32::from_gray(150) } else { color };
+    egui::text::TextFormat {
+        font_id: egui::FontId::new(size, family), color, italics: italic_fallback,
+        underline: if style.underline { egui::Stroke::new(1_f32, color) } else { egui::Stroke::NONE },
+        strikethrough: if style.strikethrough { egui::Stroke::new(1_f32, color) } else { egui::Stroke::NONE },
+        background: if style.code || style.spoiler { color.gamma_multiply(0.10) } else { Color32::TRANSPARENT },
+        line_height: Some(size * 1.45), ..Default::default()
+    }
+}
+pub(super) fn markdown_text(text: impl Into<String>, size: f32, color: Color32, style: notdiscord_core::markdown::Style) -> egui::RichText {
+    let format = markdown_format(style, size, color, false);
+    let mut text = egui::RichText::new(text).font(format.font_id).color(format.color)
+        .line_height(format.line_height).background_color(format.background);
+    if format.italics { text = text.italics(); }
+    if style.underline { text = text.underline(); }
+    if style.strikethrough { text = text.strikethrough(); }
+    text
+}
+
+/// Feedback only: the existing response retains its complete click/selection
+/// semantics. Call only for text that actually opens a destination, never a row
+/// or button decoration. Wrapped text uses its separate galley rows below.
+pub(super) fn text_link_feedback(ui: &egui::Ui, response: &egui::Response, text_rect: egui::Rect, color: Color32) {
+    if !response.enabled() { return; }
+    if response.hovered() { response.clone().on_hover_cursor(egui::CursorIcon::PointingHand); }
+    if (response.hovered() || response.has_focus()) && text_rect.is_positive() {
+        let y = text_rect.bottom() - 1.;
+        ui.painter().with_clip_rect(ui.clip_rect()).line_segment(
+            [egui::pos2(text_rect.left(), y), egui::pos2(text_rect.right(), y)],
+            egui::Stroke::new(1_f32, color));
+    }
+}
+
+pub(super) fn text_link_galley_feedback(ui: &egui::Ui, response: &egui::Response,
+    position: egui::Pos2, galley: &egui::Galley, color: Color32) {
+    for row in &galley.rows {
+        if !row.glyphs.is_empty() {
+            text_link_feedback(ui, response, row.rect().translate(position.to_vec2()), color);
+        }
+    }
+}
+
+/// Match a one-line fitted label without underlining the unused part of its
+/// containing row. Reuses egui's layout cache and leaves all hit testing intact.
+pub(super) fn fitted_link_feedback(ui: &egui::Ui, response: &egui::Response,
+    rect: egui::Rect, text: &str, size: f32, color: Color32) {
+    if !response.enabled() || !(response.hovered() || response.has_focus()) { return; }
+    let mut job = egui::text::LayoutJob::simple(text.split_whitespace().collect::<Vec<_>>().join(" "),
+        egui::FontId::proportional(size), color, rect.width().max(0.));
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    let position = rect.left_center() - egui::vec2(0., galley.size().y / 2.);
+    text_link_galley_feedback(ui, response, position, &galley, color);
+}
+
 fn center_scrollbar_in_frame(ui: &mut egui::Ui, horizontal: bool) {
     // egui reserves the scrollbar inside the content rectangle. Its symmetric
     // 3pt margins otherwise ignore the enclosing frame's padding, leaving the

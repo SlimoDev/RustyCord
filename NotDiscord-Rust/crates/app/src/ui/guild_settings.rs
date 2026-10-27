@@ -793,8 +793,10 @@ impl NotDiscordUi {
             }
             let right=super::shell::draw_member_voice_flags(ui,rect,state,&member.guild_id,&member.user.id,Some(&member.channel_id));
             let left=avatar.right()+8.;
-            super::shell::fitted_text(ui,egui::Rect::from_min_max(egui::pos2(left,rect.top()+3.),egui::pos2(right.max(left),rect.top()+25.)),
-                guild_settings::visible_name(&member.user,&member.nickname),14.,self.theme.ink);
+            let name_rect=egui::Rect::from_min_max(egui::pos2(left,rect.top()+3.),egui::pos2(right.max(left),rect.top()+25.));
+            let name=guild_settings::visible_name(&member.user,&member.nickname);
+            super::shell::fitted_text(ui,name_rect,name,14.,self.theme.ink);
+            theme::fitted_link_feedback(ui,&response,name_rect,name,14.,self.theme.ink);
             if !game.is_empty(){
                 super::shell::fitted_text(ui,egui::Rect::from_min_max(egui::pos2(left,rect.top()+26.),egui::pos2(rect.right()-5.,rect.bottom()-3.)),&game,11.,self.theme.muted);
             }

@@ -83,9 +83,9 @@ try {
         $start.UseShellExecute = $false
         [Diagnostics.Process]::Start($start) | Out-Null
     } else {
-        $setup = Join-Path $PSScriptRoot 'dist\NotDiscord-Setup-0.3.2.exe'
+        $setup = Join-Path $PSScriptRoot 'dist\NotDiscord-Setup-0.4.0.exe'
         if (!(Test-Path -LiteralPath $setup -PathType Leaf)) {
-            throw 'No se encontró una instalación de NotDiscord. Ejecuta NotDiscord-Setup-0.3.2.exe para elegir su carpeta de instalación.'
+            throw 'No se encontró una instalación de NotDiscord. Ejecuta NotDiscord-Setup-0.4.0.exe para elegir su carpeta de instalación.'
         }
         # This is the interactive installer: the user chooses its destination.
         Start-Process -FilePath $setup | Out-Null

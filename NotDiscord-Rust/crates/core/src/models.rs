@@ -462,6 +462,7 @@ pub struct AppSnapshot {
     pub network_safety: crate::safety::SafetyState,
     pub network_safety_message: String,
     pub latest_messages_version: u64,
+    pub latest_messages_channel_id: String,
     pub signed_in: bool,
     pub demo: bool,
     pub connection: String,

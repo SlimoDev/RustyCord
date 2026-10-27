@@ -7,10 +7,17 @@ mod rich;
 mod reaction_tooltip;
 #[path = "chat/interaction.rs"]
 mod interaction;
+#[path = "chat/context_menu.rs"]
+mod context_menu;
+#[path = "chat/markdown.rs"]
+mod markdown;
+#[path = "chat/scroll_follow.rs"]
+mod scroll_follow;
 pub(super) use reaction_tooltip::{clear_reaction_users, reaction_panel_open, reaction_panel_rect, reaction_users_result};
 
 pub(super) fn suspend_interactions(ctx: &egui::Context) {
     interaction::suspend(ctx);
+    context_menu::clear(ctx);
     clear_reaction_users(ctx);
     ctx.data_mut(|data| {
         data.remove::<HistorySelection>(egui::Id::new("history-selection"));
@@ -45,6 +52,17 @@ impl NotDiscordUi {
         });
         self.ctx.request_repaint();
     }
+    pub(super) fn go_to_latest_for(&mut self, channel: &str, latest_loaded: bool) {
+        super::autoscroll::cancel(&self.ctx);
+        self.ctx.data_mut(|data| data.remove::<HistoryMiddleScroll>(egui::Id::new("history-middle-scroll")));
+        if latest_loaded {
+            self.prepare_latest_scroll_for(channel);
+        } else {
+            // The button and explicit sends share the same newest-page request;
+            // its versioned snapshot performs the scroll after the page arrives.
+            self.send("latest-messages", "", "", "", channel);
+        }
+    }
     fn near_recent_history(&self, ctx: &egui::Context, state: &AppSnapshot) -> bool {
         let scope=egui::Id::new(("message-scroll", &state.selected_channel_id, "chat"));
         let manual_motion=ctx.data(|data|
@@ -56,7 +74,7 @@ impl NotDiscordUi {
             && !manual_motion
             && latest_window(ctx, state)
             && self.positions.get(&state.selected_channel_id).map_or(self.scroll_bottom, |position|
-                position.at_bottom || position.distance_to_bottom.is_some_and(|distance| distance <= 180.))
+                position.at_bottom || scroll_follow::within_last_messages(ctx, state, 20))
     }
     pub(super) fn follows_nearby_new_messages(&self, ctx: &egui::Context, next: &AppSnapshot) -> bool {
         if next.view != "chat" || self.state.view != "chat" || !next.signed_in
@@ -64,7 +82,20 @@ impl NotDiscordUi {
             || next.selected_channel_id != self.last_channel
             || next.notification_generation != self.state.notification_generation
             || next.current_user.as_ref().map(|user| &user.id) != self.state.current_user.as_ref().map(|user| &user.id)
-            || next.focus_message_version != self.focus_version || self.background_blocked()
+            || next.focus_message_version != self.focus_version {
+            return false;
+        }
+        let (Some(previous), Some(current)) = (self.state.messages.last(), next.messages.last()) else { return false; };
+        let arrival = previous.id != current.id && (
+            current.timestamp > previous.timestamp
+                || notdiscord_core::parsing::valid_id(&previous.id) && notdiscord_core::parsing::valid_id(&current.id)
+                    && (current.id.len() > previous.id.len() || current.id.len() == previous.id.len() && current.id > previous.id)
+        );
+        if !arrival {return false;}
+        if next.current_user.as_ref().is_some_and(|user| user.id == current.author.id) {
+            return true;
+        }
+        if self.background_blocked()
             || super::voice::call_chat_hidden(ctx,&self.state)
             || super::voice::call_chat_hidden(ctx,next)
             || ctx.input(|input| input.pointer.any_down() || input.raw_scroll_delta != egui::Vec2::ZERO
@@ -72,12 +103,7 @@ impl NotDiscordUi {
             || !self.near_recent_history(ctx, &self.state) {
             return false;
         }
-        let (Some(previous), Some(current)) = (self.state.messages.last(), next.messages.last()) else { return false; };
-        previous.id != current.id && (
-            current.timestamp > previous.timestamp
-                || notdiscord_core::parsing::valid_id(&previous.id) && notdiscord_core::parsing::valid_id(&current.id)
-                    && (current.id.len() > previous.id.len() || current.id.len() == previous.id.len() && current.id > previous.id)
-        )
+        true
     }
     pub(super) fn draw_chat(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
         let chat = state.view == "chat";
@@ -119,13 +145,23 @@ impl NotDiscordUi {
             ui.spacing_mut().item_spacing.x = 6.;
             ui.spacing_mut().button_padding = egui::vec2(7., 3.);
             if chat {
-                if ui
-                    .add_enabled(
-                        !state.busy && !history_pending && state.has_older_messages
+                if !state.busy && !at_latest && ui
+                    .add(
+                        egui::Button::new(RichText::new("Volver al inicio ↓").size(12.))
+                            .min_size(egui::vec2(0., 22.)),
+                    )
+                    .on_hover_text("Ir a los mensajes más recientes")
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    self.go_to_latest_for(&state.selected_channel_id, latest_window);
+                }
+                if !state.busy && !history_pending && state.has_older_messages
                             && !state.messages.is_empty() && self.positions.get(&state.selected_channel_id)
                                 .is_some_and(|position| position.offset <= 1.)
                             && self.pending_scroll.is_none_or(|offset| offset <= 1.)
-                            && self.restore_anchor.is_none() && !self.focus_scroll_pending,
+                            && self.restore_anchor.is_none() && !self.focus_scroll_pending && ui
+                    .add(
                         egui::Button::new(RichText::new("↑ Mensajes anteriores").size(12.))
                             .min_size(egui::vec2(0., 22.)),
                     )
@@ -137,25 +173,6 @@ impl NotDiscordUi {
                         channel_id: request.channel.clone(), ..Default::default() }).is_ok() {
                         ui.ctx().data_mut(|data| data.insert_temp(history_page_request_key(), request));
                     } else { self.error = "El servicio de la aplicación se cerró.".into(); }
-                }
-                if ui
-                    .add_enabled(
-                        !state.busy && !at_latest,
-                        egui::Button::new(RichText::new("Volver al inicio ↓").size(12.))
-                            .min_size(egui::vec2(0., 22.)),
-                    )
-                    .on_hover_text("Ir a los mensajes más recientes")
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    if latest_window {
-                        // The newest page is already retained: moving within
-                        // it needs no request and must also leave middle mode.
-                        self.prepare_latest_scroll_for(&state.selected_channel_id);
-                    } else {
-                        // Keep the current anchor until the newest page arrives.
-                        self.simple("latest-messages");
-                    }
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
@@ -320,6 +337,7 @@ impl NotDiscordUi {
             area = area.vertical_scroll_offset(offset);
         }
         let mut first_visible = String::new();
+        let mut visible_rows = Vec::with_capacity(list.len());
         let mut anchor_top = 0.;
         let mut rendered_offset = 0.;
         let row_heights = &mut self.row_heights;
@@ -381,8 +399,11 @@ impl NotDiscordUi {
                             .galley(center - galley.size() / 2., galley, self.theme.muted);
                         ui.add_space(7.);
                     }
-                    let response = self.draw_message(ui, message, state, continuation);
+                    let response = if state.view == "history" {
+                        ui.push_id(("history-log-entry", index), |ui| self.draw_message(ui, message, state, continuation)).inner
+                    } else { self.draw_message(ui, message, state, continuation) };
                     let height = (ui.cursor().top() - begin).max(1.);
+                    visible_rows.push((index, content_y, content_y + height));
                     if first_visible.is_empty() && content_y + height > viewport.min.y {
                         first_visible = message.id.clone();
                         anchor_top = content_y - viewport.min.y;
@@ -498,6 +519,7 @@ impl NotDiscordUi {
             }
             let effective_offset = self.pending_scroll.unwrap_or(out.state.offset.y);
             let at_bottom = effective_offset + out.inner_rect.height() >= out.content_size.y - 8.;
+            scroll_follow::remember(ui.ctx(), state, &visible_rows, effective_offset, out.inner_rect.height());
             self.scroll_bottom = at_bottom && !manual_scroll;
             ui.ctx().data_mut(|data| {
                 data.insert_temp(
@@ -557,6 +579,8 @@ impl NotDiscordUi {
         state: &AppSnapshot,
         continuation: bool,
     ) -> egui::Response {
+        let _context = context_menu::Scope::begin(ui, m, state);
+        ui.ctx().data_mut(|data| data.insert_temp(egui::Id::new("message-text-shortcuts"), MessageTextGesture::default()));
         if is_system_record(m.message_type) && !m.deleted {
             return self.draw_call_record(ui, m, state);
         }
@@ -565,9 +589,9 @@ impl NotDiscordUi {
             || super::mentions::highlights_current_user(m, state);
         let shortcuts_allowed = ui.is_enabled() && !ui.ctx().wants_keyboard_input()
             && !egui::Popup::is_any_open(ui.ctx()) && !self.background_blocked();
-        ui.ctx().data_mut(|data| data.insert_temp(egui::Id::new("message-text-shortcuts"), MessageTextGesture::default()));
         let mut continuation_time = None;
         let action_key = egui::Id::new(("message-actions", &m.channel_id, &m.id));
+        let action_key = if state.view == "history" { action_key.with(ui.id()) } else { action_key };
         // Register the row beneath its children. Adding Response::interact after
         // rendering the frame put the row above image/reply/link hit targets.
         let response = ui
@@ -627,9 +651,9 @@ impl NotDiscordUi {
                                                     &m.channel_id,
                                                 );
                                             }
-                                            image.context_menu(|ui| {
-                                                self.people_menu(ui, &m.author, state)
-                                            });
+                                            if !context_menu::capture(ui, &image, || context_menu::Target::Person(m.author.clone())) {
+                                                image.context_menu(|ui| self.people_menu(ui, &m.author, state));
+                                            }
                                         },
                                     );
                                 }
@@ -640,19 +664,16 @@ impl NotDiscordUi {
                                     ui.set_max_width(ui.available_width());
                                     if !continuation {
                                         ui.horizontal(|ui| {
-                                            if ui
-                                                .add(
+                                            let author = ui.add(
                                                     egui::Label::new(
-                                                        RichText::new(message_display_name(m, state))
-                                                            .size(16.)
-                                                            .strong(),
+                                                        theme::author_text(message_display_name(m, state), 16.),
                                                     )
                                                     .truncate()
                                                     .sense(egui::Sense::click()),
-                                                )
-                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                .clicked()
-                                            {
+                                                );
+                                            theme::text_link_feedback(ui, &author, author.rect, self.theme.ink);
+                                            context_menu::capture(ui, &author, || context_menu::Target::Person(m.author.clone()));
+                                            if author.clicked() {
                                                 self.send(
                                                     "profile",
                                                     &m.author.id,
@@ -770,7 +791,9 @@ impl NotDiscordUi {
                                             );
                                         } else {
                                             ui.horizontal(|ui| {
-                                                if ui.link(format!("📎 {}", a.name)).clicked() {
+                                                let link = ui.link(format!("📎 {}", a.name));
+                                                context_menu::capture(ui, &link, || context_menu::Target::Link(a.url.clone()));
+                                                if link.clicked() {
                                                     let _ = crate::platform::open_link(&a.url);
                                                 }
                                                 ui.small(format!(
@@ -828,14 +851,20 @@ impl NotDiscordUi {
         }
         history_register_row(ui.ctx(), response.id);
         let text_shortcuts = ui.ctx().data(|data| data.get_temp::<MessageTextGesture>(egui::Id::new("message-text-shortcuts"))).unwrap_or_default();
-        let mut context_menu = egui::Popup::context_menu(&response);
-        if text_shortcuts.secondary_clicked {
-            // Selectable text owns its hit target. Route its context click to
-            // the row without stealing clicks from links, images or mentions.
-            context_menu = context_menu.open_memory(Some(egui::SetOpenCommand::Bool(true)));
-        }
-        context_menu.show(|ui| self.message_menu(ui, m, state));
+        self.message_context_menu(ui, &response, m, state, None);
         let own = state.current_user.as_ref().is_some_and(|person| person.id == m.author.id);
+        if shortcuts_allowed && m.deleted && state.signed_in {
+            let delete_click = text_shortcuts.delete_clicked || response.clicked() && ui.ctx().input(|input| input.key_down(egui::Key::Delete));
+            let direct_delete = text_shortcuts.backspace_clicked || response.clicked() && ui.ctx().input(|input| input.key_down(egui::Key::Backspace));
+            let selected_text = ui.ctx().data(|data| data.get_temp::<HistorySelection>(egui::Id::new("history-selection")))
+                .is_some_and(|selection| selection.anchor != selection.focus || selection.dragging);
+            if (direct_delete || delete_click) && !selected_text && !interaction::cancelling(ui.ctx())
+                && !reaction_panel_open(ui.ctx()) && !super::autoscroll::active(ui.ctx()) {
+                interaction::shortcut_consumed(ui.ctx());
+                if direct_delete { self.send("purge-deleted-log", &m.id, "", "", &m.channel_id); }
+                else { self.confirm_deleted_log_purge(m); }
+            }
+        }
         if shortcuts_allowed && own && !m.deleted && state.view == "chat" && state.signed_in
             && !state.busy && state.channel_access.can_send && m.channel_id == state.selected_channel_id {
             let delete_click = text_shortcuts.delete_clicked || response.clicked() && ui.ctx().input(|i| i.key_down(egui::Key::Delete));
@@ -885,25 +914,26 @@ impl NotDiscordUi {
             }
         }
         let popup_id = egui::Id::new(("message-overflow", &m.channel_id, &m.id));
+        let popup_id = if state.view == "history" { popup_id.with(ui.id()) } else { popup_id };
         let menu_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
-        if row_hovered && owned_hover && interaction::controls_allowed(ui.ctx()) && ui.is_enabled() && !response.context_menu_opened()
-            && matches!(state.view.as_str(), "pins" | "search") && state.signed_in {
+        if row_hovered && owned_hover && interaction::controls_allowed(ui.ctx()) && ui.is_enabled() && !context_menu::is_open(&response)
+            && !m.deleted && matches!(state.view.as_str(), "pins" | "search") && state.signed_in {
             self.reference_message_actions(ui, m, state, action_key, response.rect, previous_actions);
         }
         if (row_hovered && owned_hover || menu_open) && interaction::controls_allowed(ui.ctx()) && ui.is_enabled()
-            && !response.context_menu_opened() && state.view == "chat" && state.signed_in
+            && !context_menu::is_open(&response) && (state.view == "chat" || m.deleted) && state.signed_in
         {
             let own = state
                 .current_user
                 .as_ref()
                 .is_some_and(|u| u.id == m.author.id);
-            let count = 4
+            let count = if m.deleted { 2 } else { 4
                 + usize::from(state.can_pin_messages)
                 + if own {
                     if m.forwarded { 1 } else { 2 }
                 } else {
                     0
-                };
+                } };
             let width = previous_actions.map(|rect| rect.width()).unwrap_or(count as f32 * 38. + 16.);
             let pos = egui::pos2(
                 (response.rect.right() - width).max(response.rect.left()),
@@ -921,6 +951,16 @@ impl NotDiscordUi {
                         .corner_radius(5)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
+                                if m.deleted {
+                                    if ui.small_button(RichText::new("×").color(Color32::from_rgb(242, 63, 67)))
+                                        .on_hover_text("Eliminar del registro").clicked() {
+                                        self.confirm_deleted_log_purge(m);
+                                    }
+                                    let more = ui.small_button("⋯").on_hover_text("Más opciones del registro");
+                                    more_rect = more.rect;
+                                    egui::Popup::menu(&more).id(popup_id).show(|ui| self.message_menu(ui, m, state));
+                                    return;
+                                }
                                 let writable = !state.busy && !m.deleted;
                                 if ui
                                     .add_enabled(
@@ -1007,7 +1047,7 @@ impl NotDiscordUi {
                                 if own
                                     && ui
                                         .add_enabled(
-                                            writable,
+                                            writable && state.channel_access.can_send,
                                             egui::Button::new(
                                                 RichText::new("×")
                                                     .color(Color32::from_rgb(242, 63, 67)),
@@ -1108,18 +1148,15 @@ impl NotDiscordUi {
                                     ui.set_max_width(ui.available_width());
                                     ui.horizontal_wrapped(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.;
-                                        if ui
-                                            .add(
+                                        let author = ui.add(
                                                 egui::Label::new(
-                                                    RichText::new(message_display_name(m, state))
-                                                        .size(self.prefs.chat_size)
-                                                        .strong(),
+                                                    theme::author_text(message_display_name(m, state), self.prefs.chat_size),
                                                 )
                                                 .sense(egui::Sense::click()),
-                                            )
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .clicked()
-                                        {
+                                            );
+                                        theme::text_link_feedback(ui, &author, author.rect, self.theme.ink);
+                                        context_menu::capture(ui, &author, || context_menu::Target::Person(m.author.clone()));
+                                        if author.clicked() {
                                             self.send(
                                                 "profile",
                                                 &m.author.id,
@@ -1157,6 +1194,9 @@ impl NotDiscordUi {
                                                     egui::Sense::hover()
                                                 }),
                                             );
+                                            if available {
+                                                theme::text_link_feedback(ui, &link, link.rect, self.theme.accent);
+                                            }
                                             if available
                                                 && link
                                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1195,169 +1235,78 @@ impl NotDiscordUi {
             .response
             .on_hover_text(detail);
         history_register_row(ui.ctx(), response.id);
-        response.context_menu(|ui| {
-            if ui.button("Copiar texto").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                ui.ctx()
-                    .copy_text(format!("{} {}", message_display_name(m, state), description));
-                ui.close();
-            }
-            if ui.button("Copiar enlace al mensaje").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                ui.ctx().copy_text(format!(
-                    "https://discord.com/channels/{}/{}/{}",
-                    if state.selected_guild_id.is_empty() {
-                        "@me"
-                    } else {
-                        &state.selected_guild_id
-                    },
-                    m.channel_id,
-                    m.id
-                ));
-                ui.close();
-            }
-        });
+        let copy_text = format!("{} {}", message_display_name(m, state), description);
+        self.message_context_menu(ui, &response, m, state, Some(&copy_text));
         response
     }
-    fn message_text(
-        &mut self,
-        ui: &mut egui::Ui,
-        text: &str,
-        m: &ChatMessage,
-        state: &AppSnapshot,
-    ) {
-        let mut media: Vec<&str> = Vec::new();
-        let mut line_start = 0;
-        for line in text.split('\n') {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.;
-                ui.spacing_mut().item_spacing.y = 0.;
-                ui.set_min_height(self.prefs.chat_size * 1.45);
-                let mut end = 0;
-                for capture in message_rich_pattern().captures_iter(line) {
-                    let whole = capture.get(0).unwrap();
-                    if (capture.get(1).is_some() || capture.get(6).is_some())
-                        && !super::mentions::plain_text_at(text, line_start + whole.start()) {
-                        continue;
-                    }
-                    if capture.get(6).is_some() && !super::mentions::broadcast_at(text, line_start + whole.start(), line_start + whole.end()) {
-                        continue;
-                    }
-                    let named = capture
-                        .get(5)
-                        .and_then(|name| known_named_emoji(name.as_str(), m, state));
-                    if capture.get(5).is_some() && named.is_none() {
-                        // An unknown name stays in the same plain text run.
-                        continue;
-                    }
-                    if whole.start() > end {
-                        self.message_plain(
-                            ui,
-                            &line[end..whole.start()],
-                            self.prefs.chat_size,
-                            self.theme.ink,
-                        );
-                    }
-                    if capture.get(6).is_some() {
-                        if m.mentions_everyone && !m.forwarded {
-                            mention_label(ui, whole.as_str().trim_start_matches('@'), self.prefs.chat_size);
-                        } else {
-                            self.message_plain(ui, whole.as_str(), self.prefs.chat_size, self.theme.ink);
-                        }
-                    } else if let Some(id) = capture.get(1) {
-                        let name = super::mentions::name(id.as_str(), &m.mentions, state);
-                        if mention_label(ui, name, self.prefs.chat_size).clicked() {
-                            self.send("profile", id.as_str(), "", "", &m.channel_id);
-                        }
-                    } else if let Some(id) = capture.get(4) {
-                        let emoji = StatusEmoji {
-                            id: id.as_str().into(),
-                            name: capture.get(3).unwrap().as_str().into(),
-                            animated: capture.get(2).is_some_and(|a| a.as_str() == "a"),
-                        };
-                        self.message_emoji(ui, &emoji, self.prefs.chat_size * 1.4, &format!(":{}:",emoji.name));
-                    } else if let Some(emoji) = named {
-                        self.message_emoji(ui, &emoji, self.prefs.chat_size * 1.4, &format!(":{}:",emoji.name));
-                    } else {
-                        let url = whole.as_str();
-                        let gif_preview = (notdiscord_core::parsing::direct_gif(url)
-                            || notdiscord_core::parsing::gif_page(url))
-                            && super::mentions::plain_text_at(text, line_start + whole.start());
-                        // GIF messages use their media card as the visible
-                        // target. Keep the original content for editing/copy
-                        // and the card's existing Copy link context action.
-                        if !gif_preview && history_link_activated(&selectable_link_label(ui,
-                            RichText::new(url).size(self.prefs.chat_size)
-                                .line_height(Some(self.prefs.chat_size * 1.45)).underline()
-                                .color(Color32::from_rgb(119, 153, 255)))) {
-                            self.open_message_link(ui.ctx(), url);
-                        }
-                        if resources::is_image_url(url)
-                            && !m.components.iter().any(|component| matches!(component.kind, 11..=13)
-                                && notdiscord_core::parsing::same_media_resource(&component.url, url))
-                            && !m
-                                .attachments
-                                .iter()
-                                .any(|a| notdiscord_core::parsing::same_media_resource(&a.url, url)
-                                    || a.preview_url.as_deref().is_some_and(|preview| notdiscord_core::parsing::same_media_resource(preview, url)))
-                        {
-                            if let Some(index) = media.iter().position(|known| notdiscord_core::parsing::same_media_resource(known, url)) {
-                                media[index] = notdiscord_core::parsing::prefer_media_url(media[index], url);
-                            } else { media.push(url); }
-                        }
-                    }
-                    end = whole.end();
-                }
-                if end < line.len() {
-                    self.message_plain(ui, &line[end..], self.prefs.chat_size, self.theme.ink);
-                }
-            });
-            line_start += line.len() + 1;
-        }
-        for url in media {
-            let gif = notdiscord_core::parsing::direct_gif(url)
-                || notdiscord_core::parsing::gif_page(url);
-            self.media_card(ui, url, url, gif, if gif { "GIF" } else { "Imagen" }, None);
-        }
+    fn message_text(&mut self, ui: &mut egui::Ui, text: &str, m: &ChatMessage, state: &AppSnapshot) {
+        self.message_markdown(ui, text, m, state);
     }
-    fn message_plain(&mut self, ui: &mut egui::Ui, text: &str, size: f32, color: Color32) {
+    fn message_inline(&mut self, ui: &mut egui::Ui, text: &str, source: &str, source_start: usize,
+        m: &ChatMessage, state: &AppSnapshot, style: notdiscord_core::markdown::Style,
+        size: f32, color: Color32, media: &mut Vec<String>) {
+        let mut end = 0;
+        for capture in message_rich_pattern().captures_iter(text) {
+            let whole = capture.get(0).unwrap();
+            if (capture.get(1).is_some() || capture.get(6).is_some())
+                && !super::mentions::plain_text_at(source, source_start + whole.start()) { continue; }
+            if capture.get(6).is_some() && !super::mentions::broadcast_at(source,
+                source_start + whole.start(), source_start + whole.end()) { continue; }
+            let named = capture.get(5).and_then(|name| known_named_emoji(name.as_str(), m, state));
+            if capture.get(5).is_some() && named.is_none() { continue; }
+            if whole.start() > end {
+                self.message_plain_styled(ui, &text[end..whole.start()], size, color, style);
+            }
+            if capture.get(6).is_some() {
+                if m.mentions_everyone && !m.forwarded {
+                    super::mentions::styled_label(ui, whole.as_str().trim_start_matches('@'), size, style, false);
+                } else { self.message_plain_styled(ui, whole.as_str(), size, color, style); }
+            } else if let Some(id) = capture.get(1) {
+                let name = super::mentions::name(id.as_str(), &m.mentions, state);
+                if super::mentions::styled_label(ui, name, size, style, true).clicked() {
+                    self.send("profile", id.as_str(), "", "", &m.channel_id);
+                }
+            } else if let Some(id) = capture.get(4) {
+                let emoji = StatusEmoji { id: id.as_str().into(), name: capture.get(3).unwrap().as_str().into(),
+                    animated: capture.get(2).is_some_and(|a| a.as_str() == "a") };
+                self.message_emoji(ui, &emoji, size * 1.4, &format!(":{}:",emoji.name));
+            } else if let Some(emoji) = named {
+                self.message_emoji(ui, &emoji, size * 1.4, &format!(":{}:",emoji.name));
+            } else {
+                let url = whole.as_str();
+                let gif_preview = (notdiscord_core::parsing::direct_gif(url) || notdiscord_core::parsing::gif_page(url))
+                    && super::mentions::plain_text_at(source, source_start + whole.start());
+                if !gif_preview && history_link_activated(&selectable_link_label(ui,
+                    theme::markdown_text(url, size, Color32::from_rgb(119,153,255), style), url)) {
+                    self.open_message_link(ui.ctx(), url);
+                }
+                if resources::is_image_url(url)
+                    && !m.components.iter().any(|component| matches!(component.kind,11..=13)
+                        && notdiscord_core::parsing::same_media_resource(&component.url,url))
+                    && !m.attachments.iter().any(|attachment| notdiscord_core::parsing::same_media_resource(&attachment.url,url)
+                        || attachment.preview_url.as_deref().is_some_and(|preview| notdiscord_core::parsing::same_media_resource(preview,url))) {
+                    if let Some(index)=media.iter().position(|known|notdiscord_core::parsing::same_media_resource(known,url)) {
+                        media[index]=notdiscord_core::parsing::prefer_media_url(&media[index],url).to_owned();
+                    } else { media.push(url.to_owned()); }
+                }
+            }
+            end=whole.end();
+        }
+        if end<text.len() { self.message_plain_styled(ui,&text[end..],size,color,style); }
+    }
+    fn message_plain_styled(&mut self, ui: &mut egui::Ui, text: &str, size: f32, color: Color32,
+        style: notdiscord_core::markdown::Style) {
         use unicode_segmentation::UnicodeSegmentation;
-        let mut start = 0;
-        let mut count = 0;
-        for (index, element) in text.grapheme_indices(true) {
-            if count >= 64
-                || !element
-                    .chars()
-                    .any(|ch| ch == '\u{fe0f}' || (0x1f000..=0x1faff).contains(&(ch as u32)))
-            {
-                continue;
-            }
-            if start < index {
-                selectable_message_label(ui,
-                    RichText::new(&text[start..index])
-                        .size(size)
-                        .line_height(Some(size * 1.45))
-                        .color(color),
-                );
-            }
-            self.message_emoji(
-                ui,
-                &StatusEmoji {
-                    name: element.into(),
-                    ..Default::default()
-                },
-                size * 1.3,
-                element,
-            );
-            count += 1;
-            start = index + element.len();
+        let mut start=0;
+        let mut count=0;
+        for (index,element) in text.grapheme_indices(true) {
+            if count>=64 || !element.chars().any(|ch|ch=='\u{fe0f}' || (0x1f000..=0x1faff).contains(&(ch as u32))) { continue; }
+            if start<index { selectable_message_label(ui,theme::markdown_text(&text[start..index],size,color,style)); }
+            self.message_emoji(ui,&StatusEmoji{name:element.into(),..Default::default()},size*1.3,element);
+            count+=1;
+            start=index+element.len();
         }
-        if start < text.len() {
-            selectable_message_label(ui,
-                RichText::new(&text[start..])
-                    .size(size)
-                    .line_height(Some(size * 1.45))
-                    .color(color),
-            );
-        }
+        if start<text.len() { selectable_message_label(ui,theme::markdown_text(&text[start..],size,color,style)); }
     }
     fn message_emoji(&mut self,ui:&mut egui::Ui,emoji:&StatusEmoji,size:f32,copy_text:&str) {
         // Keep the bitmap renderer and register a logical selection atom. Its
@@ -1377,6 +1326,31 @@ impl NotDiscordUi {
         ui.ctx().data_mut(|data|data.get_temp_mut_or_default::<HistoryFrame>(egui::Id::new("history-frame")).labels.push(label));
     }
     fn message_menu(&mut self, ui: &mut egui::Ui, m: &ChatMessage, state: &AppSnapshot) {
+        self.message_menu_with_text(ui, m, state, &m.content);
+    }
+    fn message_menu_with_text(&mut self, ui: &mut egui::Ui, m: &ChatMessage, state: &AppSnapshot, copy_text: &str) {
+        if m.deleted {
+            if ui.button(RichText::new("Eliminar del registro").color(Color32::from_rgb(242, 63, 67))).clicked() {
+                self.confirm_deleted_log_purge(m);
+                ui.close();
+            }
+            ui.separator();
+            self.message_copy_menu(ui, m, state, copy_text);
+            return;
+        }
+        if matches!(state.view.as_str(), "pins" | "search") {
+            if ui.add_enabled(state.signed_in && !state.busy && !m.id.is_empty() && !m.channel_id.is_empty(),
+                egui::Button::new("Ir al mensaje original")).clicked() {
+                self.jump_message(&m.channel_id, &m.id);
+                ui.close();
+            }
+        }
+        // System/call records have never exposed the ordinary content toolbar.
+        // Sharing the popup must not make those records editable or reactable.
+        if is_system_record(m.message_type) {
+            self.message_copy_menu(ui, m, state, copy_text);
+            return;
+        }
         let writable = state.view == "chat" && state.signed_in && !state.busy && !m.deleted;
         if ui
             .add_enabled(
@@ -1391,7 +1365,7 @@ impl NotDiscordUi {
         }
         if ui
             .add_enabled(
-                writable && !m.forwarded && matches!(m.message_type, 0 | 19),
+                writable && state.channel_access.can_view && !m.forwarded && matches!(m.message_type, 0 | 19),
                 egui::Button::new("Reenviar mensaje"),
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1474,8 +1448,11 @@ impl NotDiscordUi {
                 ui.close();
             }
         }
+        self.message_copy_menu(ui, m, state, copy_text);
+    }
+    fn message_copy_menu(&mut self, ui: &mut egui::Ui, m: &ChatMessage, state: &AppSnapshot, copy_text: &str) {
         if ui.button("Copiar texto").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-            ui.ctx().copy_text(m.content.clone());
+            ui.ctx().copy_text(copy_text.to_owned());
             ui.close();
         }
         if ui.button("Copiar enlace del mensaje").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -1499,6 +1476,11 @@ impl NotDiscordUi {
     fn confirm_message_delete(&mut self, message: &ChatMessage) {
         self.confirm("Eliminar mensaje", "¿Eliminar este mensaje? Esta acción no se puede deshacer.", UiAction {
             kind: "delete".into(), id: message.id.clone(), channel_id: message.channel_id.clone(), ..Default::default()
+        });
+    }
+    fn confirm_deleted_log_purge(&mut self, message: &ChatMessage) {
+        self.confirm("Eliminar del registro", "¿Quitar este mensaje eliminado del registro local de esta sesión?", UiAction {
+            kind: "purge-deleted-log".into(), id: message.id.clone(), channel_id: message.channel_id.clone(), ..Default::default()
         });
     }
     fn reply_to(&mut self, m: &ChatMessage) {
@@ -1676,14 +1658,11 @@ impl NotDiscordUi {
                 pan: Vec2::ZERO,
             });
         }
-        response.context_menu(|ui| {
-            if ui.button("Reintentar vista previa").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                self.pictures.retry(poster, 384);
-                self.pictures.retry(url, 384);
-                ui.close();
-            }
-            self.media_menu(ui, url, name);
-        });
+        if !context_menu::capture(ui, &response, || context_menu::Target::Media {
+            url: url.into(), poster: poster.into(), name: name.into(),
+        }) {
+            response.context_menu(|ui| self.media_preview_menu(ui, url, poster, name));
+        }
         let preview_limit = self.pictures.image_error(url, 384)
             .or_else(|| self.pictures.image_error(poster, 384))
             .filter(|error| super::media_limit::is_limit_error(error))
@@ -2367,9 +2346,8 @@ impl NotDiscordUi {
                 self.submitted_paths.insert(submission.clone(), captured.paths.clone());
                 self.submissions.insert(submission.clone(), (channel.clone(), captured.revision));
                 self.sent_drafts.insert(submission.clone(), captured);
-                self.send_captured_draft(&submission, channel);
-                if self.near_recent_history(ui.ctx(), state) {
-                    self.prepare_latest_scroll_for(channel);
+                if self.send_captured_draft(&submission, channel) {
+                    self.go_to_latest_for(channel, latest_window(ui.ctx(), state));
                 }
                 draft.text = after_enter.clone();
                 if !draft.text.is_empty() { draft.revision = 1; }
@@ -2403,8 +2381,8 @@ impl NotDiscordUi {
             );
         }
     }
-    fn send_captured_draft(&mut self, submission: &str, channel: &str) {
-        let Some(draft) = self.sent_drafts.get(submission) else { return; };
+    fn send_captured_draft(&mut self, submission: &str, channel: &str) -> bool {
+        let Some(draft) = self.sent_drafts.get(submission) else { return false; };
         let text = outgoing_mentions(draft);
         let extra = serde_json::json!({"replyId":draft.reply.as_ref().map(|r|r.message_id.as_str()).unwrap_or(""),
             "paths":draft.paths.iter().map(|p|p.to_string_lossy()).collect::<Vec<_>>(),
@@ -2413,7 +2391,9 @@ impl NotDiscordUi {
         if self.command.send(UiAction { kind: "send-prepared".into(), text, extra, channel_id: channel.into(), ..Default::default() }).is_err() {
             self.failed_submissions.insert(submission.to_owned());
             self.error = "El servicio de envío se cerró; el mensaje pendiente se conserva para recuperarlo.".into();
+            return false;
         }
+        true
     }
     fn draw_pending_messages(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
         let channel = &state.selected_channel_id;
@@ -2431,7 +2411,9 @@ impl NotDiscordUi {
                     ui.horizontal_wrapped(|ui| {
                         if ui.add_enabled(state.channel_access.can_send && !state.busy, egui::Button::new("Reintentar")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             // Same submission -> same server nonce, including after ambiguous failure.
-                            self.send_captured_draft(&id, channel);
+                            if self.send_captured_draft(&id, channel) {
+                                self.go_to_latest_for(channel, latest_window(ui.ctx(), state));
+                            }
                         }
                         let empty = self.drafts.get(channel).is_none_or(|next| next.text.is_empty() && next.paths.is_empty() && next.reply.is_none());
                         if ui.add_enabled(empty, egui::Button::new("Recuperar borrador"))
@@ -2886,11 +2868,13 @@ pub(super) fn register_history_label(ui: &egui::Ui, response: &egui::Response, p
     }
     active
 }
-fn selectable_link_label(ui: &mut egui::Ui, text: RichText) -> egui::Response {
+fn selectable_link_label(ui: &mut egui::Ui, text: RichText, url: &str) -> egui::Response {
     // A link is still text: register the same galley in the history selection
     // while reserving the hand cursor and click action for an actual click.
     let (position, galley, response) = egui::Label::new(text).wrap().selectable(true)
         .sense(egui::Sense::click_and_drag()).layout_in_ui(ui);
+    theme::text_link_galley_feedback(ui, &response, position, &galley, ui.visuals().hyperlink_color);
+    context_menu::capture(ui, &response, || context_menu::Target::Link(url.into()));
     if register_history_label(ui, &response, position, galley.clone()) {
         ui.ctx().data_mut(|data| {
             if let Some(label) = data.get_temp_mut_or_default::<HistoryFrame>(egui::Id::new("history-frame"))
@@ -3005,9 +2989,6 @@ fn message_rich_pattern() -> &'static regex::Regex {
 }
 fn readable_mentions(text: &str, explicit: &[Person], state: &AppSnapshot) -> String {
     super::mentions::readable(text, explicit, state)
-}
-fn mention_label(ui: &mut egui::Ui, name: &str, size: f32) -> egui::Response {
-    super::mentions::label(ui, name, size)
 }
 fn known_named_emoji(
     name: &str,
@@ -3202,6 +3183,9 @@ fn reply_preview(
     );
     if available && response.hovered() {
         ui.painter().rect_filled(rect, 4., hover);
+    }
+    if available {
+        theme::text_link_galley_feedback(ui, &response, rect.min + padding, &galley, foreground);
     }
     ui.painter().galley(rect.min + padding, galley, foreground);
     if available {
@@ -4133,11 +4117,7 @@ mod tests {
         // Following intent can be false while physically at the real bottom.
         app.scroll_bottom = false;
         let bottom = chat_frame(&mut app, &ctx, &state, vec![]);
-        let button = painted_text(&bottom, "Volver al inicio ↓").center();
-        for pressed in [true, false] {
-            app.scroll_bottom = false;
-            chat_frame(&mut app, &ctx, &state, pointer(button, pressed, egui::PointerButton::Primary));
-        }
+        assert!(maybe_painted_text(&bottom, "Volver al inicio ↓").is_none());
         assert!(commands.try_recv().is_err());
         let initial = app.positions["200"].offset;
         let viewport = ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new("history-viewport"))).unwrap();
@@ -4152,6 +4132,8 @@ mod tests {
             chat_frame(&mut app, &ctx, &state, vec![]);
             assert!((app.positions["200"].offset - chosen).abs() < 1., "anchor restoration undid the thumb gesture");
         }
+        let output = chat_frame(&mut app, &ctx, &state, vec![]);
+        let button = painted_text(&output, "Volver al inicio ↓").center();
         let output = chat_frame(&mut app, &ctx, &state, vec![egui::Event::PointerMoved(button)]);
         assert_eq!(output.platform_output.cursor_icon, egui::CursorIcon::PointingHand);
         chat_frame(&mut app, &ctx, &state, pointer(button, true, egui::PointerButton::Primary));
@@ -4458,7 +4440,7 @@ mod tests {
     }
     #[test]
     fn near_recent_messages_follow_new_arrivals_but_older_reading_and_edits_keep_the_anchor() {
-        for distance in [100., 500.] {
+        for nearby in [true, false] {
             let (mut app, updates, mut commands) = super::super::tests::harness();
             let ctx = app.ctx.clone();
             let (template, mut state) = message_fixture();
@@ -4469,6 +4451,7 @@ mod tests {
             for _ in 0..3 { chat_frame(&mut app, &ctx, &state, vec![]); }
             let end = app.positions["200"].offset;
             assert!(end > 600.);
+            let distance = if nearby { 100. } else { end };
             app.scroll_bottom=false;app.pending_scroll=Some(end-distance);app.restore_anchor=None;
             for _ in 0..3 { chat_frame(&mut app, &ctx, &state, vec![]); }
             let before = app.positions["200"].offset;
@@ -4479,7 +4462,7 @@ mod tests {
                 timestamp:template.timestamp+chrono::Duration::seconds(60),..template.clone()});next.messages=messages.into();
             updates.send(UiUpdate::Snapshot(next.clone())).unwrap();app.process_updates(&ctx);
             for _ in 0..3 { chat_frame(&mut app, &ctx, &next, vec![]); }
-            if distance < 180. { assert!(app.positions["200"].at_bottom); }
+            if nearby { assert!(app.positions["200"].at_bottom); }
             else { assert_eq!(app.positions["200"].anchor,anchor);assert!((app.positions["200"].offset-before).abs()<1.); }
             assert!(commands.try_recv().is_err(),"following a locally retained tail does not request more history");
 
@@ -5216,6 +5199,7 @@ mod tests {
             }
             let mut latest = old.clone();
             latest.latest_messages_version = 1;
+            latest.latest_messages_channel_id = latest.selected_channel_id.clone();
             latest.messages = (0..45)
                 .map(|n| ChatMessage {
                     id: (2055 + n).to_string(),
@@ -5238,7 +5222,7 @@ mod tests {
         }
     }
     #[test]
-    fn compact_history_controls_jump_to_latest_and_disable_only_at_the_correct_endpoints() {
+    fn compact_history_controls_jump_to_latest_and_hide_at_the_correct_endpoints() {
         let (mut app, ctx, mut commands) = ui_harness();
         let (template, mut state) = message_fixture();
         state.messages = (0..30)
@@ -5259,22 +5243,12 @@ mod tests {
             chat_frame(&mut app, &ctx, &state, vec![]);
         }
         let output = chat_frame(&mut app, &ctx, &state, vec![]);
-        let older = painted_text(&output, "↑ Mensajes anteriores");
+        assert!(maybe_painted_text(&output, "↑ Mensajes anteriores").is_none());
         let latest = painted_text(&output, "Volver al inicio ↓");
         let menu = painted_text(&output, "···");
-        assert!((older.center().y - latest.center().y).abs() < 2.);
         assert!((menu.center().y - latest.center().y).abs() < 2.);
-        assert!(older.height() < 20.);
-        assert!(latest.left() > older.right());
+        assert!(latest.height() < 20.);
         assert!(!output.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(text) if text.galley.job.text=="↓ Ir al presente")));
-        for pressed in [true, false] {
-            chat_frame(
-                &mut app,
-                &ctx,
-                &state,
-                pointer(older.center(), pressed, egui::PointerButton::Primary),
-            );
-        }
         assert!(commands.try_recv().is_err());
         assert!(app.scroll_bottom); // Bottom of a historical page is not the present.
         for pressed in [true, false] {
@@ -5307,24 +5281,13 @@ mod tests {
         assert!(app.positions["200"].at_bottom);
         assert!(latest_window(&ctx, &state));
         let output = chat_frame(&mut app, &ctx, &state, vec![]);
-        let latest = painted_text(&output, "Volver al inicio ↓").center();
-        for pressed in [true, false] {
-            chat_frame(
-                &mut app,
-                &ctx,
-                &state,
-                pointer(latest, pressed, egui::PointerButton::Primary),
-            );
-        }
+        assert!(maybe_painted_text(&output, "Volver al inicio ↓").is_none());
         assert!(commands.try_recv().is_err());
         state.has_older_messages = true;
         // The loaded historical boundary must actually be in view. Merely
         // having an older server page is not permission to fetch from below.
         let output = chat_frame(&mut app, &ctx, &state, vec![]);
-        let older = painted_text(&output, "↑ Mensajes anteriores").center();
-        for pressed in [true, false] {
-            chat_frame(&mut app, &ctx, &state, pointer(older, pressed, egui::PointerButton::Primary));
-        }
+        assert!(maybe_painted_text(&output, "↑ Mensajes anteriores").is_none());
         assert!(commands.try_recv().is_err());
         app.scroll_bottom = false;
         app.pending_scroll = Some(0.);
@@ -5332,6 +5295,7 @@ mod tests {
         assert!(app.positions["200"].offset <= 1.);
         let output = chat_frame(&mut app, &ctx, &state, vec![]);
         let older = painted_text(&output, "↑ Mensajes anteriores").center();
+        assert!(painted_text(&output, "Volver al inicio ↓").right() < older.x);
         for pressed in [true, false] {
             chat_frame(
                 &mut app,
@@ -5354,15 +5318,14 @@ mod tests {
         state.call_status_label = "Conectando".into();
         let output = chat_frame(&mut app, &ctx, &state, vec![]);
         let title = painted_text(&output, "Llamada · Fixture call");
-        let older = painted_text(&output, "↑ Mensajes anteriores");
         let menu = painted_text(&output, "···");
         assert!(
             title.top() < 35.,
             "A menu-only row must not precede the call: {}",
             title.top()
         );
-        assert!(older.top() > title.bottom());
-        assert!((older.center().y - menu.center().y).abs() < 2.);
+        assert!(maybe_painted_text(&output, "↑ Mensajes anteriores").is_none());
+        assert!(menu.top() > title.bottom());
     }
     #[test]
     fn call_records_distinguish_direction_and_only_use_known_outcomes() {
@@ -5704,7 +5667,7 @@ mod tests {
                         response.rect,
                         response.hovered(),
                         response.secondary_clicked(),
-                        response.context_menu_opened(),
+                        context_menu::is_open(&response),
                     );
                     ctx.data_mut(|d| {
                         d.insert_temp(egui::Id::new("fixture-message-response"), report)
@@ -5713,7 +5676,7 @@ mod tests {
             },
         )
     }
-    fn painted_text(output: &egui::FullOutput, needle: &str) -> egui::Rect {
+    fn maybe_painted_text(output: &egui::FullOutput, needle: &str) -> Option<egui::Rect> {
         output
             .shapes
             .iter()
@@ -5728,7 +5691,9 @@ mod tests {
                     None
                 }
             })
-            .unwrap_or_else(|| panic!("Missing painted fixture text: {needle}"))
+    }
+    fn painted_text(output: &egui::FullOutput, needle: &str) -> egui::Rect {
+        maybe_painted_text(output, needle).unwrap_or_else(|| panic!("Missing painted fixture text: {needle}"))
     }
     fn pointer(pos: egui::Pos2, pressed: bool, button: egui::PointerButton) -> Vec<egui::Event> {
         vec![

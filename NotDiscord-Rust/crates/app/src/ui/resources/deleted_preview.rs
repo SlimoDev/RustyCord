@@ -29,6 +29,10 @@ pub(super) struct Cache {
     clock: u64,
 }
 impl Cache {
+    fn purge(&mut self, channel: &str, message: &str) {
+        self.previews.retain(|preview| preview.channel != channel || preview.message != message);
+        self.bytes = self.previews.iter().map(|preview| preview.bytes).sum();
+    }
     fn begin(&mut self, message: &ChatMessage) {
         self.scopes.push((parsing::valid_id(&message.id) && parsing::valid_id(&message.channel_id))
             .then(|| MessageScope {channel:message.channel_id.clone(),message:message.id.clone(),deleted:message.deleted}));
@@ -69,6 +73,9 @@ impl Cache {
     }
 }
 impl Pictures {
+    pub(in crate::ui) fn purge_deleted_message_preview(&mut self, channel: &str, message: &str) {
+        self.deleted_previews.purge(channel, message);
+    }
     pub(in crate::ui) fn begin_message_preview(&mut self, message: &ChatMessage) { self.deleted_previews.begin(message); }
     pub(in crate::ui) fn end_message_preview(&mut self) { self.deleted_previews.scopes.pop(); }
     pub(in crate::ui) fn remember_message_preview(&mut self, url: &str, poster: &str, texture: &TextureHandle) {

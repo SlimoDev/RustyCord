@@ -827,6 +827,7 @@ impl Controller {
                         *pinned = message.clone()
                     }
                 }
+                self.features.filter_purged(&mut self.state.pinned_messages);
                 self.cache.upsert(message);
                 self.refresh_messages();
                 self.publish();
@@ -843,7 +844,7 @@ impl Controller {
                     author_type: s(&extra, "authorType"),
                     ..Default::default()
                 };
-                let list = items(&value["messages"])
+                let mut list = items(&value["messages"])
                     .iter()
                     .flat_map(|v| items(v).iter())
                     .filter(|v| b(v, "hit"))
@@ -851,6 +852,7 @@ impl Controller {
                     .map(parsing::message)
                     .filter(|m| parsed.matches(m))
                     .collect::<Vec<_>>();
+                self.features.filter_purged(&mut list);
                 self.state.messages = list.into();
                 self.state.view = "search".into();
                 self.state.status = if parsed.author_type.is_empty() {

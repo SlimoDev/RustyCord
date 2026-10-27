@@ -1,5 +1,6 @@
 //! Single-owner state actor. Network replies carry session/navigation generations.
 mod incoming;
+mod deleted_logs;
 mod presence;
 mod profile_editor;
 mod reaction_users;
@@ -1390,6 +1391,9 @@ impl Controller {
         self.state.search_people = list;
     }
     async fn act(&mut self, mut action: UiAction) -> Result<(), String> {
+        // Forgetting a local tombstone is never a Discord mutation, nor does it
+        // require an account/network request or a change of navigation context.
+        if action.kind == "purge-deleted-log" { return self.purge_deleted_log(&action); }
         self.sync_network_safety().await;
         action.kind = match action.kind.as_str() {
             "video-call" => "call-dm-video",
@@ -1603,6 +1607,12 @@ impl Controller {
                 }
             }
             "older" | "present" | "jump-message" => {
+                if action.kind == "present" && !action.channel_id.is_empty()
+                    && (action.channel_id != self.state.selected_channel_id || self.state.view != "chat") {
+                    // A send/latest command can outlive the UI's channel. Do
+                    // not redirect a subsequently selected chat or search view.
+                    return Ok(());
+                }
                 self.require("history")?;
                 if action.kind=="older" && !action.channel_id.is_empty() && action.channel_id!=self.state.selected_channel_id {
                     return Err("La conversación de la página anterior cambió.".into());
@@ -2038,6 +2048,7 @@ impl Controller {
                     self.record_loaded_delta(&messages,&kind,&delta);
                     apply_delta(&mut messages, &kind, &delta);
                 }
+                self.features.filter_purged(&mut messages);
                 self.cache.replace(&action.id, messages);
                 self.loading_channel.clear();
                 self.refresh_messages();
@@ -2049,7 +2060,8 @@ impl Controller {
                 self.subscribe().await;
             }
             "__older" | "__present" | "__jump-message" => {
-                if action.channel_id!=self.state.selected_channel_id {
+                if action.channel_id!=self.state.selected_channel_id
+                    || action.kind == "__present" && self.state.view != "chat" {
                     if action.kind=="__older" {self.finish_history_page(&action);}
                     return Ok(());
                 }
@@ -2059,6 +2071,7 @@ impl Controller {
                     .iter()
                     .map(parsing::message)
                     .collect::<Vec<_>>();
+                self.features.filter_purged(&mut page);
                 if action.kind == "__jump-message"
                     && !page
                         .iter()
@@ -2084,6 +2097,7 @@ impl Controller {
                     // scrolling the old history and then restoring its old anchor.
                     self.state.latest_messages_version =
                         self.state.latest_messages_version.wrapping_add(1).max(1);
+                    self.state.latest_messages_channel_id = action.channel_id.clone();
                 }
                 self.publish();
                 if action.kind=="__older" {self.finish_history_page(&action);}
@@ -2121,6 +2135,7 @@ impl Controller {
                         .then(b.1.id.cmp(&a.1.id))
                 });
                 self.state.pinned_messages = pins.into_iter().map(|(_, m)| m).collect();
+                self.features.filter_purged(&mut self.state.pinned_messages);
                 self.state.messages = self.state.pinned_messages.clone().into();
                 self.state.view = "pins".into();
                 self.data("pins-open", json!(true));

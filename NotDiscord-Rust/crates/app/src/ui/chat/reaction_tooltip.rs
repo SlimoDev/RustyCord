@@ -307,7 +307,8 @@ impl NotDiscordUi {
                                             ui.scope_builder(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(3.,2.)))
                                                 .layout(egui::Layout::left_to_right(egui::Align::Center)),|ui| {
                                                 avatar_clicked=this.avatar(ui,person,"",28.).clicked();
-                                                ui.add(egui::Label::new(name).selectable(false).sense(egui::Sense::hover()).truncate());
+                                                let name_label=ui.add(egui::Label::new(name).selectable(false).sense(egui::Sense::hover()).truncate());
+                                                theme::text_link_feedback(ui,&row,name_label.rect,this.theme.ink);
                                             });
                                             if row.clicked()||avatar_clicked {this.send("profile",&person.id,"","",&message.channel_id);}
                                         }

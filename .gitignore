@@ -1,5 +1,8 @@
-# Only this source project is published from the surrounding local workspace.
+# Publish only maintained project sources, docs and the project programming skill.
 /*
 !/.gitignore
 !/README.md
 !/NotDiscord-Rust/
+!/skills/
+/skills/*
+!/skills/notdiscord-programar/

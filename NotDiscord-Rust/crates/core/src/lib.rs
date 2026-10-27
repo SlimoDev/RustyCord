@@ -10,6 +10,7 @@ pub mod guild_settings;
 pub mod models;
 pub mod mentions;
 pub mod member_moderation;
+pub mod markdown;
 pub mod notifications;
 pub mod parsing;
 mod rate_limits;

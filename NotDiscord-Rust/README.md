@@ -1,4 +1,4 @@
-# NotDiscord Rust 0.3.2
+# NotDiscord Rust 0.4.0
 
 Versión principal para Windows en Rust, rama `NotDiscord`. NotDiscord+ conserva su versión anterior en `codex/notdiscord-plus`; esta entrega no actualiza su rama ni su paquete.
 
@@ -21,7 +21,7 @@ NotDiscord utiliza `%LOCALAPPDATA%/NotDiscord/shared/configuration.json` y una s
 
 Plus continúa usando sus archivos anteriores. La sincronización continua y la exclusión bidireccional con Plus quedan pendientes hasta que se autorice actualizar esa variante. NotDiscord puede solicitar el cierre ordenado de una instancia anterior de su instalación y muestra el motivo.
 
-El manifiesto `version.json` identifica versión y rama. La distribución es un único `dist/NotDiscord-Setup-0.3.2.exe`, con el runtime requerido. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
+El manifiesto `version.json` identifica versión y rama. La distribución es un único `dist/NotDiscord-Setup-0.4.0.exe`, con el runtime requerido. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
 
 - [Interacción, inventario de scroll y organización de datos](docs/interaction-and-shared-state.md)
 - [Instalación y selección de ruta](docs/installer.md)
@@ -30,5 +30,8 @@ El manifiesto `version.json` identifica versión y rama. La distribución es un 
 - [Previsualizaciones de mensajes eliminados](docs/deleted-media-previews.md)
 - [Adjuntos, suscripciones y límites](docs/uploads.md)
 - [Corrección del bloqueo de arranque en 0.3.2](docs/startup-0.3.2.md)
+- [Plan de skills y criterio de versionado](docs/plan-skills.md)
+- [Mensajes y panel de usuario en 0.4.0](docs/ui-0.4.0.md)
+- [Evidencia de Markdown obtenida con REA](docs/rea-markdown-0.4.0.md)
 
 La entrega se comprueba mediante revisión de código y compilación de producción y destinos auxiliares. No se ejecutan pruebas funcionales, dispositivos, llamadas ni cuentas. La confirmación del comportamiento corresponde al usuario.

@@ -392,6 +392,7 @@ impl NotDiscordUi {
                 family.insert(0, font);
             }
         }
+        theme::configure_author_font(&mut fonts);
         ctx.set_fonts(fonts.clone());
         let prefs = Preferences::load(&data_dir);
         let sound_preferences = crate::sounds::SoundPreferences::load(&data_dir);
@@ -624,6 +625,7 @@ impl NotDiscordUi {
             }
             self.cjk_loaded |= bit;
         }
+        theme::configure_author_font(&mut self.fonts);
         self.ctx.set_fonts(self.fonts.clone());
         self.ctx.request_repaint();
     }
@@ -909,7 +911,14 @@ impl NotDiscordUi {
                     }
                     let latest_scroll = snapshot.latest_messages_version
                         != self.latest_scroll_version
-                        && snapshot.latest_messages_version != 0;
+                        && snapshot.latest_messages_version != 0
+                        && snapshot.latest_messages_channel_id == snapshot.selected_channel_id
+                        && snapshot.view == "chat"
+                        && self.state.view == "chat"
+                        && snapshot.selected_channel_id == self.state.selected_channel_id
+                        && snapshot.notification_generation == self.state.notification_generation
+                        && snapshot.current_user.as_ref().map(|user| &user.id)
+                            == self.state.current_user.as_ref().map(|user| &user.id);
                     self.latest_scroll_version = snapshot.latest_messages_version;
                     self.state = snapshot;
                     if latest_scroll && self.state.view == "chat" {
@@ -1000,6 +1009,23 @@ impl NotDiscordUi {
         }
         if kind == "stream-viewers" { self.ctx.data_mut(|d|d.insert_temp(egui::Id::new("stream-viewers"),data)); return; }
         match kind {
+            "deleted-log-purged" => {
+                let channel = s(&data, "channelId");
+                let message = s(&data, "messageId");
+                if notdiscord_core::parsing::valid_id(channel) && notdiscord_core::parsing::valid_id(message) {
+                    self.pictures.purge_deleted_message_preview(channel, message);
+                    self.forget_deleted_message_context(channel, message);
+                    for draft in self.drafts.values_mut().chain(self.sent_drafts.values_mut()) {
+                        if let Some(reply) = draft.reply.as_mut().filter(|reply| reply.channel_id == channel && reply.message_id == message) {
+                            reply.author = None;
+                            reply.content.clear();
+                            reply.mentions.clear();
+                            reply.deleted = true;
+                            reply.unavailable = true;
+                        }
+                    }
+                }
+            }
             "profile-editor-loaded" | "profile-edit-result" => self.profile_editor_update(kind,&data),
             "present" if data.as_bool() == Some(true) => self.prepare_latest_scroll(),
             "dm-sidebar-profile" => {
@@ -1025,6 +1051,9 @@ impl NotDiscordUi {
                 let detached = self.sent_drafts.remove(submission).is_some();
                 self.failed_submissions.remove(submission);
                 if let Some((channel, revision)) = self.submissions.remove(submission) {
+                    if self.state.view == "chat" && self.state.selected_channel_id == channel {
+                        self.prepare_latest_scroll_for(&channel);
+                    }
                     let paths = self.submitted_paths.remove(submission).unwrap_or_default();
                     if !detached && self
                         .drafts

@@ -220,9 +220,9 @@ pub(super) fn draw_member_voice_flags(ui:&mut egui::Ui,rect:egui::Rect,state:&Ap
     }
     right
 }
-fn left_footer_height(state: &AppSnapshot, compact: bool) -> f32 {
+fn left_footer_height(state: &AppSnapshot, compact: bool, update_visible: bool) -> f32 {
     (if state.signed_in { 78. } else { 110. })
-        + 58.
+        + if update_visible { 58. } else { 0. }
         + if own_game(state).is_some() { if compact { 42. } else { 64. } } else { 0. }
         + if state.voice_connected || state.voice_connecting { 64. } else { 0. }
         + if !state.voice_error.is_empty() { if compact { 86. } else { 122. } } else { 0. }
@@ -780,7 +780,7 @@ impl NotDiscordUi {
             )
             .show(ctx, |ui| {
                 if self.background_blocked() { ui.disable(); }
-                let footer = left_footer_height(state, ctx.content_rect().height() < 420.);
+                let footer = left_footer_height(state, ctx.content_rect().height() < 420., self.updater.control_visible());
                 let available = ui.available_rect_before_wrap();
                 let reserved = egui::Rect::from_min_max(available.min, egui::pos2(available.right(), (available.bottom() - footer).max(available.top())));
                 let mut content = ui.new_child(egui::UiBuilder::new().id_salt("rail-content").max_rect(reserved));
@@ -929,7 +929,7 @@ impl NotDiscordUi {
             .show(ctx, |ui| {
                 if self.background_blocked() { ui.disable(); }
                 let compact_footer = ctx.content_rect().height() < 420.;
-                let footer = left_footer_height(state, compact_footer);
+                let footer = left_footer_height(state, compact_footer, self.updater.control_visible());
                 let available = ui.available_rect_before_wrap();
                 let reserved = egui::Rect::from_min_max(available.min, egui::pos2(available.right(), (available.bottom() - footer).max(available.top())));
                 let mut content = ui.new_child(egui::UiBuilder::new().id_salt("conversation-content").max_rect(reserved));
@@ -1731,13 +1731,9 @@ impl NotDiscordUi {
                 + if secondary { 18. } else { 0. }
                 + if item.has_active_call { 16. } else { 0. };
             let mut top = rect.center().y - text_height / 2.;
-            fitted_text(
-                ui,
-                egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, 20.)),
-                &item.name,
-                16.,
-                text_color,
-            );
+            let name_rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, 20.));
+            fitted_text(ui, name_rect, &item.name, 16., text_color);
+            theme::fitted_link_feedback(ui, &response, name_rect, &item.name, 16., text_color);
             top += 20.;
             if item.has_active_call {
                 let call_rect = egui::Rect::from_min_size(
@@ -1769,16 +1765,12 @@ impl NotDiscordUi {
                 );
             }
         } else {
-            fitted_text(
-                ui,
-                egui::Rect::from_min_max(
-                    egui::pos2(left, rect.top()),
-                    egui::pos2(right.max(left), rect.bottom()),
-                ),
-                &item.name,
-                16.,
-                text_color,
+            let name_rect = egui::Rect::from_min_max(
+                egui::pos2(left, rect.top()),
+                egui::pos2(right.max(left), rect.bottom()),
             );
+            fitted_text(ui, name_rect, &item.name, 16., text_color);
+            theme::fitted_link_feedback(ui, &response, name_rect, &item.name, 16., text_color);
         }
         if voice_join.as_ref().is_some_and(|(_,clicked)|*clicked) {
             self.navigate(item);
@@ -2113,14 +2105,21 @@ impl NotDiscordUi {
                         if !state.signed_in && ui.button("Iniciar sesión").clicked() {
                             self.simple("login");
                         }
-                        ui.separator();
-                        self.updater.button(ui);
+                        if self.updater.control_visible() {
+                            ui.separator();
+                            self.updater.button(ui);
+                        }
                     });
             });
         #[cfg(test)] ctx.data_mut(|data| data.insert_temp(egui::Id::new("left-footer-rect"), footer.response.rect));
         #[cfg(not(test))] let _ = footer;
     }
     fn account_menu(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
+        if ui.add_enabled(self.updater.can_check(), egui::Button::new("Buscar actualizaciones")).clicked() {
+            self.updater.check(ui.ctx());
+            ui.close();
+        }
+        ui.separator();
         if let Some(me) = &state.current_user {
             if ui.button("Ver mi perfil").clicked() {
                 self.send("profile", &me.id, "", "", &state.selected_channel_id);
@@ -2317,16 +2316,13 @@ impl NotDiscordUi {
         let custom = live.map(|presence| presence.custom_status.as_str()).unwrap_or(&member.custom_status);
         let emoji = live.map(|presence| presence.custom_status_emoji.as_ref()).unwrap_or(member.custom_status_emoji.as_ref());
         let extra_game = has_status(custom, emoji) && !game.is_empty();
-        fitted_text(
-            ui,
-            egui::Rect::from_min_size(
-                egui::pos2(left, if extra_game { rect.top() + 3. } else { rect.center().y - 19. }),
-                egui::vec2(width, 21.),
-            ),
-            &name,
-            name_size,
-            self.readable_role(member.role_color),
+        let name_rect = egui::Rect::from_min_size(
+            egui::pos2(left, if extra_game { rect.top() + 3. } else { rect.center().y - 19. }),
+            egui::vec2(width, 21.),
         );
+        let name_color = self.readable_role(member.role_color);
+        fitted_text(ui, name_rect, &name, name_size, name_color);
+        theme::fitted_link_feedback(ui, &response, name_rect, &name, name_size, name_color);
         let fallback = presence_label(presence);
         self.presence_line(
             ui,

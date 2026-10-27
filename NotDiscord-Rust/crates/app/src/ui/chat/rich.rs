@@ -30,7 +30,7 @@ impl NotDiscordUi {
         let text = RichText::new(label).size(self.prefs.chat_size).color(if browser_link(url) { self.theme.accent } else { self.theme.ink });
         let text = if strong { text.strong() } else { text };
         if browser_link(url) {
-            if history_link_activated(&selectable_link_label(ui, text).on_hover_text(url)) {
+            if history_link_activated(&selectable_link_label(ui, text, url).on_hover_text(url)) {
                 self.open_message_link(ui.ctx(), url);
             }
         } else { selectable_message_label(ui, text); }
@@ -73,7 +73,9 @@ impl NotDiscordUi {
                             2 => {
                                 let label = if component.text.is_empty() { "Botón del bot" } else { &component.text };
                                 if browser_link(&component.url) {
-                                    if ui.button(label).on_hover_text(&component.url).clicked() {
+                                    let link = ui.button(label).on_hover_text(&component.url);
+                                    context_menu::capture(ui, &link, || context_menu::Target::Link(component.url.clone()));
+                                    if link.clicked() {
                                         if let Err(error) = crate::platform::open_link(&component.url) { self.error = error; }
                                     }
                                 } else { ui.add_enabled(false, egui::Button::new(label)).on_disabled_hover_text(INTERACTION_NOTE); }

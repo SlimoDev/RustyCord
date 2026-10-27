@@ -6,7 +6,7 @@ use std::{
     sync::OnceLock,
 };
 
-const PATHS: [&str; 9] = [
+const PATHS: [&str; 12] = [
     r"C:\Windows\Fonts\segoeui.ttf",
     r"C:\Windows\Fonts\seguisym.ttf",
     r"C:\Windows\Fonts\seguiemj.ttf",
@@ -16,6 +16,9 @@ const PATHS: [&str; 9] = [
     r"C:\Windows\Fonts\msyh.ttc",
     r"C:\Windows\Fonts\msjh.ttc",
     r"C:\Windows\Fonts\malgun.ttf",
+    r"C:\Windows\Fonts\segoeuib.ttf",
+    r"C:\Windows\Fonts\segoeuii.ttf",
+    r"C:\Windows\Fonts\segoeuiz.ttf",
 ];
 struct FontMapping {
     _file: File,

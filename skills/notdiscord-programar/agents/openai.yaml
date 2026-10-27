@@ -1,0 +1,6 @@
+interface:
+  display_name: "NotDiscord · Programación"
+  short_description: "Implementa y entrega cambios de NotDiscord en Rust"
+  default_prompt: "Usa $notdiscord-programar para implementar esta tarea en la variante y con el tipo de actualización indicados."
+policy:
+  allow_implicit_invocation: true

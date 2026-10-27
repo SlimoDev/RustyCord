@@ -13,9 +13,35 @@ const CHANNEL_LIMIT: usize = 2 * 1024 * 1024;
 const TOTAL_LIMIT: usize = 8 * 1024 * 1024;
 const MAX_RECORD_BYTES: usize = 1024 * 1024;
 const MAX_RECORDS: usize = 4096;
+const MAX_PURGED_MESSAGES: usize = 16384;
+
+// Payload-free markers live for this session only. They prevent an already
+// queued REST window/delta from restoring a record the user explicitly forgot.
+pub(super) type PurgedLogs = HashMap<String, HashSet<String>>;
+pub(super) fn is_purged(purged: &PurgedLogs, channel: &str, id: &str) -> bool {
+    purged.get(channel).is_some_and(|ids| ids.contains(id))
+}
+pub(super) fn scrub_purged_reference(message: &mut ChatMessage, purged: &PurgedLogs) {
+    if let Some(preview) = message.reply_preview.as_mut() {
+        let channel = if preview.channel_id.is_empty() { &message.channel_id } else { &preview.channel_id };
+        if is_purged(purged, channel, &preview.message_id) {
+            // Keep only the fact that a reply has an unavailable destination;
+            // retained author, text and mentions belong to the forgotten log.
+            *preview = notdiscord_core::models::MessageReplyPreview {
+                message_id: preview.message_id.clone(), channel_id: channel.clone(),
+                deleted: true, unavailable: true, ..Default::default()
+            };
+        }
+    }
+}
+pub(super) fn filter_purged_messages(messages: &mut Vec<ChatMessage>, purged: &PurgedLogs) {
+    messages.retain(|message| !is_purged(purged, &message.channel_id, &message.id));
+    for message in messages { scrub_purged_reference(message, purged); }
+}
 
 struct LoggedChange {
     snapshot: ChatMessage,
+    weight: usize,
 }
 struct SessionHistory {
     records: VecDeque<LoggedChange>,
@@ -24,11 +50,13 @@ struct SessionHistory {
     channel_limit: usize,
     total_limit: usize,
     record_limit: usize,
+    purged: PurgedLogs,
 }
 impl Default for SessionHistory {
     fn default() -> Self {
         Self { records: VecDeque::new(), channel_bytes: HashMap::new(), bytes: 0,
-            channel_limit: CHANNEL_LIMIT, total_limit: TOTAL_LIMIT, record_limit: MAX_RECORDS }
+            channel_limit: CHANNEL_LIMIT, total_limit: TOTAL_LIMIT, record_limit: MAX_RECORDS,
+            purged: PurgedLogs::new() }
     }
 }
 pub struct Features {
@@ -81,6 +109,8 @@ impl Features {
         }
         let weight = serialized.len().saturating_add(std::mem::size_of::<LoggedChange>());
         let mut history = self.history.lock().map_err(|_| "No se pudo bloquear el historial de sesión.")?;
+        if is_purged(&history.purged, &snapshot.channel_id, &snapshot.id) { return Ok(()); }
+        scrub_purged_reference(&mut snapshot, &history.purged);
         if history.records.iter().rev().find(|record|record.snapshot.channel_id==snapshot.channel_id&&record.snapshot.id==snapshot.id)
             .is_some_and(|record|record.snapshot==snapshot) {return Ok(());}
         let channel_bytes = history.channel_bytes.get(&snapshot.channel_id).copied().unwrap_or(0);
@@ -91,8 +121,40 @@ impl Features {
         }
         history.channel_bytes.insert(snapshot.channel_id.clone(), channel_bytes + weight);
         history.bytes += weight;
-        history.records.push_back(LoggedChange { snapshot });
+        history.records.push_back(LoggedChange { snapshot, weight });
         Ok(())
+    }
+    pub fn has_deleted_log(&self, channel: &str, id: &str) -> bool {
+        let history = self.history.lock().unwrap_or_else(|error| error.into_inner());
+        history.records.iter().any(|record| record.snapshot.channel_id == channel
+            && record.snapshot.id == id && record.snapshot.deleted)
+    }
+    pub fn log_is_purged(&self, channel: &str, id: &str) -> bool {
+        is_purged(&self.history.lock().unwrap_or_else(|error| error.into_inner()).purged, channel, id)
+    }
+    /// The controller validates that this is a known deleted message before
+    /// calling. Current history is RAM-only: no journal is read or rewritten.
+    pub fn purge_deleted_log(&self, channel: &str, id: &str) -> Result<(), String> {
+        let mut history = self.history.lock().map_err(|_| "No se pudo bloquear el historial de sesión.")?;
+        if !is_purged(&history.purged, channel, id) {
+            if history.purged.values().map(HashSet::len).sum::<usize>() >= MAX_PURGED_MESSAGES {
+                return Err("Se alcanzó el límite de registros retirados de esta sesión; no se ha modificado el registro.".into());
+            }
+            history.purged.entry(channel.to_owned()).or_default().insert(id.to_owned());
+        }
+        history.records.retain(|record| record.snapshot.channel_id != channel || record.snapshot.id != id);
+        let SessionHistory { records, purged, channel_bytes, bytes, .. } = &mut *history;
+        channel_bytes.clear(); *bytes = 0;
+        for record in records {
+            scrub_purged_reference(&mut record.snapshot, purged);
+            *channel_bytes.entry(record.snapshot.channel_id.clone()).or_default() += record.weight;
+            *bytes += record.weight;
+        }
+        Ok(())
+    }
+    pub fn filter_purged(&self, messages: &mut Vec<ChatMessage>) {
+        let history = self.history.lock().unwrap_or_else(|error| error.into_inner());
+        filter_purged_messages(messages, &history.purged);
     }
     pub fn history(&self, channel: &str, limit: usize) -> Result<Vec<ChatMessage>, String> {
         if !(1..=1000).contains(&limit) { return Err("El límite debe estar entre 1 y 1000.".into()); }
@@ -100,6 +162,7 @@ impl Features {
         let mut result = history.records.iter().rev().filter(|record| record.snapshot.channel_id == channel)
             .take(limit).map(|record| record.snapshot.clone()).collect::<Vec<_>>();
         result.reverse();
+        filter_purged_messages(&mut result, &history.purged);
         Ok(result)
     }
     /// Restore observed changes independently of the short-lived REST/LRU
@@ -143,6 +206,7 @@ impl Features {
                 preview.deleted=true;preview.author=Some(author.clone());preview.content=content.clone();preview.mentions=mentions.clone();preview.unavailable=false;
             }
         }
+        filter_purged_messages(&mut result, &history.purged);
         result.sort_by(|a,b|a.timestamp.cmp(&b.timestamp).then(a.id.len().cmp(&b.id.len())).then(a.id.cmp(&b.id)));
         result
     }

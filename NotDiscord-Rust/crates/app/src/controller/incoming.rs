@@ -233,8 +233,9 @@ impl Controller {
         let known_channel=self.channels.contains_key(&s(&value,"id"));
         self.guild_load.observe(kind,&value,&me,known_channel);
         if matches!(kind, "MESSAGE_CREATE" | "MESSAGE_UPDATE" | "MESSAGE_DELETE") {
-            self.observe_message_nickname(&value);
             let channel = s(&value, "channel_id");
+            if self.features.log_is_purged(&channel, &s(&value, "id")) { return Ok(()); }
+            self.observe_message_nickname(&value);
             if self.loading_channel == channel {
                 let bytes = value.to_string().encode_utf16().count() * 2;
                 if self.pending_deltas.len() >= 256
@@ -308,9 +309,11 @@ impl Controller {
                     }
                 }
             }
+            self.features.filter_purged(&mut self.state.pinned_messages);
             if self.state.view == "pins" && channel == self.state.selected_channel_id {
                 self.state.messages = self.state.pinned_messages.clone().into();
             }
+            self.features.filter_purged(&mut self.state.messages);
             if kind == "MESSAGE_UPDATE" {
                 if let Some(pinned) = value.get("pinned").and_then(Value::as_bool) {
                     self.apply_message_pin(&channel, &id, pinned);
@@ -952,6 +955,7 @@ impl Controller {
             .unwrap_or(fallback)
     }
     pub(super) fn observe_message_preview(&mut self, message: &ChatMessage) {
+        if self.features.log_is_purged(&message.channel_id, &message.id) { return; }
         if self
             .latest
             .get(&message.channel_id)
