@@ -1169,8 +1169,10 @@ impl NotDiscordUi {
                 if !announced.contains(&id) {
                     // Merge both decoder-derived fallback sources instead of
                     // letting the first video hide the other source's control.
-                    participant.self_video |= video.kind=="camera";
-                    participant.screen_sharing |= video.kind=="screen";
+                    participant.self_video |= !video.preview && video.kind=="camera";
+                    participant.screen_sharing |= !video.preview && video.kind=="screen";
+                    participant.camera_preparing |= video.preview && video.kind=="camera";
+                    participant.screen_preparing |= video.preview && video.kind=="screen";
                 }
             } else {
                 participants.push(CallParticipant {
@@ -1180,8 +1182,10 @@ impl NotDiscordUi {
                         ..Default::default()
                     },
                     is_self: video.local,
-                    self_video: video.kind == "camera",
-                    screen_sharing: video.kind == "screen",
+                    self_video: !video.preview && video.kind == "camera",
+                    screen_sharing: !video.preview && video.kind == "screen",
+                    camera_preparing: video.preview && video.kind == "camera",
+                    screen_preparing: video.preview && video.kind == "screen",
                     ..Default::default()
                 });
             }
@@ -1261,9 +1265,6 @@ impl NotDiscordUi {
                         .cloned();
                     let camera = source("camera");
                     let screen = source("screen");
-                    let selector_preview = |kind: &str| match kind {
-                        "camera"=>camera.as_ref(),"screen"=>screen.as_ref(),_=>None,
-                    }.is_some_and(|video|video.local && video.preview);
                     let running = |video: &CallVideo| video.active || matches!(
                         video.status.as_str(), "loading" | "connecting" | "waiting" | "starting" | "paused"
                     );
@@ -1271,7 +1272,7 @@ impl NotDiscordUi {
                     let camera_available = call_source_available(Some(participant),&participant.user.id,"camera",videos) || participant.is_self
                         && camera.as_ref().is_some_and(|video|retained(video)&&video.local);
                     let screen_available = call_source_available(Some(participant),&participant.user.id,"screen",videos) || participant.is_self
-                        && screen.as_ref().is_some_and(retained);
+                        && screen.as_ref().is_some_and(|video|retained(video)&&video.local);
                     let requested = |video: &CallVideo| video.view_requested && retained(video);
                     let automatic = if participant.viewing=="camera"&&camera_available||participant.viewing=="screen"&&screen_available {
                         participant.viewing.as_str()
@@ -1327,14 +1328,17 @@ impl NotDiscordUi {
                     let mut flags=Vec::new();
                     if participant.self_mute||participant.server_mute {flags.push("Silenciado");}
                     if participant.self_deaf||participant.server_deaf {flags.push("Ensordecido");}
-                    if camera_available {flags.push("cámara");}
-                    if screen_available {flags.push("pantalla");}
+                    if camera_available {flags.push(if participant.source_preparing("camera") {"cámara local en preparación"}else{"cámara"});}
+                    if screen_available {flags.push(if participant.source_preparing("screen") {"pantalla local en preparación"}else{"pantalla"});}
                     let flags=flags.join(" · ");
                     let mut footer=call_tile_text_height(ui,width,display_name,&egui::TextStyle::Body)+gap;
                     if !flags.is_empty() {footer+=call_tile_text_height(ui,width,&flags,&egui::TextStyle::Small)+gap;}
-                    if screen_available {footer+=call_tile_text_height(ui,width,"Espectadores: 999",&egui::TextStyle::Small)+gap;}
-                    for (label,available) in [("Pantalla",screen_available),("Cámara",camera_available)] {
-                        if available {footer+=call_tile_button_height(ui,width,&format!("{label} · Dejar de ver"))+gap;}
+                    if screen_available && !participant.source_preparing("screen") {footer+=call_tile_text_height(ui,width,"Espectadores: 999",&egui::TextStyle::Small)+gap;}
+                    for (kind,label,available) in [("screen","Pantalla",screen_available),("camera","Cámara",camera_available)] {
+                        if available {
+                            let longest=if participant.source_preparing(kind) {"Reintentar vista previa"}else{"Dejar de ver"};
+                            footer+=call_tile_button_height(ui,width,&format!("{label} · {longest}"))+gap;
+                        }
                     }
                     if video.is_some_and(|video|video.status=="error")||selection_error.is_some() {footer+=ui.text_style_height(&egui::TextStyle::Small)+gap;}
                     let image_height=call_tile_image_height(width,max_image_height,row_height,footer);
@@ -1372,7 +1376,8 @@ impl NotDiscordUi {
                                             natural * ratio,
                                         ),
                                     );
-                                if response.clicked_by(egui::PointerButton::Primary) && !egui::Popup::is_any_open(ui.ctx()) {
+                                if video.is_some_and(|video|!video.preview)
+                                    && response.clicked_by(egui::PointerButton::Primary) && !egui::Popup::is_any_open(ui.ctx()) {
                                     let id = video.unwrap().id;
                                     if !incoming {
                                         ui.ctx().data_mut(|data|data.insert_temp(egui::Id::new("call-expanded-video"),CallExpansion {
@@ -1385,7 +1390,8 @@ impl NotDiscordUi {
                                 ui.painter().text(
                                     rect.center(),
                                     egui::Align2::CENTER_CENTER,
-                                    if video.is_some() {"Cargando vídeo…"}else{"Esperando datos de vídeo…"},
+                                    if participant.source_preparing(selected) {"Preparando vista previa local…"}
+                                    else if video.is_some() {"Cargando vídeo…"}else{"Esperando datos de vídeo…"},
                                     egui::FontId::proportional(12.),
                                     ink,
                                 );
@@ -1426,7 +1432,7 @@ impl NotDiscordUi {
                                     .wrap(),
                                 );
                             }
-                            if screen_available && !incoming {
+                            if screen_available && !participant.source_preparing("screen") && !incoming {
                                 let viewers=ui.ctx().data(|data|data.get_temp::<Value>(egui::Id::new("stream-viewers"))).unwrap_or(Value::Null);
                                 if viewers["channelId"]==channel_id && viewers["voiceAttempt"].as_u64()==Some(instance_id) {
                                     let key=screen.as_ref().map(|video|video.stream_key.as_str()).filter(|key|!key.is_empty());
@@ -1439,10 +1445,22 @@ impl NotDiscordUi {
                                 if !available {continue;}
                                 let failed=selected==kind && (video.is_some_and(|video|video.status=="error")||selection_error.is_some());
                                 let retrying=retry_waiting&&selected==kind;
-                                let showing=retrying||!failed && selected==kind && (incoming || video.is_some() || remembered.as_deref()==Some(kind));
-                                let response=ui.add_sized([width,call_button_height(ui)],egui::Button::new(
-                                    format!("{label} · {}",if retrying {"Cancelar"} else if failed {"Reintentar"} else if showing {"Dejar de ver"} else {"Mostrar"})
-                                ).wrap());
+                                let showing=retrying||!failed && selected==kind && (incoming || video.is_some()
+                                    || remembered.as_deref()==Some(kind) || participant.viewing==kind);
+                                let preparing=participant.source_preparing(kind);
+                                let action=if preparing {
+                                    if failed {"Reintentar vista previa"}else if showing {"Ocultar vista previa"}else{"Mostrar vista previa"}
+                                }else if retrying {"Cancelar"} else if failed {"Reintentar"} else if showing {"Dejar de ver"} else {"Mostrar"};
+                                let button_label=format!("{label} · {action}");
+                                let button_height=call_tile_button_height(ui,width,&button_label);
+                                let mut response=ui.add_sized([width,button_height],egui::Button::new(button_label).wrap());
+                                if preparing {
+                                    response=response.on_hover_text(if state.voice_encryption_ready {
+                                        "Vista previa local. La publicación de esta fuente todavía se está preparando."
+                                    }else{
+                                        "Vista previa local. Esta fuente no se envía mientras se espera el cifrado."
+                                    });
+                                }
                                 #[cfg(test)] ui.ctx().data_mut(|data|data.insert_temp(
                                     egui::Id::new(("participant-media-button",scope,&participant.user.id,kind)),
                                     (response.rect,ui.clip_rect()),
@@ -1468,7 +1486,7 @@ impl NotDiscordUi {
                                         }
                                     });
                                     for (source,visible) in [(selected,false),(next,true)] {
-                                        if source=="avatar" || selector_preview(source) {continue;}
+                                        if source=="avatar" {continue;}
                                         let extra=if incoming {serde_json::json!({"instanceId":instance_id,"visible":visible})}
                                             else {serde_json::json!({"voiceAttempt":instance_id,"visible":visible})};
                                         self.send("view-incoming-media",&participant.user.id,source,extra.to_string(),channel_id);
@@ -2230,6 +2248,109 @@ mod tests {
         );
     }
     #[test]
+    fn pending_local_sources_keep_both_controls_with_zero_or_one_preview() {
+        for preview in [None,Some("screen"),Some("camera")] {
+            for width in [700.,450.] {
+                let (mut app,_,mut actions)=super::super::tests::harness();
+                let ctx=app.ctx.clone();
+                let local=Person {id:"100".into(),name:"Local pending camera and screen".into(),..Default::default()};
+                let mut participants=vec![CallParticipant {
+                    user:local.clone(),is_self:true,camera_preparing:true,screen_preparing:true,
+                    camera_announcement_known:true,screen_announcement_known:true,
+                    viewing:preview.unwrap_or("").into(),..Default::default()
+                }];
+                participants.extend((0..3).map(|index|CallParticipant {
+                    user:Person {id:format!("30{index}"),name:format!("Peer {index}"),..Default::default()},
+                    ..Default::default()
+                }));
+                let state=AppSnapshot {
+                    current_user:Some(local),voice_connected:true,call_channel_id:"50".into(),
+                    call_instance_id:17,camera_preparing:true,screen_preparing:true,
+                    call_participants:participants,
+                    call_videos:preview.into_iter().map(|kind|CallVideo {
+                        id:7,user_id:"100".into(),kind:kind.into(),preview:true,local:true,
+                        active:true,status:"ready".into(),..Default::default()
+                    }).collect(),..Default::default()
+                };
+                let frame=|app:&mut NotDiscordUi|ctx.run(egui::RawInput {
+                    screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(width,900.))),
+                    ..Default::default()
+                },|ctx| {egui::CentralPanel::default().show(ctx,|ui|app.draw_call_in_height(ui,&state,650.));});
+                for _ in 0..4 {frame(&mut app);}
+                let output=frame(&mut app);
+                let button=|kind|ctx.data(|data|data.get_temp::<(egui::Rect,egui::Rect)>(egui::Id::new((
+                    "participant-media-button","account:100:call:50:17","100",kind,
+                )))).expect("both pending offers have a button without requiring two previews");
+                let (screen,screen_clip)=button("screen");
+                let (camera,camera_clip)=button("camera");
+                assert!(screen_clip.contains_rect(screen) && camera_clip.contains_rect(camera),"preview={preview:?}, width={width}");
+                assert!(camera.top()>=screen.bottom());
+                for (kind,label) in [("screen","Pantalla"),("camera","Cámara")] {
+                    let action=if preview==Some(kind) {"Ocultar vista previa"}else{"Mostrar vista previa"};
+                    let expected=format!("{label} · {action}");
+                    assert!(output.shapes.iter().any(|shape|matches!(&shape.shape,
+                        egui::Shape::Text(text) if text.galley.job.text==expected)));
+                }
+                assert!(!state.call_participants[0].self_video && !state.call_participants[0].screen_sharing);
+                assert!(actions.try_recv().is_err(),"rendering pending offers never starts capture or publication");
+            }
+        }
+    }
+    #[test]
+    fn pending_local_choice_survives_preview_removal_and_navigation_and_can_hide_the_preview() {
+        let (mut app,_,mut actions)=super::super::tests::harness();
+        let ctx=app.ctx.clone();ctx.style_mut(|style|style.animation_time=0.);
+        let local=Person {id:"100".into(),name:"Local pending sources".into(),..Default::default()};
+        let mut state=AppSnapshot {
+            current_user:Some(local.clone()),voice_connected:true,call_channel_id:"50".into(),
+            selected_channel_id:"50".into(),call_instance_id:17,camera_preparing:true,screen_preparing:true,
+            call_participants:vec![CallParticipant {user:local,is_self:true,camera_preparing:true,screen_preparing:true,
+                camera_announcement_known:true,screen_announcement_known:true,viewing:"screen".into(),..Default::default()}],
+            call_videos:vec![CallVideo {id:7,user_id:"100".into(),kind:"screen".into(),preview:true,local:true,
+                active:true,status:"ready".into(),..Default::default()}],..Default::default()
+        };
+        let frame=|app:&mut NotDiscordUi,state:&AppSnapshot,events|ctx.run(egui::RawInput {
+            screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(700.,700.))),events,..Default::default()
+        },|ctx| {egui::CentralPanel::default().show(ctx,|ui| {
+            if call_panel_visible(state) {app.draw_call_in_height(ui,state,600.);}
+        });});
+        let camera_button=||ctx.data(|data|data.get_temp::<(egui::Rect,egui::Rect)>(egui::Id::new((
+            "participant-media-button","account:100:call:50:17","100","camera",
+        )))).unwrap().0;
+        for _ in 0..4 {frame(&mut app,&state,vec![]);}
+        let position=camera_button().center();
+        for pressed in [true,false] {frame(&mut app,&state,vec![egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {pos:position,button:egui::PointerButton::Primary,pressed,modifiers:egui::Modifiers::NONE}]);}
+        let sent=std::iter::from_fn(||actions.try_recv().ok()).collect::<Vec<_>>();
+        assert_eq!(sent.len(),2);
+        for (action,kind,visible) in [(&sent[0],"screen",false),(&sent[1],"camera",true)] {
+            assert_eq!((action.kind.as_str(),action.id.as_str(),action.text.as_str()),("view-incoming-media","100",kind));
+            assert_eq!(serde_json::from_str::<Value>(&action.extra).unwrap()["visible"],visible);
+        }
+        state.call_participants[0].viewing="camera".into();
+        state.call_videos.clear();
+        state.selected_channel_id="99".into();
+        frame(&mut app,&state,vec![]);
+        state.selected_channel_id="50".into();
+        let returned=frame(&mut app,&state,vec![]);
+        let selected=ctx.data(|data|data.get_temp::<HashMap<String,String>>(egui::Id::new("participant-media-selection")))
+            .unwrap();
+        assert_eq!(selected.get("account:100:call:50:17:100").map(String::as_str),Some("camera"));
+        assert!(returned.shapes.iter().any(|shape|matches!(&shape.shape,
+            egui::Shape::Text(text) if text.galley.job.text=="Cámara · Ocultar vista previa")));
+        assert!(actions.try_recv().is_err(),"navigation snapshots preserve the offer and choice without issuing capture commands");
+        state.call_videos=vec![CallVideo {id:8,user_id:"100".into(),kind:"camera".into(),preview:true,local:true,
+            active:true,status:"ready".into(),..Default::default()}];
+        for _ in 0..3 {frame(&mut app,&state,vec![]);}
+        let position=camera_button().center();
+        for pressed in [true,false] {frame(&mut app,&state,vec![egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {pos:position,button:egui::PointerButton::Primary,pressed,modifiers:egui::Modifiers::NONE}]);}
+        let hidden=actions.try_recv().unwrap();
+        assert_eq!((hidden.kind.as_str(),hidden.text.as_str()),("view-incoming-media","camera"));
+        assert_eq!(serde_json::from_str::<Value>(&hidden.extra).unwrap()["visible"],false);
+        assert!(actions.try_recv().is_err(),"hiding a local preview does not cancel either publication offer");
+    }
+    #[test]
     fn incoming_participants_show_both_media_controls_without_joining_until_clicked() {
         for zoom in [1., 1.5] {
             let (mut app, _, mut actions) = super::super::tests::harness();
@@ -2307,7 +2428,7 @@ mod tests {
                 screen.1.contains_rect(screen.0),
                 "Incoming screen clipped at zoom{zoom}: {screen:?}"
             );
-            assert!(screen.0.top() >= camera.0.bottom());
+            assert!(camera.0.top() >= screen.0.bottom());
             let before = std::iter::from_fn(|| actions.try_recv().ok()).collect::<Vec<_>>();
             assert!(
                 !before.iter().any(|action| matches!(

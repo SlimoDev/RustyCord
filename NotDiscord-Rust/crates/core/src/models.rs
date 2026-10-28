@@ -369,6 +369,10 @@ pub struct CallParticipant {
     pub speaking: bool,
     pub self_video: bool,
     pub screen_sharing: bool,
+    /// Local publication intent survives the lifetime of its single preview.
+    /// These fields never announce a camera or screen to other participants.
+    pub camera_preparing: bool,
+    pub screen_preparing: bool,
     pub camera_announcement_known: bool,
     pub screen_announcement_known: bool,
     /// Viewer intent in this call; never inferred from a decoder callback.
@@ -377,12 +381,20 @@ pub struct CallParticipant {
     pub volume_percent: f32,
 }
 impl Default for CallParticipant {
-    fn default() -> Self { Self {user:Person::default(),is_self:false,self_mute:false,self_deaf:false,server_mute:false,server_deaf:false,speaking:false,self_video:false,screen_sharing:false,camera_announcement_known:false,screen_announcement_known:false,viewing:String::new(),view_error:String::new(),volume_percent:100.} }
+    fn default() -> Self { Self {user:Person::default(),is_self:false,self_mute:false,self_deaf:false,server_mute:false,server_deaf:false,speaking:false,self_video:false,screen_sharing:false,camera_preparing:false,screen_preparing:false,camera_announcement_known:false,screen_announcement_known:false,viewing:String::new(),view_error:String::new(),volume_percent:100.} }
 }
 impl CallParticipant {
-    /// Publisher announcements are independent of receiver/texture lifetime.
+    /// Published sources and local preparation are independent of decoder lifetime.
     pub fn source_available(&self, kind: &str) -> bool {
-        match kind { "camera" => self.self_video, "screen" => self.screen_sharing, _ => false }
+        (match kind { "camera" => self.self_video, "screen" => self.screen_sharing, _ => false })
+            || self.source_preparing(kind)
+    }
+    pub fn source_preparing(&self, kind: &str) -> bool {
+        self.is_self && match kind {
+            "camera" => self.camera_preparing && !self.self_video,
+            "screen" => self.screen_preparing && !self.screen_sharing,
+            _ => false,
+        }
     }
     pub fn source_known(&self,kind:&str)->bool {
         match kind {"camera"=>self.camera_announcement_known,"screen"=>self.screen_announcement_known,_=>true}
@@ -609,6 +621,31 @@ impl AppSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pending_local_sources_survive_preview_replacement_without_announcing_publication() {
+        let pending=CallParticipant {
+            is_self:true,camera_preparing:true,screen_preparing:true,
+            camera_announcement_known:true,screen_announcement_known:true,
+            ..Default::default()
+        };
+        for preview in [None,Some("camera"),Some("screen")] {
+            let videos=preview.into_iter().map(|kind|CallVideo {
+                user_id:pending.user.id.clone(),kind:kind.into(),local:true,preview:true,
+                active:true,..Default::default()
+            }).collect::<Vec<_>>();
+            for kind in ["camera","screen"] {
+                assert!(call_source_available(Some(&pending),&pending.user.id,kind,&videos));
+                assert!(pending.source_preparing(kind));
+            }
+            assert!(!pending.self_video && !pending.screen_sharing);
+        }
+        let remote=CallParticipant {is_self:false,..pending};
+        assert!(!remote.source_preparing("camera") && !remote.source_preparing("screen"));
+        assert!(!call_source_available(Some(&remote),&remote.user.id,"camera",&[]));
+        assert!(!call_source_available(Some(&remote),&remote.user.id,"screen",&[]));
+        let old:CallParticipant=serde_json::from_str("{}").unwrap();
+        assert!(!old.camera_preparing && !old.screen_preparing);
+    }
     #[test]
     fn custom_emojis_use_webp_for_all_original_formats_and_request_animation_explicitly() {
         assert!(StatusEmoji::default().image_url().is_none());

@@ -290,7 +290,7 @@ pub struct NotDiscordUi {
     pictures: Pictures,
     video_frames: Option<notdiscord_core::video::SharedVideoFrames>,
     video_textures: HashMap<u64, egui::TextureHandle>,
-    video_visibility: Option<bool>,
+    video_visibility: Option<(bool, bool)>,
     member_demand: Option<(String, String, String)>,
     logo_texture: Option<egui::TextureHandle>,
     drafts: HashMap<String, Draft>,
@@ -1600,9 +1600,11 @@ impl eframe::App for NotDiscordUi {
             self.ensure_script_fonts(scripts);
         }
         if self.preview.is_none() && self.state.signed_in && self.video_frames.is_some() {
+            let call_panel_visible = !minimized
+                && self.state.view == "chat"
+                && voice::call_panel_visible(&self.state);
             let visible = !minimized
-                && ((self.state.view == "chat"
-                    && voice::call_panel_visible(&self.state))
+                && (call_panel_visible
                     || matches!(
                         self.dialog,
                         Some(
@@ -1612,15 +1614,15 @@ impl eframe::App for NotDiscordUi {
                                 | Dialog::CamerasPreview
                         )
                     ));
-            if self.video_visibility != Some(visible) {
+            if self.video_visibility != Some((visible, call_panel_visible)) {
                 self.send(
                     "video-visible",
                     "",
                     if visible { "true" } else { "false" },
-                    "",
+                    &serde_json::json!({"callPanelVisible": call_panel_visible}).to_string(),
                     "",
                 );
-                self.video_visibility = Some(visible);
+                self.video_visibility = Some((visible, call_panel_visible));
             }
         }
         self.check_selection_preview_closed();
