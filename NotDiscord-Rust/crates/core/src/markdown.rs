@@ -54,6 +54,7 @@ pub struct Block {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Document {
     pub blocks: Vec<Block>,
+    pub atoms: Vec<crate::message_atoms::Atom>,
     /// Some input was retained as plain text after an interpretation limit.
     pub truncated: bool,
 }
@@ -172,6 +173,7 @@ pub fn parse(source: &str) -> Document {
             spans: vec![Span { range: cursor..source.len(), style: Style::default(), syntax: false, link: None }] });
     }
     document.truncated = budget.limited;
+    document.atoms = crate::message_atoms::collect(source, &document);
     document
 }
 

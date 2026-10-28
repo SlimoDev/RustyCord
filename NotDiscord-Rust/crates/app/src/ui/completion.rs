@@ -5,10 +5,22 @@ use std::hash::{Hash,Hasher};
 #[derive(Clone)]
 pub(in crate::ui) enum Choice {
     Mention(Person),
+    GameStart,
+    TimeStart,
+    Game(MentionGame),
+    Notice(String),
     Emoji { emoji: StatusEmoji, label: String, value: String },
 }
 
 pub(in crate::ui) fn query(text: &str, cursor: usize) -> Option<(usize, String)> {
+    let chars:Vec<_>=text.chars().collect();let end=cursor.min(chars.len());
+    if let Some(start)=chars[..end].iter().rposition(|ch|*ch=='@').filter(|start|end-*start<=107) {
+        let tail:String=chars[start..end].iter().collect();
+        if tail.starts_with("@game ")&&!tail.contains(['\n','\r'])&&(start==0||chars[start-1].is_whitespace())
+            &&text.char_indices().nth(start).is_some_and(|(byte,_)|super::plain_text_at(text,byte)){
+            return Some((start,format!("@game {}",tail[6..].trim())));
+        }
+    }
     if let Some((start, query))=super::query(text,cursor) {return Some((start,format!("@{query}")));}
     emoji_query(text,cursor).map(|(start,query)|(start,format!(":{query}")))
 }
@@ -44,11 +56,23 @@ fn emoji_query(text:&str,cursor:usize)->Option<(usize,String)> {
 pub(in crate::ui) fn choices(query:&str,state:&AppSnapshot,limit:usize)->Vec<Choice> {
     let limit=limit.min(8);
     if let Some(query)=query.strip_prefix('@') {
-        return super::choices(query,state,limit).into_iter().map(Choice::Mention).collect();
+        if query.starts_with("game "){return vec![Choice::Notice("Escribe el nombre de un juego…".into())];}
+        let mut found=Vec::new();
+        if "time".starts_with(&query.to_lowercase()){found.push(Choice::TimeStart);}
+        if "game".starts_with(&query.to_lowercase()){found.push(Choice::GameStart);}
+        found.extend(super::choices(query,state,limit.saturating_sub(found.len())).into_iter().map(Choice::Mention));
+        found.truncate(limit);return found;
     }
     query.strip_prefix(':').map(|query|emoji_choices(query,state,limit)).unwrap_or_default()
 }
 pub(in crate::ui) fn cached_choices(ctx:&egui::Context,query:&str,state:&AppSnapshot,limit:usize)->Vec<Choice> {
+    if query.starts_with("@game "){
+        let Some(result)=super::super::game_mentions::results(ctx,query,state) else{return vec![Choice::Notice("Escribe el nombre de un juego…".into())];};
+        if !result.error.is_empty(){return vec![Choice::Notice(result.error)];}
+        if result.loading{return vec![Choice::Notice("Buscando juegos…".into())];}
+        if result.items.is_empty(){return vec![Choice::Notice("No se encontraron juegos".into())];}
+        return result.items.into_iter().take(limit.min(8)).map(Choice::Game).collect();
+    }
     if !query.starts_with(':') {return choices(query,state,limit);}
     let key=egui::Id::new("composer-emoji-results");
     let mut hash=std::collections::hash_map::DefaultHasher::new();
@@ -89,6 +113,13 @@ fn emoji_choices(query:&str,state:&AppSnapshot,limit:usize)->Vec<Choice> {
 pub(in crate::ui) fn insert(draft:&mut Draft,start:usize,end:usize,choice:&Choice)->Option<usize> {
     if start>end||end>draft.text.chars().count() {return None;}
     match choice {
+        Choice::TimeStart|Choice::Notice(_)=>None,
+        Choice::GameStart|Choice::Game(_)=>{
+            let value=match choice{Choice::Game(game)=>format!("<@${}> ",game.id),_=>"@game ".into()};
+            let mut chars:Vec<_>=draft.text.chars().collect();chars.splice(start..end,value.chars());
+            let old=std::mem::replace(&mut draft.text,chars.iter().collect());super::adjust(&old,&draft.text,&mut draft.mentions);draft.revision+=1;
+            Some(start+value.chars().count())
+        }
         Choice::Mention(person)=>{super::insert(draft,start,end,person);Some(start+super::person_name(person).chars().count()+2)}
         Choice::Emoji{value,..}=>{
             let mut chars:Vec<_>=draft.text.chars().collect();chars.splice(start..end,value.chars().chain([' ']));
@@ -113,7 +144,7 @@ impl NotDiscordUi {
                     let label=match choice {Choice::Mention(person)=>match person.id.as_str() {
                         "everyone"=>"@everyone · Todas las personas".into(),"here"=>"@here · Personas disponibles".into(),
                         _=>format!("{}  @{}",super::person_name(person),person.username),
-                    },Choice::Emoji{label,..}=>label.clone()};
+                    },Choice::Emoji{label,..}=>label.clone(),Choice::GameStart=>"@game · Buscar un juego".into(),Choice::TimeStart=>"@time · Fecha y hora".into(),Choice::Game(game)=>game.name.clone(),Choice::Notice(text)=>text.clone()};
                     if index==selected||response.hovered() {ui.painter().rect_filled(rect,4,self.theme.selected);}
                     response.widget_info(||egui::WidgetInfo::labeled(egui::WidgetType::SelectableLabel,true,&label));
                     let mut row=ui.new_child(egui::UiBuilder::new().id_salt(("completion-row",index)).max_rect(rect.shrink2(egui::vec2(5.,2.)))
@@ -123,10 +154,15 @@ impl NotDiscordUi {
                         Choice::Mention(person) if matches!(person.id.as_str(),"everyone"|"here")=>{row.label(RichText::new("@").color(self.theme.accent));}
                         Choice::Mention(person)=>{let (avatar,_)=row.allocate_exact_size(egui::Vec2::splat(30.),egui::Sense::hover());self.pictures.paint_avatar(&row,avatar,person);}
                         Choice::Emoji{emoji,..}=>{self.emoji(&mut row,emoji,28.);}
+                        Choice::GameStart=>{row.label("◈");}
+                        Choice::TimeStart=>{row.label("◷");}
+                        Choice::Game(game)=>{if let Some(url)=game.icon_url.as_ref()&&let Some(texture)=self.pictures.texture_sized(url,32){row.add(egui::Image::new(&texture).fit_to_exact_size(egui::Vec2::splat(28.)));}}
+                        Choice::Notice(_)=>{}
                     }
                     row.add(egui::Label::new(&label).selectable(false).sense(egui::Sense::hover()).truncate());
                     #[cfg(test)] ctx.data_mut(|data|data.insert_temp(egui::Id::new(("composer-completion-row",index)),rect));
-                    if response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(label).clicked() {choose=Some(index);}
+                    let selectable=!matches!(choice,Choice::Notice(_));
+                    if response.on_hover_cursor(if selectable{egui::CursorIcon::PointingHand}else{egui::CursorIcon::Default}).on_hover_text(label).clicked()&&selectable {choose=Some(index);}
                 }
             });
         });choose

@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn decode(
     bytes: &[u8],
     cancelled: impl Fn() -> bool,
-) -> Result<AnimationFrames, String> {
+) -> Result<DecodedAnimation, String> {
     use image::ImageDecoder;
     let invalid = || "Decodificación WebP: contenedor de animación no válido.".to_owned();
     if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
@@ -122,6 +122,6 @@ pub(super) fn decode(
     if frames.len() != count {
         Err(invalid())
     } else {
-        Ok(frames)
+        Ok(DecodedAnimation { canvas: (width, height), frames })
     }
 }

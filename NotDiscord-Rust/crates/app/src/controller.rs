@@ -10,6 +10,7 @@ mod read_index;
 mod emoji_policy;
 mod notification_activation;
 mod game_activity;
+mod game_mentions;
 mod guild_settings;
 mod member_moderation;
 mod group_members;
@@ -171,6 +172,7 @@ pub struct Controller {
     call_people: HashMap<String, CallParticipant>,
     pending_video: bool,
     gif_state: gifs::GifState,
+    game_catalog: game_mentions::State,
     emoji_cache: HashMap<String, (Instant, Vec<CustomEmoji>)>,
     voice_lifecycle: voice::VoiceLifecycle,
     latest_snapshot: Arc<Mutex<Option<AppSnapshot>>>,
@@ -355,6 +357,7 @@ impl Controller {
             call_people: HashMap::new(),
             pending_video: false,
             gif_state: gifs::GifState::default(),
+            game_catalog: game_mentions::State::default(),
             emoji_cache: HashMap::new(),
             voice_lifecycle: voice::VoiceLifecycle::default(),
             latest_snapshot: Arc::new(Mutex::new(None)),
@@ -428,6 +431,7 @@ impl Controller {
     async fn complete_failed(&mut self, action: &UiAction) {
         if action.kind=="__presence-reconciled"{let _=self.finish_presence_reconcile(action,None);}
         self.gif_failed(action);
+        self.game_catalog_failed(action);
         if action.kind == "__guild" {self.guild_load.clear();}
         if action.kind == "__status" {
             if let Err(error) = self.finish_presence_change(action, None) { self.error(error); }
@@ -775,6 +779,7 @@ impl Controller {
         self.game_detector.reset();
         self.clear_private_call_state();
         self.reaction_queries=Default::default();
+        self.game_catalog.clear();
         self.features.clear_history();
         let (mute, deaf) = (self.state.self_mute, self.state.self_deaf);
         self.state = AppSnapshot::welcome();
@@ -1548,6 +1553,8 @@ impl Controller {
         if self.member_moderation_action(&action)? { return Ok(()); }
         if self.remove_group_member_action(&action)? { return Ok(()); }
         if action.kind == "reaction-users" { self.request_reaction_users(action); return Ok(()); }
+        if action.kind == "game-catalog" {self.game_catalog_action(action)?;return Ok(());}
+        if action.kind == "game-catalog-cancel" {self.cancel_game_catalog(&action.extra);return Ok(());}
         if self.media_action(&action).await? {
             return Ok(());
         }
@@ -1886,6 +1893,7 @@ impl Controller {
     }
     async fn complete(&mut self, action: UiAction, value: Value) -> Result<(), String> {
         if action.kind == "__reaction-users" { self.complete_reaction_users(value);return Ok(()); }
+        if action.kind == "__game-catalog" {self.complete_game_catalog(&action,&value)?;return Ok(());}
         // A completed preflight may already be queued when another request
         // stops the session. Invalidate voice/capture attempts before resuming it.
         self.sync_network_safety().await;
@@ -1936,6 +1944,7 @@ impl Controller {
                 let person = parsing::person(&value["user"]);
                 self.remember(person.clone());
                 self.state.current_user = Some(person);
+                self.state.game_mentions_nsfw_allowed=value["user"]["nsfw_allowed"].as_bool()==Some(true);
                 self.state.signed_in = true;
                 self.state.status.clear();
                 self.state.voice_available = MediaBridge::is_available(&self.root);

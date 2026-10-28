@@ -1148,6 +1148,7 @@ impl NotDiscordUi {
     ) {
         prune_participant_media_selections(ui.ctx(), state);
         let mut participants = state.call_participants.clone();
+        let announced=participants.iter().map(|person|person.user.id.clone()).collect::<HashSet<_>>();
         for video in state.call_videos.iter().filter(|video| {
             (!video.preview
                 || video.local
@@ -1164,10 +1165,14 @@ impl NotDiscordUi {
             } else {
                 video.user_id.clone()
             };
-            if !participants
-                .iter()
-                .any(|participant| participant.user.id == id)
-            {
+            if let Some(participant)=participants.iter_mut().find(|participant|participant.user.id==id) {
+                if !announced.contains(&id) {
+                    // Merge both decoder-derived fallback sources instead of
+                    // letting the first video hide the other source's control.
+                    participant.self_video |= video.kind=="camera";
+                    participant.screen_sharing |= video.kind=="screen";
+                }
+            } else {
                 participants.push(CallParticipant {
                     user: Person {
                         id,
@@ -1263,12 +1268,14 @@ impl NotDiscordUi {
                         video.status.as_str(), "loading" | "connecting" | "waiting" | "starting" | "paused"
                     );
                     let retained = |video: &CallVideo| running(video) || video.status=="error";
-                    let camera_available = participant.self_video || camera.as_ref().is_some_and(|video|
-                        retained(video) && (video.local || video.view_requested));
-                    let screen_available = participant.screen_sharing || participant.is_self
+                    let camera_available = call_source_available(Some(participant),&participant.user.id,"camera",videos) || participant.is_self
+                        && camera.as_ref().is_some_and(|video|retained(video)&&video.local);
+                    let screen_available = call_source_available(Some(participant),&participant.user.id,"screen",videos) || participant.is_self
                         && screen.as_ref().is_some_and(retained);
                     let requested = |video: &CallVideo| video.view_requested && retained(video);
-                    let automatic = if screen_available && screen.as_ref().is_some_and(requested) {
+                    let automatic = if participant.viewing=="camera"&&camera_available||participant.viewing=="screen"&&screen_available {
+                        participant.viewing.as_str()
+                    } else if screen_available && screen.as_ref().is_some_and(requested) {
                         "screen"
                     } else if camera_available && camera.as_ref().is_some_and(requested) {
                         "camera"
@@ -1289,66 +1296,30 @@ impl NotDiscordUi {
                         .and_then(|previous|previous.pending_retry.clone()).filter(|(_,started)|started.elapsed()<Duration::from_secs(10));
                     let retry_waiting=pending_retry.as_ref().is_some_and(|(old,_)|
                         selected_source.is_none_or(|video|video.source_id==*old));
-                    let retry_acknowledged=pending_retry.as_ref().is_some_and(|(old,_)|
-                        selected_source.is_some_and(|video|!video.local&&video.view_requested&&retained(video)
-                            && !video.source_id.is_empty()&&video.source_id!=*old));
                     if retry_waiting {
                         if let Some((_,started))=&pending_retry {
                             ui.ctx().request_repaint_after(Duration::from_secs(10).saturating_sub(started.elapsed()));
                         }
                     }
-                    // The publisher announcement and explicit viewer choice
-                    // outlive a decoder/SSRC replacement or visibility pause.
-                    // A different call generation is already a different scope.
-                    let changed = previous.as_ref().is_some_and(|previous| previous.kind == selected && selected != "avatar"
-                        && (previous.id.zip(selected_source.map(|video|video.id)).is_some_and(|(old,new)|old!=new)
-                                && !selected_source.is_some_and(|video| !video.local && video.view_requested
-                                    && (selected=="camera"&&participant.self_video || selected=="screen"
-                                        && !video.source_id.is_empty() && previous.source_id==video.source_id))
-                            || selected_source.is_some_and(|video| selected=="screen" && !video.local
-                                && !previous.source_id.is_empty() && previous.source_id!=video.source_id)
-                            || selected_source.is_some_and(|video|previous.selector_preview!=(video.local && video.preview))
-                            || previous.running && !selected_source.is_some_and(retained)));
                     let unavailable = matches!(remembered.as_deref(),Some("camera")) && !camera_available
                         || matches!(remembered.as_deref(),Some("screen")) && !screen_available;
-                    let ended = previous.as_ref().is_some_and(|previous| previous.kind != "avatar"
-                        && remembered.as_deref().is_none_or(|kind|kind==previous.kind)
-                        && previous.running && !match previous.kind.as_str() {
-                            "camera"=>camera.as_ref(),"screen"=>screen.as_ref(),_=>None,
-                        }.is_some_and(retained));
-                    if unavailable || (changed || ended) && !retry_waiting && !retry_acknowledged {
-                        let old = remembered.as_deref().filter(|kind|matches!(*kind,"camera"|"screen"))
-                            .or_else(||previous.as_ref().map(|source|source.kind.as_str()).filter(|kind|matches!(*kind,"camera"|"screen")));
-                        if let Some(old) = old {
-                            // The selector owns its local preview. Resetting a
-                            // tile must not turn that capture off or route it
-                            // through the published-source controller.
-                            if !selector_preview(old) && !previous.as_ref().is_some_and(|source|source.kind==old && source.selector_preview) {
-                                let extra=if incoming {json!({"instanceId":instance_id,"visible":false})}
-                                    else {json!({"voiceAttempt":instance_id,"visible":false})};
-                                self.send("view-incoming-media",&participant.user.id,old,extra.to_string(),channel_id);
-                            }
-                        }
+                    if unavailable {
+                        // Drawing a snapshot cannot tear down reception. Only
+                        // publisher withdrawal/leave or an explicit user action
+                        // invalidates the actor's independent viewer intent.
                         selected = "avatar"; remembered = Some("avatar".into());
                         ui.ctx().data_mut(|data| {data.get_temp_mut_or_default::<HashMap<String,String>>(
                             egui::Id::new("participant-media-selection")).insert(key.clone(),"avatar".into());});
                     }
-                    let selected_source = match selected { "camera"=>camera.as_ref(), "screen"=>screen.as_ref(), _=>None };
-                    let bound_id = selected_source.filter(|video|video.active).map(|video|video.id)
-                        .or_else(||previous.as_ref().filter(|previous|previous.kind==selected).and_then(|previous|previous.id));
                     ui.ctx().data_mut(|data| {
                         let sources=data.get_temp_mut_or_default::<HashMap<String,ParticipantSource>>(egui::Id::new("participant-source-lifecycle"));
                         if sources.len()>=256 && !sources.contains_key(&key) {sources.clear();}
-                        // A connecting watch has a provisional id. Bind source
-                        // identity only after a real frame, so its first native
-                        // id does not look like an unsolicited source restart.
-                        sources.insert(key.clone(),ParticipantSource {kind:selected.into(),id:bound_id,
-                            source_id:selected_source.map(|video|video.source_id.clone()).unwrap_or_default(),
-                            pending_retry:if retry_waiting {pending_retry.clone()}else{None},
-                            running:selected_source.is_some_and(retained),selector_preview:selector_preview(selected)});
+                        sources.insert(key.clone(),ParticipantSource {kind:selected.into(),
+                            pending_retry:if retry_waiting {pending_retry.clone()}else{None}});
                     });
                     let video = match selected { "camera"=>camera.as_ref(), "screen"=>screen.as_ref(), _=>None }
                         .filter(|video| running(video)||video.status=="error");
+                    let selection_error=(selected==participant.viewing).then_some(participant.view_error.as_str()).filter(|error|!error.is_empty());
                     let gap=ui.spacing().item_spacing.y;
                     let display_name=if !incoming&&!state.call_guild_id.is_empty()&&state.selected_guild_id==state.call_guild_id {
                         state.guild_display_name(&participant.user)
@@ -1357,7 +1328,7 @@ impl NotDiscordUi {
                     if participant.self_mute||participant.server_mute {flags.push("Silenciado");}
                     if participant.self_deaf||participant.server_deaf {flags.push("Ensordecido");}
                     if camera_available {flags.push("cámara");}
-                    if participant.screen_sharing {flags.push("pantalla");}
+                    if screen_available {flags.push("pantalla");}
                     let flags=flags.join(" · ");
                     let mut footer=call_tile_text_height(ui,width,display_name,&egui::TextStyle::Body)+gap;
                     if !flags.is_empty() {footer+=call_tile_text_height(ui,width,&flags,&egui::TextStyle::Small)+gap;}
@@ -1365,7 +1336,7 @@ impl NotDiscordUi {
                     for (label,available) in [("Pantalla",screen_available),("Cámara",camera_available)] {
                         if available {footer+=call_tile_button_height(ui,width,&format!("{label} · Dejar de ver"))+gap;}
                     }
-                    if video.is_some_and(|video|video.status=="error") {footer+=ui.text_style_height(&egui::TextStyle::Small)+gap;}
+                    if video.is_some_and(|video|video.status=="error")||selection_error.is_some() {footer+=ui.text_style_height(&egui::TextStyle::Small)+gap;}
                     let image_height=call_tile_image_height(width,max_image_height,row_height,footer);
                     // Grid centers requested cell sizes vertically. A zero-
                     // height allocation would start halfway down its cached
@@ -1410,11 +1381,11 @@ impl NotDiscordUi {
                                     }
                                     self.send("video-quality", &id.to_string(), "true", "", "");
                                 }
-                            } else if video.is_some_and(|video|video.status!="error") {
+                            } else if selection_error.is_none() && (video.is_some_and(|video|video.status!="error") || selected!="avatar") {
                                 ui.painter().text(
                                     rect.center(),
                                     egui::Align2::CENTER_CENTER,
-                                    "Cargando vídeo…",
+                                    if video.is_some() {"Cargando vídeo…"}else{"Esperando datos de vídeo…"},
                                     egui::FontId::proportional(12.),
                                     ink,
                                 );
@@ -1466,7 +1437,7 @@ impl NotDiscordUi {
                             }
                             for (kind,label,available) in [("screen","Pantalla",screen_available),("camera","Cámara",camera_available)] {
                                 if !available {continue;}
-                                let failed=selected==kind && video.is_some_and(|video|video.status=="error");
+                                let failed=selected==kind && (video.is_some_and(|video|video.status=="error")||selection_error.is_some());
                                 let retrying=retry_waiting&&selected==kind;
                                 let showing=retrying||!failed && selected==kind && (incoming || video.is_some() || remembered.as_deref()==Some(kind));
                                 let response=ui.add_sized([width,call_button_height(ui)],egui::Button::new(
@@ -1491,9 +1462,8 @@ impl NotDiscordUi {
                                                 // Rendering may run again before the actor replaces
                                                 // the failed watch. Keep this explicit retry across
                                                 // that old snapshot and its new watch token.
-                                                sources.insert(key.clone(),ParticipantSource {kind:kind.into(),id:None,
-                                                    source_id:video.source_id.clone(),pending_retry:Some((video.source_id.clone(),Instant::now())),
-                                                    running:false,selector_preview:false});
+                                                sources.insert(key.clone(),ParticipantSource {kind:kind.into(),
+                                                    pending_retry:Some((video.source_id.clone(),Instant::now()))});
                                             }
                                         }
                                     });
@@ -1509,6 +1479,8 @@ impl NotDiscordUi {
                                 let error=if video.error.is_empty() {
                                     "No se pudo abrir este vídeo"
                                 } else {&video.error};
+                                ui.add(egui::Label::new(RichText::new(error).small().color(ink)).truncate()).on_hover_text(error);
+                            } else if let Some(error)=selection_error {
                                 ui.add(egui::Label::new(RichText::new(error).small().color(ink)).truncate()).on_hover_text(error);
                             }
                         },
@@ -1659,7 +1631,7 @@ fn call_tile_image_height(width:f32,maximum:f32,row_height:Option<f32>,footer:f3
     row_height.map_or(natural,|height|natural.min((height-footer-2.).max(12.))).max(12.)
 }
 #[derive(Clone)]
-struct ParticipantSource { kind:String, id:Option<u64>, source_id:String, pending_retry:Option<(String,Instant)>, running:bool, selector_preview:bool }
+struct ParticipantSource { kind:String, pending_retry:Option<(String,Instant)> }
 impl CallExpansion {
     fn matches(&self, state: &AppSnapshot, video: &CallVideo) -> bool {
         self.scope==format!("account:{}:call:{}:{}",state.current_user.as_ref().map(|user|user.id.as_str()).unwrap_or(""),state.call_channel_id,state.call_instance_id)
@@ -2196,7 +2168,7 @@ mod tests {
         let (camera, camera_clip) = button("camera");
         let (screen, screen_clip) = button("screen");
         assert!(camera_clip.contains_rect(camera) && screen_clip.contains_rect(screen));
-        assert!(screen.top() >= camera.bottom());
+        assert!(camera.top() >= screen.bottom());
         assert!((camera.left() - screen.left()).abs() < 0.5);
         let click = |app: &mut NotDiscordUi, kind: &str| {
             let position = button(kind).0.center();

@@ -182,3 +182,12 @@ documentan en [updates.md](updates.md). La correspondencia definida es
 `NotDiscord` para la variante estándar y `codex/notdiscord-plus` para Plus.
 La rama y el cliente de Plus no reciben esta entrega; la comprobación e
 instalación nuevas se entregan únicamente con NotDiscord.
+
+## Continuación de entrada 0.7.0
+
+La política de botón central y pegado anterior se amplía en
+[input-0.7.0.md](input-0.7.0.md): inicio por down, modos mantenido/conmutado,
+elegibilidad independiente del clic primario, rueda nueva frente a suavizado,
+ejes con overflow y primera intención nativa de pegar bitmap sin foco manual.
+Ese contrato prevalece sobre la descripción anterior de sólo «espacios libres».
+La verificación física sigue pendiente; no se ejecutaron pruebas funcionales.

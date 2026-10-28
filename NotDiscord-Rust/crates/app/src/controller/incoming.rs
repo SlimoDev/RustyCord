@@ -538,6 +538,7 @@ impl Controller {
                 self.remember(p.clone());
                 if p.id == self.me() {
                     self.state.current_user = Some(p);
+                    if let Some(allowed)=value["nsfw_allowed"].as_bool() {self.state.game_mentions_nsfw_allowed=allowed;}
                     if let Some(entitlement)=value.get("premium_type") {
                         let premium=entitlement.as_i64().filter(|premium|(0..=3).contains(premium)).and_then(|premium|i32::try_from(premium).ok());
                         self.premium=premium.unwrap_or(0);self.state.upload_limit.premium_type=premium;self.refresh_emoji_access();
@@ -1317,6 +1318,7 @@ impl Controller {
             .unwrap_or(if personal { "Mensaje directo" } else { "Canal" });
         let body = if message.content.trim().is_empty() || message.forwarded || !message.stickers.is_empty(){message_notice_body(message)}else{
             let mut names=crate::notification_text::Names::default();
+            for game in message.mention_games.iter().filter(|game|!game.restricted||self.state.game_mentions_nsfw_allowed){names.games.insert(game.id.clone(),game.name.clone());}
             for person in &message.mentions{
                 let name=if !person.name.trim().is_empty(){&person.name}else if !person.display_name.trim().is_empty(){&person.display_name}else{&person.username};
                 names.users.insert(person.id.clone(),name.clone());
@@ -1851,9 +1853,11 @@ impl Controller {
         if let Some(deaf)=value["deaf"].as_bool(){participant.server_deaf=deaf;}
         if let Some(video) = value["self_video"].as_bool() {
             participant.self_video = video;
+            participant.camera_announcement_known=true;
         }
         if let Some(screen) = value["self_stream"].as_bool() {
             participant.screen_sharing = screen;
+            participant.screen_announcement_known=true;
         }
         Some(participant)
     }
@@ -1894,7 +1898,7 @@ impl Controller {
                         .collect();
                 }
             }
-        } else if matches!(kind, "STREAM_CREATE" | "STREAM_UPDATE" | "STREAM_DELETE") {
+        } else if matches!(kind, "STREAM_CREATE" | "STREAM_UPDATE") {
             if let Some((channel, owner)) = incoming_stream_identity(&s(value, "stream_key")) {
                 for call in calls.iter_mut().filter(|call| call.channel_id == channel) {
                     if call.call_participants.is_empty() {
@@ -1913,7 +1917,11 @@ impl Controller {
                         .iter_mut()
                         .find(|p| p.user.id == owner)
                     {
-                        participant.screen_sharing = kind != "STREAM_DELETE";
+                        // STREAM_DELETE can acknowledge this viewer closing its
+                        // subscription. Only an explicit publisher voice-state
+                        // withdrawal (or leave) clears the offered source.
+                        participant.screen_sharing = true;
+                        participant.screen_announcement_known=true;
                     }
                 }
             }
@@ -1953,6 +1961,7 @@ impl Controller {
                     let id = s(v, "user_id");
                     let old = previous
                         .as_ref()
+                        .filter(|_|kind!="CALL_CREATE")
                         .and_then(|call| call.call_participants.iter().find(|p| p.user.id == id));
                     self.incoming_participant(v, old)
                 })
@@ -1960,6 +1969,7 @@ impl Controller {
         } else {
             previous
                 .as_ref()
+                .filter(|_|kind!="CALL_CREATE")
                 .map(|c| {
                     if c.call_participants.is_empty() {
                         c.participants
@@ -2246,6 +2256,8 @@ mod tests {
         );
         assert!(c.state.incoming_calls[0].call_participants[0].self_video);
         c.incoming_media_dispatch("STREAM_DELETE", &json!({"stream_key":"call:30:9"}));
+        assert!(c.state.incoming_calls[0].call_participants[0].screen_sharing);
+        c.incoming_media_dispatch("VOICE_STATE_UPDATE", &json!({"channel_id":"30","user_id":"9","self_stream":false}));
         assert!(!c.state.incoming_calls[0].call_participants[0].screen_sharing);
         c.incoming_media_dispatch(
             "STREAM_UPDATE",

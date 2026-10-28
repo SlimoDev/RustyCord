@@ -736,6 +736,18 @@ pub(super) fn clamp_viewer_pan(viewer: &mut Viewer, natural: Vec2, canvas: Vec2)
     viewer.pan.x = viewer.pan.x.clamp(-overflow.x, overflow.x);
     viewer.pan.y = viewer.pan.y.clamp(-overflow.y, overflow.y);
 }
+/// A late original-canvas correction must not reset a user's zoom/pan or make
+/// the already visible poster jump to the size of a budgeted playback bitmap.
+fn rebase_viewer_geometry(viewer: &mut Viewer, previous: Vec2, natural: Vec2, canvas: Vec2) {
+    if previous == natural { return; }
+    let previous_extent = previous.max_elem().max(1.);
+    let natural_extent = natural.max_elem().max(1.);
+    let previous_scale = viewer_fit(previous, canvas) * viewer.zoom;
+    let next_fit = viewer_fit(natural, canvas);
+    viewer.zoom = (previous_scale * previous_extent / natural_extent)
+        .clamp(next_fit.min(0.05), 8.) / next_fit;
+    clamp_viewer_pan(viewer, natural, canvas);
+}
 pub(super) fn zoom_viewer(viewer: &mut Viewer, natural: Vec2, canvas: Vec2, requested: f32, anchor: Vec2) {
     let fit = viewer_fit(natural, canvas);
     let previous = viewer.zoom.max(0.0001);
@@ -863,7 +875,7 @@ impl NotDiscordUi {
     }
 
     pub(super) fn background_blocked(&self) -> bool {
-        self.dialog.is_some() || self.picker.is_some() || self.viewer.is_some() || self.search_open
+        self.dialog.is_some() || self.picker.is_some() || self.time_picker.is_some() || self.viewer.is_some() || self.search_open
             || crate::diagnostics::is_open(&self.ctx)
             || self.ctx.data(|data|data.get_temp::<u64>(egui::Id::new("overlay-dismissal-block")))
                 == Some(self.ctx.cumulative_frame_nr())
@@ -2430,7 +2442,20 @@ impl NotDiscordUi {
             .with_clip_rect(canvas.intersect(ui.clip_rect()));
         painter.rect_filled(canvas, 4., self.theme.rail);
         if let Some(texture) = texture {
-            let natural = texture.size_vec2();
+            let natural = if viewer.local_path.is_none() {
+                self.pictures.animation_canvas(&viewer.url).unwrap_or(texture.size_vec2())
+            } else { texture.size_vec2() };
+            // One slot for the one open viewer; no per-message geometry timers
+            // or unbounded Context entries. A newly opened viewer starts at fit.
+            let geometry_id = egui::Id::new("media-viewer-logical-canvas");
+            let frame = ctx.cumulative_frame_nr();
+            let previous = ctx.data_mut(|data| data.get_temp::<(String, Vec2, u64)>(geometry_id));
+            if let Some((url, previous, seen)) = previous.filter(|(url, _, seen)|
+                url == &viewer.url && frame.saturating_sub(*seen) <= 1) {
+                let _ = (url, seen);
+                rebase_viewer_geometry(viewer, previous, natural, canvas.size());
+            }
+            ctx.data_mut(|data| data.insert_temp(geometry_id, (viewer.url.clone(), natural, frame)));
             if fit || response.double_clicked() {
                 viewer.zoom = 1.;
                 viewer.pan = Vec2::ZERO;

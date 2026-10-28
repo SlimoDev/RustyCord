@@ -42,6 +42,9 @@ pub(super) struct VoiceLifecycle {
     early_share: Option<Value>,
     pub(super) incoming_sequence: u64,
     pending_views: HashMap<String, PendingView>,
+    // One explicit source choice per participant, scoped to the call attempt.
+    // Kept independently of pending work, decoder ids, SSRCs and visibility.
+    view_intents: HashMap<String, ViewIntent>,
     inventory_request: u64,
     inventory_pending: bool,
     // Retain only the active channel's ACL if the user navigates elsewhere.
@@ -74,6 +77,7 @@ impl VoiceLifecycle {
             || self.pending_camera.is_some() || self.pending_share.is_some()
             || self.switching.is_some() || self.leaving.is_some() || self.join_wait.is_some()
             || !self.watch_stops.is_empty() || self.private_calls.needs_fast_maintenance()
+            || self.video_visible!=Some(false)&&self.view_intents.values().any(|view|view.waiting_since.is_some())
     }
 }
 struct VoiceLeave {
@@ -116,6 +120,7 @@ struct PendingView {
     selected: Instant,
     requested: bool,
 }
+struct ViewIntent { channel:String, owner:String, kind:String, attempt:u64, error:String, waiting_since:Option<Instant> }
 #[derive(Clone, Default)]
 struct StreamIdentity { server: String, channel: Option<String> }
 struct WatchStop { attempt:u64, written:bool, pending:u64 }
@@ -526,7 +531,7 @@ impl Controller {
             return Ok(());
         }
         if let Some(next)=self.voice_lifecycle.switching.as_mut() {
-            if next.channel!=id {self.voice_lifecycle.pending_views.clear();}
+            if next.channel!=id {self.voice_lifecycle.pending_views.clear();self.voice_lifecycle.view_intents.clear();}
             next.channel=id.into();next.video=video;next.join_only=join_only;next.instance=instance;
             self.state.call_channel_name=item.name;
             self.refresh_call();
@@ -734,6 +739,7 @@ impl Controller {
             self.voice_lifecycle.request_pending = false;
             self.voice_lifecycle.join_wait = None;
             self.voice_lifecycle.pending_views.clear();
+            self.voice_lifecycle.view_intents.clear();
             self.voice_lifecycle.request_channel.clear();
             self.state.voice_connecting = false;
             self.pending_video = false;
@@ -1370,6 +1376,7 @@ impl Controller {
                 let me=self.me();let removed=self.call_people.keys().filter(|id|*id!=&me&&!present.contains(*id)).cloned().collect::<HashSet<_>>();
                 self.call_people.retain(|id,_|id==&me||present.contains(id));
                 self.voice_lifecycle.pending_views.retain(|_,view|!removed.contains(&view.owner));
+                self.voice_lifecycle.view_intents.retain(|_,view|!removed.contains(&view.owner));
                 let watches=self.voice_lifecycle.watches.iter().filter(|(_,watch)|removed.contains(&s(watch,"owner"))).map(|(key,_)|key.clone()).collect::<Vec<_>>();
                 for key in watches {self.stop_watch(&key).await?;}
             }
@@ -1388,9 +1395,21 @@ impl Controller {
                     self.call_people.insert(person.user.id.clone(), person);
                 }
             }
+            let withdrawn=self.voice_lifecycle.view_intents.iter().filter(|(_,view)|view.channel==channel
+                && !self.view_source_available(&channel,&view.owner,&view.kind))
+                .map(|(key,view)|(key.clone(),view.owner.clone(),view.kind.clone())).collect::<Vec<_>>();
+            for (key,owner,source) in withdrawn {
+                self.voice_lifecycle.view_intents.remove(&key);
+                self.voice_lifecycle.pending_views.remove(&key);
+                if source=="screen" {
+                    let watches=self.voice_lifecycle.watches.iter().filter(|(_,watch)|s(watch,"owner")==owner).map(|(key,_)|key.clone()).collect::<Vec<_>>();
+                    for key in watches {self.stop_watch(&key).await?;}
+                } else {self.set_peer_video_visible(&owner,"camera",false).await?;}
+            }
             self.resume_pending_views().await?;
         }
         if kind == "CALL_DELETE" {
+            self.voice_lifecycle.view_intents.retain(|_,view|view.channel!=channel);
             self.voice_lifecycle
                 .pending_views
                 .retain(|_, view| view.channel != channel);
@@ -1421,6 +1440,7 @@ impl Controller {
         self.voice_lifecycle.switching=None;
         self.voice_lifecycle.join_wait=None;
         self.voice_lifecycle.pending_views.clear();
+        self.voice_lifecycle.view_intents.clear();
         self.state.call_videos.clear();
         self.voice_lifecycle.video_sessions.clear();
         self.voice_lifecycle.watches.clear();
@@ -1533,13 +1553,11 @@ impl Controller {
                         .find(|person| person.user.id == owner)
                 })
         });
-        person.is_some_and(|person| {
-            if kind == "camera" {
-                person.self_video
-            } else {
-                person.screen_sharing
-            }
-        })
+        call_source_available(person,owner,kind,if channel==self.voice_channel {&self.state.call_videos}else{&[]})
+    }
+    fn viewing_source(&self, owner:&str, kind:&str)->bool {
+        self.voice_lifecycle.view_intents.get(&format!("{}:{owner}",self.voice_channel))
+            .is_some_and(|intent|intent.attempt==self.voice_attempt&&intent.kind==kind)
     }
     async fn set_peer_video_visible(
         &mut self,
@@ -1563,7 +1581,10 @@ impl Controller {
                 "setVideoStreamVisible",
                 json!({"id":id,"visible":visible}),
             )?;
-            if let Some(video)=self.state.call_videos.iter_mut().find(|video|video.id==id) {video.view_requested=visible;}
+            if let Some(video)=self.state.call_videos.iter_mut().find(|video|video.id==id) {
+                video.view_requested=visible;
+                if visible&&video.status=="error" {video.status="waiting".into();video.error.clear();}
+            }
         }
         Ok(())
     }
@@ -1593,6 +1614,9 @@ impl Controller {
         }
         let key = format!("{}:{}", action.channel_id, action.id);
         if !visible {
+            if self.voice_lifecycle.view_intents.get(&key).is_some_and(|view|view.kind==kind) {
+                self.voice_lifecycle.view_intents.remove(&key);
+            }
             if self
                 .voice_lifecycle
                 .pending_views
@@ -1616,6 +1640,7 @@ impl Controller {
                 }
                 self.set_peer_video_visible(&action.id, kind, false).await?;
             }
+            self.refresh_call();
             return Ok(());
         }
         if !self.view_source_available(&action.channel_id, &action.id, kind) {
@@ -1631,13 +1656,16 @@ impl Controller {
         {
             return Err("Cierra otro vídeo antes de abrir este.".into());
         }
+        if !self.voice_lifecycle.view_intents.contains_key(&key) && self.voice_lifecycle.view_intents.len()>=4 {
+            return Err("Cierra otro vídeo antes de abrir este.".into());
+        }
         if self.voice_channel.is_empty() && !self.voice_lifecycle.request_pending&&self.voice_lifecycle.switching.is_none() {
             // A user click explicitly joins the real call. request_voice keeps
             // the user's existing mute/deaf preferences and never auto-rings.
             self.request_voice_scoped(&action.channel_id, false, true, instance)?;
         }
         self.voice_lifecycle.pending_views.insert(
-            key,
+            key.clone(),
             PendingView {
                 channel: action.channel_id.clone(),
                 owner: action.id.clone(),
@@ -1648,9 +1676,29 @@ impl Controller {
                 requested: false,
             },
         );
-        self.resume_pending_views().await
+        self.voice_lifecycle.view_intents.insert(key, ViewIntent {channel:action.channel_id.clone(),owner:action.id.clone(),kind:kind.into(),attempt:self.voice_attempt,error:String::new(),waiting_since:(kind=="camera").then(Instant::now)});
+        let result=self.resume_pending_views().await;
+        self.refresh_call();
+        result
     }
     pub(super) async fn resume_pending_views(&mut self) -> Result<(), String> {
+        if self.voice_lifecycle.video_visible!=Some(false) {
+            let expired=self.voice_lifecycle.view_intents.iter().filter(|(_,view)|view.kind=="camera"
+                && view.waiting_since.is_some_and(|started|started.elapsed()>Duration::from_secs(35)))
+                .map(|(key,view)|(key.clone(),view.owner.clone())).collect::<Vec<_>>();
+            for (key,owner) in expired {
+                if let Some(intent)=self.voice_lifecycle.view_intents.get_mut(&key) {
+                    intent.waiting_since=None;
+                    intent.error="No llegaron fotogramas de cámara a tiempo. Puedes volver a intentarlo.".into();
+                }
+                self.voice_lifecycle.pending_views.remove(&key);
+                for video in self.state.call_videos.iter_mut().filter(|video|!video.local&&video.user_id==owner&&video.kind=="camera") {
+                    video.active=false;video.status="error".into();video.error="No llegaron fotogramas de cámara a tiempo. Puedes volver a intentarlo.".into();
+                }
+                self.set_peer_video_visible(&owner,"camera",false).await?;
+                self.refresh_call();
+            }
+        }
         if !self.voice_channel.is_empty() && !self.voice_guild.is_empty()
             && self.voice_lifecycle.acl_checked_at.is_none_or(|at|at.elapsed() >= Duration::from_secs(1)) {
             self.voice_lifecycle.acl_checked_at = Some(Instant::now());
@@ -1698,6 +1746,11 @@ impl Controller {
                 || !self.view_source_available(&view.channel, &view.owner, &view.kind)
             {
                 self.voice_lifecycle.pending_views.remove(&key);
+                if stale || !self.view_source_available(&view.channel,&view.owner,&view.kind) {
+                    self.voice_lifecycle.view_intents.remove(&key);
+                } else if let Some(intent)=self.voice_lifecycle.view_intents.get_mut(&key) {
+                    intent.error="El vídeo no estuvo disponible a tiempo. Puedes volver a mostrarlo.".into();
+                }
                 if view.requested&&view.kind=="camera"&&view.channel==self.voice_channel {self.set_peer_video_visible(&view.owner,"camera",false).await?;}
                 if !stale {
                     self.state.status = if expired {
@@ -1706,7 +1759,7 @@ impl Controller {
                         "La persona dejó de ofrecer la cámara o pantalla seleccionada."
                     }
                     .into();
-                    self.publish();
+                    self.refresh_call();
                 }
                 continue;
             }
@@ -1748,7 +1801,10 @@ impl Controller {
                 } else {
                     let mut action = UiAction::id("watch-stream", &view.owner);
                     action.channel_id = view.channel;
-                    Box::pin(self.media_action(&action)).await?;
+                    if let Err(error)=Box::pin(self.media_action(&action)).await {
+                        if let Some(intent)=self.voice_lifecycle.view_intents.get_mut(&key) {intent.error=parsing::limited(&error,256);}
+                        return Err(error);
+                    }
                 }
             }
         }
@@ -1857,7 +1913,10 @@ impl Controller {
                     let visible=action.text=="true";let previous=self.voice_lifecycle.video_visible!=Some(false);
                     self.voice_lifecycle.video_visible=Some(visible);
                     if previous!=visible {
-                        if visible {for pending in self.voice_lifecycle.pending_views.values_mut() {pending.selected=Instant::now();}}
+                        if visible {
+                            for pending in self.voice_lifecycle.pending_views.values_mut() {pending.selected=Instant::now();}
+                            for intent in self.voice_lifecycle.view_intents.values_mut().filter(|intent|intent.waiting_since.is_some()) {intent.waiting_since=Some(Instant::now());}
+                        }
                         let keys=self.voice_lifecycle.watches.keys().cloned().collect::<Vec<_>>();
                         for key in keys {self.wait_watch_frame(&key);}
                     }
@@ -1898,10 +1957,7 @@ impl Controller {
                 let owner = &action.id;
                 Self::valid(owner)?;
                 if owner == &self.me()
-                    || !self
-                        .call_people
-                        .get(owner)
-                        .is_some_and(|person| person.screen_sharing)
+                    || !self.view_source_available(&self.voice_channel,owner,"screen")
                 {
                     return Err("Esa persona no está compartiendo pantalla en esta llamada.".into());
                 }
@@ -1960,7 +2016,13 @@ impl Controller {
                         .unwrap_or_default()
                 };
                 if !key.is_empty() {
+                    if let Some((channel,owner))=super::incoming::incoming_stream_identity(&key) {
+                        let identity=format!("{channel}:{owner}");
+                        if self.voice_lifecycle.view_intents.get(&identity).is_some_and(|view|view.kind=="screen") {self.voice_lifecycle.view_intents.remove(&identity);}
+                        if self.voice_lifecycle.pending_views.get(&identity).is_some_and(|view|view.kind=="screen") {self.voice_lifecycle.pending_views.remove(&identity);}
+                    }
                     self.stop_watch(&key).await?;
+                    self.refresh_call();
                 }
             }
             "call-dm" | "call-dm-video" | "voice" => {
@@ -2361,6 +2423,7 @@ impl Controller {
                                 self.state.call_channel_name.clear();self.state.call_status_label.clear();self.refresh_call();return Err(error);
                             }
                             for view in self.voice_lifecycle.pending_views.values_mut().filter(|view|view.channel==next.channel) {view.attempt=self.voice_attempt;}
+                            for view in self.voice_lifecycle.view_intents.values_mut().filter(|view|view.channel==next.channel) {view.attempt=self.voice_attempt;}
                         }
                     }
                     return Ok(());
@@ -2377,6 +2440,12 @@ impl Controller {
                     // Only explicit channel:null removes current membership.
                     self.voice_channel.clone()
                 } else { s(value, "channel_id") };
+                self.voice_lifecycle.view_intents.retain(|_,view|view.owner!=id ||
+                    channel==self.voice_channel && !(view.kind=="camera"&&value.get("self_video")==Some(&Value::Bool(false))
+                        ||view.kind=="screen"&&value.get("self_stream")==Some(&Value::Bool(false))));
+                self.voice_lifecycle.pending_views.retain(|_,view|view.owner!=id ||
+                    channel==self.voice_channel && !(view.kind=="camera"&&value.get("self_video")==Some(&Value::Bool(false))
+                        ||view.kind=="screen"&&value.get("self_stream")==Some(&Value::Bool(false))));
                 if id == self.me() && !self.voice_channel.is_empty()
                     && !channel.is_empty() && channel != self.voice_channel {
                     // A remote move changes the server-side channel. Keep no
@@ -2482,6 +2551,7 @@ impl Controller {
                     if channel == self.voice_channel {
                         if let Some(person) = self.call_people.get_mut(&owner) {
                             person.screen_sharing = true;
+                            person.screen_announcement_known=true;
                         }
                     }
                 }
@@ -2494,6 +2564,7 @@ impl Controller {
                     if channel == self.voice_channel {
                         if let Some(person) = self.call_people.get_mut(&owner) {
                             person.screen_sharing = true;
+                            person.screen_announcement_known=true;
                         }
                     }
                 }
@@ -2787,6 +2858,9 @@ impl Controller {
         Ok(())
     }
     async fn fail_watch(&mut self, key: &str, message: &str) -> Result<(), String> {
+        if let Some((channel,owner))=super::incoming::incoming_stream_identity(key)
+            && let Some(intent)=self.voice_lifecycle.view_intents.get_mut(&format!("{channel}:{owner}"))
+            && intent.kind=="screen" {intent.error=parsing::limited(message,256);}
         let placeholder = self
             .state
             .call_videos
@@ -2801,7 +2875,7 @@ impl Controller {
             self.state.call_videos.push(video);
         }
         self.status(message);
-        self.publish();
+        self.refresh_call();
         Ok(())
     }
     async fn finish_watch(&mut self, key: &str) -> Result<(), String> {
@@ -2812,6 +2886,8 @@ impl Controller {
             watch["requested"]=json!(false);
             let owner=s(watch,"owner");
             self.voice_lifecycle.pending_views.retain(|_,view|view.owner!=owner||view.kind!="screen");
+            if let Some(intent)=self.voice_lifecycle.view_intents.get_mut(&format!("{}:{owner}",self.voice_channel))
+                && intent.kind=="screen" {intent.error="La visualización terminó. Puedes volver a abrirla sin salir de voz.".into();}
         }
         self.stop_watch(key).await?;
         self.refresh_call();
@@ -2946,8 +3022,8 @@ impl Controller {
                         self.voice_lifecycle.video_sessions.remove(&id);
                         self.wait_watch_frame(&key);
                     } else {
-                        let camera_replacement=self.state.call_videos.iter().any(|video|video.id==id&&!video.local&&video.kind=="camera"&&video.view_requested
-                            && self.call_people.get(&video.user_id).is_some_and(|person|person.self_video));
+                        let camera_replacement=self.state.call_videos.iter().any(|video|video.id==id&&!video.local&&video.kind=="camera"&&self.viewing_source(&video.user_id,"camera")
+                            && self.view_source_available(&self.voice_channel,&video.user_id,"camera"));
                         if camera_replacement {
                             // Decoder teardown while hiding/replacing a camera
                             // is not withdrawal of the publisher's announcement.
@@ -2955,6 +3031,10 @@ impl Controller {
                                 video.active=false;video.status="waiting".into();video.error.clear();
                             }
                             self.voice_lifecycle.video_sessions.remove(&id);
+                            if let Some(owner)=self.state.call_videos.iter().find(|video|video.id==id).map(|video|video.user_id.clone())
+                                && let Some(intent)=self.voice_lifecycle.view_intents.get_mut(&format!("{}:{owner}",self.voice_channel)) {
+                                intent.waiting_since=Some(Instant::now());
+                            }
                         } else {self.state.call_videos.retain(|video| video.id != id);}
                     }
                 } else {
@@ -2975,8 +3055,8 @@ impl Controller {
                         && (local&&!old.preview||value["mediaSession"].as_u64().is_none_or(|session|self.voice_lifecycle.video_sessions.get(&id)==Some(&session))))
                         || !local&&s(&value,"kind")=="camera"
                             && value["mediaSession"].as_u64().is_none_or(|session|self.voice_lifecycle.native_voice==Some(session))
-                            && self.call_people.get(&person).is_some_and(|peer|peer.self_video)
-                            && self.state.call_videos.iter().any(|old|old.user_id==person&&old.kind=="camera"&&!old.local&&old.view_requested)
+                            && self.view_source_available(&self.voice_channel,&person,"camera")
+                            && self.viewing_source(&person,"camera")
                         || requested_screen;
                     // Suspending a selected sink is not an end of its source.
                     // Retain that selection until the window restores reception.
@@ -3023,13 +3103,17 @@ impl Controller {
                     self.video_command("video-stream-visible","setVideoStreamVisible",json!({"id":id,"visible":true}))?;
                 }
                 if self.voice_lifecycle.video_visible!=Some(false)&&value["visible"]==false&&s(&value,"state")=="waiting"
-                    && self.state.call_videos.iter().any(|video|video.id==id&&!video.local&&video.kind=="screen"&&video.view_requested) {
+                    && self.state.call_videos.iter().any(|video|video.id==id&&!video.local&&video.view_requested
+                        && (video.kind=="screen"||video.kind=="camera"&&self.viewing_source(&video.user_id,"camera"))) {
                     // Registration has crossed the control lane and authorized
                     // its frame id before the native sink may emit frame one.
                     self.video_command("video-stream-visible","setVideoStreamVisible",json!({"id":id,"visible":true}))?;
                 }
                 self.resume_pending_views().await?;
-                self.publish();
+                if b(&value,"active")
+                    && let Some(intent)=self.voice_lifecycle.view_intents.get_mut(&format!("{}:{}",self.voice_channel,s(&value,"userId")))
+                    && intent.kind==s(&value,"kind") {intent.error.clear();intent.waiting_since=None;}
+                self.refresh_call();
             }
             "videoError" => {
                 let scoped = s(&value, "scope") == "stream";
@@ -3193,7 +3277,9 @@ impl Controller {
                     return Ok(());
                 }
                 if s(&value, "event") == "participant" && value["present"] == false {
-                    self.call_people.remove(&id);
+                    // Receiver removal is not a Gateway leave. Keep its source
+                    // offers and membership until the authoritative delta.
+                    if let Some(person)=self.call_people.get_mut(&id) {person.speaking=false;}
                 } else {
                     if !self.call_people.contains_key(&id) && self.call_people.len() < 256 {
                         let user = self.people.get(&id).cloned().unwrap_or(Person {
@@ -3214,9 +3300,8 @@ impl Controller {
                         if s(&value, "event") == "speaking" {
                             p.speaking = b(&value, "active");
                         }
-                        if value.get("video").is_some() {
-                            p.self_video = b(&value, "video");
-                        }
+                        // Native participant.video describes the receiver/SSRC,
+                        // not the publisher's Gateway camera announcement.
                     }
                 }
                 self.refresh_call();
@@ -3363,6 +3448,10 @@ impl Controller {
         let me = self.me();
         for (id, person) in &mut self.call_people {
             person.volume_percent = self.media_preferences.user_volumes.get(id).copied().unwrap_or(100.);
+            let intent=self.voice_lifecycle.view_intents.get(&format!("{}:{id}",self.voice_channel))
+                .filter(|intent|intent.attempt==self.voice_attempt&&call_source_available(Some(person),id,&intent.kind,&self.state.call_videos));
+            person.viewing=intent.map(|intent|intent.kind.clone()).unwrap_or_default();
+            person.view_error=intent.map(|intent|intent.error.clone()).unwrap_or_default();
         }
         if let Some(p) = self.call_people.get_mut(&me) {
             p.volume_percent=self.media_preferences.input_volume as f32;
@@ -3370,6 +3459,7 @@ impl Controller {
             p.self_deaf = self.state.self_deaf;
             p.self_video = self.state.camera_enabled;
             p.screen_sharing = self.state.screen_sharing;
+            p.camera_announcement_known=true;p.screen_announcement_known=true;
             if p.self_mute {
                 p.speaking = false;
             }

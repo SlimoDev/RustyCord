@@ -2,8 +2,12 @@
 //! implicitly taken from the currently selected server.
 use std::collections::HashMap;
 #[derive(Default)]
-pub struct Names {pub users:HashMap<String,String>,pub roles:HashMap<String,String>,pub channels:HashMap<String,String>}
+pub struct Names {pub users:HashMap<String,String>,pub roles:HashMap<String,String>,pub channels:HashMap<String,String>,pub games:HashMap<String,String>}
 pub fn readable(source:&str,names:&Names)->String{
+    let projected=notdiscord_core::message_atoms::project(source,|kind|match kind{
+        notdiscord_core::message_atoms::Kind::Timestamp(stamp)=>crate::ui::timestamps::display(*stamp),
+        notdiscord_core::message_atoms::Kind::Game(id)=>names.games.get(id).cloned().unwrap_or_else(||"@game · Juego no disponible".into()),
+    });let source=projected.as_str();
     let mut out=String::with_capacity(source.len().min(512));let mut cursor=0;let mut code=0usize;
     while cursor<source.len(){
         let rest=&source[cursor..];let ch=rest.chars().next().unwrap();

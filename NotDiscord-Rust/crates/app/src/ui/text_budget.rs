@@ -14,6 +14,7 @@ pub(super) fn weight(draft: &Draft) -> usize {
         mention.id.len() + mention.label.len() + std::mem::size_of_val(mention)).sum::<usize>())
         .saturating_add(draft.paths.iter().map(|path| path.as_os_str().len()).sum::<usize>())
         .saturating_add(draft.reply.as_ref().map_or(0, |reply| reply.message_id.len() + reply.channel_id.len() + reply.content.len()
+            + reply.mention_games.iter().map(|game|game.id.len()+game.name.len()+game.icon_url.as_ref().map_or(0,String::len)+std::mem::size_of_val(game)).sum::<usize>()
             + reply.mentions.iter().chain(reply.author.iter()).map(|person|
                 person.id.len() + person.name.len() + person.username.len() + person.display_name.len()
                     + person.avatar_url.as_ref().map_or(0,String::len)).sum::<usize>()))

@@ -44,6 +44,24 @@ mod p2_emoji_cold;
 type Pixels = (u32, u32, Vec<u8>);
 type PictureResult = Result<Pixels, String>;
 type AnimationFrames = Vec<(u32, u32, Vec<u8>, Duration)>;
+/// The validated source canvas is independent of the bounded playback bitmap.
+/// Keeping it outside each frame adds no per-frame image allocation.
+#[derive(Debug, Default)]
+struct DecodedAnimation {
+    canvas: (u32, u32),
+    frames: AnimationFrames,
+}
+#[cfg(test)]
+impl std::ops::Deref for DecodedAnimation {
+    type Target = [(u32, u32, Vec<u8>, Duration)];
+    fn deref(&self) -> &Self::Target { &self.frames }
+}
+struct MediaGeometry {
+    slot: Option<(u32, u32)>,
+    card_natural: Option<Vec2>,
+    canvas: Option<(u32, u32)>,
+    seen: u64,
+}
 #[derive(Clone)]
 enum PictureSource {
     Remote(String),
@@ -58,6 +76,8 @@ struct PictureRequest {
 pub struct PastedAttachment {
     pub channel: String,
     pub account: String,
+    pub generation:u64,
+    pub operation:String,
     result: Result<Option<PathBuf>, String>,
 }
 impl PastedAttachment {
@@ -120,18 +140,21 @@ pub struct Pictures {
     request: mpsc::SyncSender<PictureRequest>,
     ready: mpsc::Receiver<(u64, String, PictureResult, DecodePermit)>,
     local_sources: HashMap<String, PathBuf>,
-    paste_request: mpsc::SyncSender<(String, String, PathBuf)>,
+    paste_request: mpsc::SyncSender<(String, String, u64, String, PathBuf)>,
     paste_ready: mpsc::Receiver<PastedAttachment>,
     image_generation: Arc<AtomicU64>,
     clock: u64,
     used: usize,
     pub animation: Option<Animation>,
     animation_request: mpsc::SyncSender<(u64, String)>,
-    animation_ready: mpsc::Receiver<(u64, String, Result<AnimationFrames, String>)>,
+    animation_ready: mpsc::Receiver<(u64, String, Result<DecodedAnimation, String>)>,
     animation_pending: Option<(u64, String)>,
     animation_failed: Option<(String, String)>,
     animation_generation: Arc<AtomicU64>,
     animation_seen: bool,
+    // A bounded session cache preserves layout through Stop, Retry and texture
+    // eviction. It holds dimensions only, never a second copy of the frames.
+    media_geometry: HashMap<String, MediaGeometry>,
     large: Option<(String, TextureHandle)>,
     avatar_sources: HashMap<String, (String, u64)>,
     avatar_cache: Arc<Mutex<Option<Arc<AvatarCache>>>>,
@@ -188,6 +211,7 @@ fn avatar_color(id: &str) -> egui::Color32 {
 }
 pub struct Animation {
     pub url: String,
+    pub canvas: (u32, u32),
     pub frames: Vec<(TextureHandle, Duration)>,
     pub index: usize,
     pub next: Instant,
@@ -765,16 +789,17 @@ impl Pictures {
                 wake.request_repaint();
             }
         });
-        let (paste_request, paste_receive) = mpsc::sync_channel::<(String, String, PathBuf)>(2);
+        let (paste_request, paste_receive) = mpsc::sync_channel::<(String, String, u64, String, PathBuf)>(2);
         let (paste_done, paste_ready) = mpsc::sync_channel(2);
         let wake = ctx.clone();
         std::thread::spawn(move || {
-            while let Ok((channel, account, root)) = paste_receive.recv() {
+            while let Ok((channel, account, generation, operation, root)) = paste_receive.recv() {
                 let result = crate::platform::paste_image_to_png(&root);
                 if paste_done
                     .send(PastedAttachment {
                         channel,
                         account,
+                        generation, operation,
                         result,
                     })
                     .is_err()
@@ -810,6 +835,7 @@ impl Pictures {
             animation_failed: None,
             animation_generation,
             animation_seen: false,
+            media_geometry: HashMap::new(),
             large: None,
             avatar_sources: HashMap::new(),
             avatar_cache,
@@ -889,7 +915,8 @@ impl Pictures {
                     continue;
                 }
             };
-            let frames = decoded
+            let canvas = decoded.canvas;
+            let frames = decoded.frames
                 .into_iter()
                 .enumerate()
                 .map(|(index, (w, h, pixels, delay))| {
@@ -902,9 +929,11 @@ impl Pictures {
                 })
                 .collect::<Vec<_>>();
             if !frames.is_empty() {
+                if url.len() <= 4096 { self.geometry_entry(&url).canvas = Some(canvas); }
                 let next = Instant::now();
                 self.animation = Some(Animation {
                     url,
+                    canvas,
                     frames,
                     index: 0,
                     next,
@@ -915,6 +944,49 @@ impl Pictures {
     }
     pub fn texture(&mut self, url: &str) -> Option<TextureHandle> {
         self.texture_sized(url, 384)
+    }
+    fn geometry_entry(&mut self, url: &str) -> &mut MediaGeometry {
+        self.clock = self.clock.wrapping_add(1);
+        if !self.media_geometry.contains_key(url) && self.media_geometry.len() >= MAX_TEXTURES {
+            if let Some(old) = self.media_geometry.iter().min_by_key(|(_, value)| value.seen)
+                .map(|(key, _)| key.clone()) {
+                self.media_geometry.remove(&old);
+            }
+        }
+        let entry = self.media_geometry.entry(url.into()).or_insert(MediaGeometry {
+            slot: None, card_natural: None, canvas: None, seen: self.clock,
+        });
+        entry.seen = self.clock;
+        entry
+    }
+    /// Freeze the layout contract when the card first appears. Decoder metadata
+    /// can correct the contained image's aspect, but cannot move later rows.
+    pub(super) fn gif_slot_dimensions(&mut self, url: &str, declared: Option<(u32, u32)>) -> (u32, u32) {
+        let declared = declared.filter(|(w, h)| crate::platform::valid_image_dimensions(*w, *h));
+        if url.len() > 4096 { return declared.unwrap_or((320, 180)); }
+        let entry = self.geometry_entry(url);
+        if entry.card_natural.is_none() {
+            entry.card_natural = declared.or(entry.canvas).map(|(w, h)| egui::vec2(w as f32, h as f32));
+        }
+        let slot = declared.or(entry.canvas).unwrap_or((320, 180));
+        *entry.slot.get_or_insert(slot)
+    }
+    pub(super) fn gif_card_natural(&mut self, url: &str, poster: Vec2) -> Vec2 {
+        if url.len() > 4096 { return poster; }
+        let entry = self.geometry_entry(url);
+        let natural = entry.canvas.map(|(w, h)| egui::vec2(w as f32, h as f32)).unwrap_or(poster);
+        *entry.card_natural.get_or_insert(natural)
+    }
+    /// Natural size for a GIF/WebP is its validated source canvas, including
+    /// after playback has stopped. A reduced texture never defines 100% zoom.
+    pub(super) fn animation_canvas(&mut self, url: &str) -> Option<Vec2> {
+        if let Some(animation) = self.animation.as_ref().filter(|animation| animation.url == url) {
+            return Some(egui::vec2(animation.canvas.0 as f32, animation.canvas.1 as f32));
+        }
+        let entry = self.media_geometry.get_mut(url)?;
+        self.clock = self.clock.wrapping_add(1);
+        entry.seen = self.clock;
+        entry.canvas.map(|(w, h)| egui::vec2(w as f32, h as f32))
     }
     fn remember_avatar(&mut self, person: &notdiscord_core::models::Person) -> String {
         let source = avatar_source(person);
@@ -1117,9 +1189,9 @@ impl Pictures {
     pub fn retry_path(&mut self, path: &Path, width: u32) {
         self.failed.remove(&image_key(&format!("local:{}", path.to_string_lossy()), width));
     }
-    pub fn paste_bitmap(&self, channel: &str, account: &str, root: PathBuf) -> Result<(), String> {
+    pub fn paste_bitmap(&self, channel: &str, account: &str, generation:u64, operation:&str, root: PathBuf) -> Result<(), String> {
         self.paste_request
-            .try_send((channel.into(), account.into(), root))
+            .try_send((channel.into(), account.into(), generation, operation.into(), root))
             .map_err(|_| {
                 "Ya se están preparando imágenes del portapapeles. Espera un momento.".into()
             })
@@ -1214,6 +1286,7 @@ impl Pictures {
         self.failed = HashMap::new();
         self.local_sources = HashMap::new();
         self.avatar_sources = HashMap::new();
+        self.media_geometry = HashMap::new();
         self.used = 0;
         *self.avatar_cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
         while self.ready.try_recv().is_ok() {}
@@ -1335,13 +1408,13 @@ impl Pictures {
     }
 }
 #[cfg(test)]
-fn decode_animation_bytes(bytes: &[u8], cancelled: impl Fn() -> bool) -> AnimationFrames {
+fn decode_animation_bytes(bytes: &[u8], cancelled: impl Fn() -> bool) -> DecodedAnimation {
     decode_animation_checked(bytes, cancelled).unwrap_or_default()
 }
 fn decode_animation_checked(
     bytes: &[u8],
     cancelled: impl Fn() -> bool,
-) -> Result<AnimationFrames, String> {
+) -> Result<DecodedAnimation, String> {
     if bytes.starts_with(b"RIFF"){return webp_animation::decode(bytes,cancelled);}
     let Ok(mut scan) = gif::DecodeOptions::new().read_info(Cursor::new(bytes)) else {
         return Err("Decodificación GIF: cabecera no válida o archivo incompatible.".into());
@@ -1417,7 +1490,7 @@ fn decode_animation_checked(
     if frames.len() != count {
         Err("Decodificación GIF: secuencia incompleta.".into())
     } else {
-        Ok(frames)
+        Ok(DecodedAnimation { canvas: (w, h), frames })
     }
 }
 
@@ -1965,6 +2038,7 @@ mod tests {
         drop(PastedAttachment {
             channel: "200".into(),
             account: "100".into(),
+            generation:0,operation:String::new(),
             result: Ok(Some(dropped.clone())),
         });
         assert!(!dropped.exists());
@@ -1973,6 +2047,7 @@ mod tests {
         let mut item = PastedAttachment {
             channel: "200".into(),
             account: "100".into(),
+            generation:0,operation:String::new(),
             result: Ok(Some(retained.clone())),
         };
         assert_eq!(item.take_result().unwrap(), Some(retained.clone()));

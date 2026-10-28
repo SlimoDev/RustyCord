@@ -10,6 +10,7 @@ mod custom_text;
 mod mentions;
 mod markdown_cache;
 mod text_budget;
+pub(crate) mod timestamps;
 mod txt_import;
 mod sound_settings;
 mod media_limit;
@@ -23,6 +24,7 @@ mod moderation;
 mod group_members;
 mod notification_activation;
 mod resources;
+mod game_mentions;
 mod profile_editor;
 mod shell;
 mod theme;
@@ -315,6 +317,7 @@ pub struct NotDiscordUi {
     dialog_data: Value,
     dialog_error: String,
     picker: Option<Picker>,
+    time_picker: Option<timestamps::Picker>,
     picker_history: PickerHistory,
     remote_gif_favorites: Vec<Value>,
     picker_account: String,
@@ -344,6 +347,7 @@ pub struct NotDiscordUi {
     scroll_bottom: bool,
     mention_index: usize,
     mention_closed: bool,
+    game_mentions: game_mentions::State,
     composer_cursor: usize,
     row_heights: HashMap<String, f32>,
     nav_heights: HashMap<String, (u64, f32)>,
@@ -496,6 +500,7 @@ impl NotDiscordUi {
             dialog_data: Value::Null,
             dialog_error: String::new(),
             picker: None,
+            time_picker: None,
             picker_history: PickerHistory::default(),
             remote_gif_favorites: Vec::new(),
             picker_account: String::new(),
@@ -524,6 +529,7 @@ impl NotDiscordUi {
             scroll_bottom: true,
             mention_index: 0,
             mention_closed: false,
+            game_mentions: game_mentions::State::default(),
             composer_cursor: 0,
             row_heights: HashMap::new(),
             nav_heights: HashMap::new(),
@@ -1036,6 +1042,7 @@ impl NotDiscordUi {
         }
         if kind == "stream-viewers" { self.ctx.data_mut(|d|d.insert_temp(egui::Id::new("stream-viewers"),data)); return; }
         match kind {
+            "game-catalog"=>{self.game_mentions.receive(&data,&self.state);}
             "deleted-log-purged" => {
                 let channel = s(&data, "channelId");
                 let message = s(&data, "messageId");
@@ -1047,6 +1054,7 @@ impl NotDiscordUi {
                             reply.author = None;
                             reply.content.clear();
                             reply.mentions.clear();
+                            reply.mention_games.clear();
                             reply.deleted = true;
                             reply.unavailable = true;
                         }
@@ -1583,6 +1591,7 @@ impl eframe::App for NotDiscordUi {
             }
         }
         self.process_updates(ctx);
+        self.game_mentions.sync(&self.state);
         if !minimized {
             let scripts = if self.snapshot_fonts_pending && self.cjk_loaded != 3 {
                 snapshot_scripts(&self.state)
@@ -1676,7 +1685,9 @@ impl eframe::App for NotDiscordUi {
             self.draw_dialog(ctx, &state);
             self.draw_picker(ctx, &state);
             self.draw_viewer(ctx);
+            self.draw_timestamp_picker(ctx,&state);
             crate::diagnostics::draw(ctx);
+            self.flush_game_queries();
         }
         self.update_member_demand(ctx, &state);
         self.check_selection_preview_closed();

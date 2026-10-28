@@ -254,6 +254,16 @@ pub struct MessageReplyPreview {
     pub unavailable: bool,
     #[serde(deserialize_with = "null_default")]
     pub mentions: Vec<Person>,
+    #[serde(deserialize_with = "null_default")]
+    pub mention_games: Vec<MentionGame>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct MentionGame {
+    pub id:String,
+    pub name:String,
+    pub icon_url:Option<String>,
+    pub restricted:bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, rename_all = "PascalCase")]
@@ -343,6 +353,8 @@ pub struct ChatMessage {
     pub reactions: Vec<MessageReaction>,
     #[serde(deserialize_with = "null_default")]
     pub mentions: Vec<Person>,
+    #[serde(deserialize_with = "null_default")]
+    pub mention_games: Vec<MentionGame>,
     pub reply_preview: Option<MessageReplyPreview>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -357,10 +369,32 @@ pub struct CallParticipant {
     pub speaking: bool,
     pub self_video: bool,
     pub screen_sharing: bool,
+    pub camera_announcement_known: bool,
+    pub screen_announcement_known: bool,
+    /// Viewer intent in this call; never inferred from a decoder callback.
+    pub viewing: String,
+    pub view_error: String,
     pub volume_percent: f32,
 }
 impl Default for CallParticipant {
-    fn default() -> Self { Self {user:Person::default(),is_self:false,self_mute:false,self_deaf:false,server_mute:false,server_deaf:false,speaking:false,self_video:false,screen_sharing:false,volume_percent:100.} }
+    fn default() -> Self { Self {user:Person::default(),is_self:false,self_mute:false,self_deaf:false,server_mute:false,server_deaf:false,speaking:false,self_video:false,screen_sharing:false,camera_announcement_known:false,screen_announcement_known:false,viewing:String::new(),view_error:String::new(),volume_percent:100.} }
+}
+impl CallParticipant {
+    /// Publisher announcements are independent of receiver/texture lifetime.
+    pub fn source_available(&self, kind: &str) -> bool {
+        match kind { "camera" => self.self_video, "screen" => self.screen_sharing, _ => false }
+    }
+    pub fn source_known(&self,kind:&str)->bool {
+        match kind {"camera"=>self.camera_announcement_known,"screen"=>self.screen_announcement_known,_=>true}
+    }
+}
+/// A receiver may arrive before its Gateway roster. Explicit withdrawals win;
+/// unknown announcements alone may use the bounded current-call video fallback.
+pub fn call_source_available(person:Option<&CallParticipant>,owner:&str,kind:&str,videos:&[CallVideo])->bool {
+    if !matches!(kind,"camera"|"screen") {return false;}
+    if let Some(person)=person && (person.source_known(kind)||person.source_available(kind)) {return person.source_available(kind);}
+    videos.iter().any(|video|video.user_id==owner&&video.kind==kind&&!video.preview
+        && (video.active||matches!(video.status.as_str(),"loading"|"connecting"|"waiting"|"starting"|"paused")))
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, rename_all = "PascalCase")]
@@ -458,6 +492,7 @@ pub struct CallVideo {
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct AppSnapshot {
+    pub game_mentions_nsfw_allowed: bool,
     pub upload_limit: crate::uploads::UploadLimit,
     pub network_safety: crate::safety::SafetyState,
     pub network_safety_message: String,

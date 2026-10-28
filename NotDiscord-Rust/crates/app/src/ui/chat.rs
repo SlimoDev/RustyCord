@@ -438,7 +438,11 @@ impl NotDiscordUi {
         let selecting = history_selection_finish(ui.ctx(), out.inner_rect, scroll_salt,
             !ui.is_enabled() || self.background_blocked());
         let advance_motion = ui.ctx().current_pass_index() == 0;
+        let middle_owns_wheel = super::autoscroll::active(ui.ctx()) || ui.input(|input|
+            input.raw.events.iter().any(|event|matches!(event,egui::Event::PointerButton {button:egui::PointerButton::Middle,pressed:true,..})));
+        let fresh_wheel=ui.input(|input|input.raw.events.iter().any(|event|matches!(event,egui::Event::MouseWheel {..})));
         let wheel_delta = if advance_motion && ui.is_enabled() && !self.background_blocked()
+            && (!middle_owns_wheel || fresh_wheel)
             && history_wheel_target(ui.ctx(), out.inner_rect, ui.layer_id()) {
             // Consume only leftovers from nested content. Owning this here
             // also keeps wheel input available while selecting text or
@@ -466,7 +470,7 @@ impl NotDiscordUi {
             })
         });
         let middle_velocity = history_middle_scroll(ui, out.inner_rect, scroll_salt, out.id,
-            self.background_blocked() || egui::Popup::is_any_open(ui.ctx()) || reaction_panel_open(ui.ctx()));
+            out.content_size.y > out.inner_rect.height(), self.background_blocked() || egui::Popup::is_any_open(ui.ctx()) || reaction_panel_open(ui.ctx()));
         let velocity = if !advance_motion || wheel_delta != 0. { 0. } else if selecting { selection_velocity } else { middle_velocity };
         if velocity != 0. {
             let dt = ui.ctx().input(|input| input.stable_dt).clamp(0., 0.05);
@@ -728,7 +732,7 @@ impl NotDiscordUi {
                                             &reply.content
                                         };
                                         let content =
-                                            readable_mentions(content, &reply.mentions, state);
+                                            readable_atoms(content, &reply.mentions,&reply.mention_games, state);
                                         let r = reply_preview(
                                             ui,
                                             &format!("↳ {}: {}", author, short(&content, 110)),
@@ -742,7 +746,7 @@ impl NotDiscordUi {
                                         }
                                     }
                                     for previous in &m.previous_contents {
-                                        selectable_message_label(ui, RichText::new(readable_mentions(previous, &m.mentions, state))
+                                        selectable_message_label(ui, RichText::new(readable_atoms(previous, &m.mentions,&m.mention_games, state))
                                             .size(self.prefs.chat_size).italics().color(self.theme.muted));
                                     }
                                     if m.edited && m.previous_contents.is_empty() && state.view != "history" {
@@ -755,7 +759,7 @@ impl NotDiscordUi {
                                                 .italics()
                                                 .color(Color32::from_rgb(242, 63, 67)),
                                         );
-                                        selectable_message_label(ui, RichText::new(readable_mentions(&m.content, &m.mentions, state))
+                                        selectable_message_label(ui, RichText::new(readable_atoms(&m.content, &m.mentions,&m.mention_games, state))
                                             .size(self.prefs.chat_size).color(Color32::from_rgb(242, 63, 67)));
                                         self.draw_deleted_message_rich(ui, m, state);
                                         for attachment in &m.attachments {
@@ -1261,6 +1265,9 @@ impl NotDiscordUi {
         let mut end = 0;
         for capture in message_rich_pattern().captures_iter(text) {
             let whole = capture.get(0).unwrap();
+            if (capture.get(7).is_some()||capture.get(8).is_some())
+                && (!super::mentions::plain_text_at(source,source_start+whole.start())
+                    ||notdiscord_core::message_atoms::token(whole.as_str()).is_none()){continue;}
             if (capture.get(1).is_some() || capture.get(6).is_some())
                 && !super::mentions::plain_text_at(source, source_start + whole.start()) { continue; }
             if capture.get(6).is_some() && !super::mentions::broadcast_at(source,
@@ -1270,7 +1277,11 @@ impl NotDiscordUi {
             if whole.start() > end {
                 self.message_plain_styled(ui, &text[end..whole.start()], size, color, style);
             }
-            if capture.get(6).is_some() {
+            if let Some(notdiscord_core::message_atoms::Kind::Timestamp(stamp))=capture.get(7).and_then(|token|notdiscord_core::message_atoms::token(token.as_str())) {
+                self.timestamp_label(ui,stamp,whole.as_str(),size,style);
+            } else if let Some(notdiscord_core::message_atoms::Kind::Game(id))=capture.get(8).and_then(|token|notdiscord_core::message_atoms::token(token.as_str())) {
+                self.message_game(ui,&id,&m.mention_games,state,size,style);
+            } else if capture.get(6).is_some() {
                 if m.mentions_everyone && !m.forwarded {
                     super::mentions::styled_label(ui, whole.as_str().trim_start_matches('@'), size, style, false);
                 } else { self.message_plain_styled(ui, whole.as_str(), size, color, style); }
@@ -1512,6 +1523,7 @@ impl NotDiscordUi {
             author: Some(m.author.clone()),
             content: notdiscord_core::parsing::message_preview(m),
             mentions: m.mentions.clone(),
+            mention_games: m.mention_games.clone(),
             ..Default::default()
         });
         let previous = &self.drafts[&m.channel_id];
@@ -1630,6 +1642,7 @@ impl NotDiscordUi {
         dimensions: Option<(u32, u32)>,
     ) {
         let max = egui::vec2(ui.available_width().min(360.), 220.);
+        let dimensions = if gif { Some(self.pictures.gif_slot_dimensions(url, dimensions)) } else { dimensions };
         let size = media_slot_size(max, dimensions);
         let (rect, slot_response) = ui.allocate_exact_size(size, egui::Sense::hover());
         let mut painted_rect=rect;
@@ -1642,11 +1655,21 @@ impl NotDiscordUi {
                     .then(|| self.pictures.texture(url)).flatten());
             if let Some(texture) = texture {
                 self.pictures.remember_message_preview(url,poster,&texture);
+                // The decoder reduces playback pixels to meet the frame budget.
+                // Fit the source canvas into the same card, not that thumbnail.
                 let image_size = texture.size_vec2();
-                let scale = (rect.width() / image_size.x)
-                    .min(rect.height() / image_size.y)
-                    .min(1.);
-                let image_rect = egui::Rect::from_center_size(rect.center(), image_size * scale);
+                let painted_size = if gif {
+                    let natural = self.pictures.gif_card_natural(url, image_size);
+                    let natural_scale = (rect.width() / natural.x).min(rect.height() / natural.y).min(1.);
+                    let bounds = natural * natural_scale;
+                    let canvas = self.pictures.animation_canvas(url).unwrap_or(image_size);
+                    // Only the GIF bitmap may be enlarged back into its logical
+                    // extent. Still images retain their existing natural cap.
+                    canvas * (bounds.x / canvas.x).min(bounds.y / canvas.y)
+                } else {
+                    image_size * (rect.width() / image_size.x).min(rect.height() / image_size.y).min(1.)
+                };
+                let image_rect = egui::Rect::from_center_size(rect.center(), painted_size);
                 painted_rect=image_rect;
                 ui.painter().image(
                     texture.id(),
@@ -1789,6 +1812,9 @@ impl NotDiscordUi {
     }
     pub(super) fn poll_clipboard_attachments(&mut self) {
         for mut pasted in self.pictures.take_pasted() {
+            let accepted=super::input_ownership::accept_attachment(&self.ctx,&pasted.operation,&pasted.account,
+                pasted.generation,&pasted.channel,&self.state);
+            if !accepted {continue;} // PastedAttachment owns cleanup of stale/cancelled results.
             let path = match pasted.take_result() {
                 Ok(Some(path)) => path,
                 Ok(None) => continue,
@@ -1863,9 +1889,11 @@ impl NotDiscordUi {
             && !ime_active && self.submissions.len() < 64
             && (!draft.text.trim().is_empty() || !draft.paths.is_empty())
             && (self.mention_closed || completion::query(&draft.text, self.composer_cursor).is_none());
+        let paste_can_focus=allowed && !ime_active
+            && super::input_ownership::composer_paste_focus_allowed(ui.ctx(),editor_id,initial_focus);
         if allowed && !self.background_blocked() && !egui::Popup::is_any_open(ui.ctx())
-            && !ui.ctx().wants_keyboard_input()
-            && initial_focus.is_none_or(|focus| focus == editor_id)
+            && (!ui.ctx().wants_keyboard_input() || paste_can_focus)
+            && (initial_focus.is_none_or(|focus| focus == editor_id) || paste_can_focus)
             && ui.ctx().input(|input| composer_printable_input(input) || super::input_ownership::paste_input(input)
                 || contextual_enter && composer_send_enter(input) && !input.pointer.any_down()) {
             // Request before constructing TextEdit, so it receives this pass's
@@ -1883,6 +1911,7 @@ impl NotDiscordUi {
             && ui.ctx().input(|input| input.focused)
             && !self.background_blocked() && !egui::Popup::is_any_open(ui.ctx());
         let previous_mention = completion::query(&draft.text, self.composer_cursor);
+        self.update_game_query(ui.ctx(),state,channel,draft.revision,previous_mention.as_ref().filter(|_|allowed&&!ime_active&&!self.mention_closed&&!self.background_blocked()).map(|(_,query)|query.as_str()));
         sync_completion_query(ui.ctx(), editor_id, &previous_mention,
             &mut self.mention_index, &mut self.mention_closed);
         let previous_choices = previous_mention.as_ref().filter(|_| !self.mention_closed)
@@ -1952,43 +1981,12 @@ impl NotDiscordUi {
             && ui.memory(|m| m.has_focus(editor_id))
             && ui.ctx().input(|i| i.focused)
             && crate::platform::foreground_is_current_process();
-        let previous = ui.ctx().data(|d| {
-            d.get_temp::<(bool, bool)>(egui::Id::new(("composer-paste", channel)))
-                .unwrap_or_default()
-        });
-        let (down, pressed) = if focused {
-            ui.ctx().input(|i| {
-                crate::platform::paste_key_state(
-                    i.modifiers.ctrl || i.modifiers.command,
-                    i.modifiers.shift,
-                )
-            })
-        } else {
-            (false, false)
-        };
-        let paste_event = ui.ctx().input(|i| {
-            i.events
-                .iter()
-                .any(|event| matches!(event, egui::Event::Paste(_)))
-        });
-        // A mixed clipboard has one representation per field: text wins when
-        // egui delivered non-empty text; bitmap-only paste uses attachments.
-        let paste_has_text=ui.ctx().input(|input|input.events.iter().any(|event|
-            matches!(event,egui::Event::Paste(text) if !text.is_empty())));
-        let mut paste = allowed
-            && state.channel_access.can_attach
-            && !paste_has_text
-            && paste_gesture(focused, previous.0, down, pressed, paste_event, previous.1)
+        // Native bitmap-only paste retains its shortcut event in egui-winit.
+        // Resolve field scope/capability first; do not read image formats while
+        // a search, modal, viewer, other editor or denied composer owns input.
+        let mut paste = focused && allowed && !ime_active
+            && super::input_ownership::take_attachment_paste(ui,editor_id,state.channel_access.can_attach)
             && crate::platform::clipboard_has_image();
-        ui.ctx().data_mut(|d| {
-            d.insert_temp(egui::Id::new(("composer-paste", channel)), (focused, down))
-        });
-        if paste {
-            ui.ctx().input_mut(|i| {
-                i.events
-                    .retain(|event| !matches!(event, egui::Event::Paste(_)))
-            });
-        }
         let mut send = false;
         let mut rejected_edit = false;
         let mut discard = false;
@@ -2018,7 +2016,7 @@ impl NotDiscordUi {
                                                 .as_ref()
                                                 .map(|p| reply_display_name(&reply, p, state))
                                                 .unwrap_or("Mensaje"),
-                                            short(&readable_mentions(&reply.content, &reply.mentions, state), 90)
+                                            short(&readable_atoms(&reply.content, &reply.mentions,&reply.mention_games, state), 90)
                                         ),
                                         self.prefs.chat_size,
                                         self.theme.muted,
@@ -2291,6 +2289,7 @@ impl NotDiscordUi {
                     }
                 }
                 let mention = completion::query(&draft.text, self.composer_cursor);
+                self.update_game_query(ui.ctx(),state,channel,draft.revision,mention.as_ref().filter(|_|allowed&&!ime_active&&!self.mention_closed&&!self.background_blocked()).map(|(_,query)|query.as_str()));
                 if allowed && mention.as_ref().is_some_and(|(_,query)|query.starts_with(':'))
                     && !state.selected_guild_id.is_empty()
                     && !state.emojis.iter().any(|emoji|emoji.guild_id==state.selected_guild_id) {
@@ -2348,6 +2347,11 @@ impl NotDiscordUi {
                 }
                 if let Some(index) = choose {
                     if let Some((start, _)) = mention {
+                        if matches!(choices[index],completion::Choice::TimeStart){
+                            self.open_timestamp_picker(state,start,self.composer_cursor,draft.revision);
+                            self.mention_closed=true;send=false;return;
+                        }
+                        if matches!(choices[index],completion::Choice::Notice(_)){send=false;return;}
                         let previous = draft.clone();
                         let Some(cursor)=completion::insert(&mut draft,start,self.composer_cursor,&choices[index]) else {return;};
                         if !self.accepts_draft_edit(&previous,&draft,Some(channel),after_enter.len()) {
@@ -2400,13 +2404,15 @@ impl NotDiscordUi {
                 .as_ref()
                 .map(|p| p.id.as_str())
                 .unwrap_or("");
-            if let Err(error) = self.pictures.paste_bitmap(
-                channel,
-                account,
-                self.data_dir.join("draft-attachments"),
-            ) {
-                self.error = error;
-            }
+            if let Some(operation)=super::input_ownership::begin_attachment(ui.ctx(),state) {
+                if let Err(error) = self.pictures.paste_bitmap(
+                    channel, account, state.notification_generation, &operation,
+                    self.data_dir.join("draft-attachments"),
+                ) {
+                    super::input_ownership::forget_attachment(ui.ctx(),&operation);
+                    self.error=error;
+                }
+            }else {self.error="Hay varias imágenes del portapapeles en preparación. Espera un momento.".into();}
         }
         if send && allowed && (!draft.text.trim().is_empty() || !draft.paths.is_empty()) {
             if let Err(error) = validate_submission(&draft, state) {
@@ -2911,13 +2917,13 @@ fn middle_scroll_velocity(origin: egui::Pos2, pointer: egui::Pos2) -> f32 {
     let distance = pointer.y - origin.y;
     distance.signum() * ((distance.abs() - 12.).max(0.) / 130.).powi(2).min(1.) * 1100.
 }
-fn history_middle_scroll(ui: &mut egui::Ui, viewport: egui::Rect, scope: egui::Id, area_id: egui::Id, blocked: bool) -> f32 {
+fn history_middle_scroll(ui: &mut egui::Ui, viewport: egui::Rect, scope: egui::Id, area_id: egui::Id, scrollable:bool, blocked: bool) -> f32 {
     let ctx = ui.ctx();
     let current_frame = ctx.cumulative_frame_nr();
     if (blocked || interaction::selecting(ctx)) && super::autoscroll::origin(ctx,area_id).is_some() {
         super::autoscroll::cancel(ctx);
     }
-    let velocity=super::autoscroll::drive(ui,area_id,viewport,!blocked && !interaction::selecting(ctx));
+    let velocity=super::autoscroll::drive(ui,area_id,viewport,scrollable && !blocked && !interaction::selecting(ctx));
     let origin=super::autoscroll::origin(ctx,area_id);
     ctx.data_mut(|data|data.insert_temp(egui::Id::new("history-middle-scroll"),HistoryMiddleScroll {
         scope:Some(scope),origin,last_frame:current_frame,
@@ -2956,6 +2962,21 @@ fn record_message_text_gesture(ctx:&egui::Context,response:&egui::Response) {
 }
 /// Shared mention labels participate in history selection without routing their
 /// click/double-click through the message edit shortcuts.
+pub(super) fn register_history_atom(ui:&egui::Ui,response:&egui::Response,position:egui::Pos2,galley:std::sync::Arc<egui::Galley>,copy_text:&str)->bool {
+    super::autoscroll::allow_background(ui,response.id);
+    let active=ui.ctx().data_mut(|data|data.get_temp_mut_or_default::<HistoryFrame>(egui::Id::new("history-frame")).active);
+    if !active{return false;}
+    // Keep the selection fill behind the painted text. A logical one-character
+    // galley makes keyboard/double-click selection atomic just like an emoji.
+    let shape=ui.painter().add(egui::Shape::Noop);
+    ui.painter().galley(position,galley,ui.visuals().text_color());
+    let logical=ui.painter().layout_no_wrap(" ".into(),egui::FontId::proportional(16.),ui.visuals().text_color());
+    let label=HistoryLabel{id:response.id,layer:response.layer_id,position,galley:logical,clip:ui.clip_rect(),shape,
+        fallback:ui.visuals().text_color(),double_clicked:response.double_clicked(),triple_clicked:response.triple_clicked(),link:false,
+        atom:Some((response.rect,copy_text.into())),owns_primary:response.enabled()&&(response.is_pointer_button_down_on()
+            ||response.drag_started_by(egui::PointerButton::Primary)||response.clicked_by(egui::PointerButton::Primary))};
+    ui.ctx().data_mut(|data|data.get_temp_mut_or_default::<HistoryFrame>(egui::Id::new("history-frame")).labels.push(label));true
+}
 pub(super) fn register_history_label(ui: &egui::Ui, response: &egui::Response, position: egui::Pos2, galley: std::sync::Arc<egui::Galley>) -> bool {
     let active = ui.ctx().data_mut(|data| data.get_temp_mut_or_default::<HistoryFrame>(egui::Id::new("history-frame")).active);
     if active {
@@ -3096,14 +3117,21 @@ fn paint_member_event(painter: &egui::Painter, rect: egui::Rect, color: Color32,
 fn message_rich_pattern() -> &'static regex::Regex {
     static RICH: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(
-            r"https?://[^\s<>]+|<@!?([0-9]+)>|<(a?):([^:\s<>]+):([0-9]+)>|:([A-Za-z0-9_]{2,64}):|(@(?:everyone|here))\b",
+            r"https?://[^\s<>]+|<@!?([0-9]+)>|<(a?):([^:\s<>]+):([0-9]+)>|:([A-Za-z0-9_]{2,64}):|(@(?:everyone|here))\b|(<t:-?[0-9]{1,17}(?::[tTdDfFsSR])?>)|(<@\$[0-9]{1,22}>)",
         )
         .unwrap()
     });
     &RICH
 }
 fn readable_mentions(text: &str, explicit: &[Person], state: &AppSnapshot) -> String {
-    super::mentions::readable(text, explicit, state)
+    readable_atoms(text,explicit,&[],state)
+}
+fn readable_atoms(text:&str,explicit:&[Person],games:&[MentionGame],state:&AppSnapshot)->String{
+    let text=notdiscord_core::message_atoms::project(text,|kind|match kind{
+        notdiscord_core::message_atoms::Kind::Timestamp(stamp)=>super::timestamps::display(*stamp),
+        notdiscord_core::message_atoms::Kind::Game(id)=>games.iter().find(|game|game.id==*id&&(!game.restricted||state.game_mentions_nsfw_allowed))
+            .map(|game|game.name.clone()).unwrap_or_else(||"@game · Juego no disponible".into()),
+    });super::mentions::readable(&text,explicit,state)
 }
 fn known_named_emoji(
     name: &str,
@@ -3447,19 +3475,7 @@ fn composer_emoji_preview_height(ui: &egui::Ui, font_size: f32) -> f32 {
 fn composer_control_height(ui: &egui::Ui) -> f32 {
     composer_control_sizes(ui.ctx(), ui.style()).iter().map(|size|size.y).fold(30., f32::max)
 }
-fn paste_gesture(
-    focused: bool,
-    previously_focused: bool,
-    down: bool,
-    pressed_since_poll: bool,
-    paste_event: bool,
-    previously_down: bool,
-) -> bool {
-    focused
-        && (paste_event
-            || down && !previously_down
-            || pressed_since_poll && previously_focused && !previously_down)
-}
+
 fn previewable_path(path: &std::path::Path) -> bool {
     path.extension().and_then(|v| v.to_str()).is_some_and(|v| {
         matches!(
@@ -5695,15 +5711,6 @@ mod tests {
     fn contextual_token() {
         assert_eq!(mention_token("Hola @B", 7), Some((5, "B".into())));
         assert!(mention_token("mail@x", 6).is_none());
-    }
-    #[test]
-    fn bitmap_shortcut_survives_egui_key_consumption_and_does_not_repeat() {
-        assert!(paste_gesture(true, true, true, false, false, false));
-        assert!(paste_gesture(true, true, false, true, false, false));
-        assert!(paste_gesture(true, true, false, false, true, false));
-        assert!(!paste_gesture(true, true, true, true, false, true));
-        assert!(!paste_gesture(false, true, true, true, true, false));
-        assert!(!paste_gesture(true, false, false, true, false, false));
     }
     fn ui_harness() -> (
         NotDiscordUi,

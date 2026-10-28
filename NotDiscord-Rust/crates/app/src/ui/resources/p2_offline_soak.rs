@@ -495,7 +495,7 @@ fn offline_multimedia_resource_soak() {
             .send((
                 old,
                 "synthetic-gif".into(),
-                Ok(vec![(1, 1, vec![0, 0, 0, 255], Duration::from_millis(40))]),
+                Ok(DecodedAnimation { canvas: (1, 1), frames: vec![(1, 1, vec![0, 0, 0, 255], Duration::from_millis(40))] }),
             ))
             .unwrap();
         app.pictures.poll(&ctx);

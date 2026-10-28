@@ -626,7 +626,7 @@ impl NotDiscordUi {
                     .inner_margin(egui::Margin::symmetric(8, 0)),
             )
             .show(ctx, |ui| {
-                if self.background_blocked() { ui.disable(); }
+                if self.background_blocked() || super::autoscroll::cancelling(ui.ctx()) { ui.disable(); }
                 ui.horizontal_centered(|ui| {
                     ui.label(RichText::new("●").color(self.theme.accent))
                         .on_hover_text(format!("{} · {}", state.connection, state.status));
@@ -667,7 +667,7 @@ impl NotDiscordUi {
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
-                if self.background_blocked() { ui.disable(); }
+                if self.background_blocked() || super::autoscroll::cancelling(ui.ctx()) { ui.disable(); }
                 ui.horizontal_centered(|ui| {
                     ui.allocate_ui_with_layout(
                         egui::vec2(
@@ -714,7 +714,7 @@ impl NotDiscordUi {
                         .inner_margin(egui::Margin::symmetric(12, 8)),
                 )
                 .show(ctx, |ui| {
-                if self.background_blocked() { ui.disable(); }
+                if self.background_blocked() || super::autoscroll::cancelling(ui.ctx()) { ui.disable(); }
                     ui.horizontal_wrapped(|ui| {
                         ui.label(&state.network_safety_message);
                         if ui.button("Abrir Discord").clicked() {
@@ -745,7 +745,7 @@ impl NotDiscordUi {
                         .inner_margin(egui::Margin::symmetric(12, 3)),
                 )
                 .show(ctx, |ui| {
-                if self.background_blocked() { ui.disable(); }
+                if self.background_blocked() || super::autoscroll::cancelling(ui.ctx()) { ui.disable(); }
                     let width = ui.available_width();
                     let (rect, _) =
                         ui.allocate_exact_size(egui::vec2(width, 20.), egui::Sense::hover());
@@ -779,7 +779,7 @@ impl NotDiscordUi {
                     .inner_margin(egui::Margin::symmetric(8, 8)),
             )
             .show(ctx, |ui| {
-                if self.background_blocked() { ui.disable(); }
+                if self.background_blocked() || super::autoscroll::cancelling(ui.ctx()) { ui.disable(); }
                 let footer = left_footer_height(state, ctx.content_rect().height() < 420., self.updater.control_visible());
                 let available = ui.available_rect_before_wrap();
                 let reserved = egui::Rect::from_min_max(available.min, egui::pos2(available.right(), (available.bottom() - footer).max(available.top())));
@@ -908,6 +908,7 @@ impl NotDiscordUi {
                                     ui.push_id(("guild-row",&guild.id),|ui| {
                                         let r=self.rail_item(ui,guild,48.,guild.id==state.selected_guild_id,false,
                                             if guild.unread {1}else{0});
+                                        super::autoscroll::allow_primary_row(ui,&r);
                                         order.row(&r,&guild.id);
                                         if r.clicked() && !order.dragging() && !r.dragged() {
                                             self.send("guild",&guild.id,"","","");
@@ -929,7 +930,7 @@ impl NotDiscordUi {
                     .inner_margin(egui::Margin::same(10)),
             )
             .show(ctx, |ui| {
-                if self.background_blocked() { ui.disable(); }
+                if self.background_blocked() || super::autoscroll::cancelling(ui.ctx()) { ui.disable(); }
                 let compact_footer = ctx.content_rect().height() < 420.;
                 let footer = left_footer_height(state, compact_footer, self.updater.control_visible());
                 let available = ui.available_rect_before_wrap();
@@ -1114,7 +1115,7 @@ impl NotDiscordUi {
                         .inner_margin(egui::Margin::same(16)),
                 )
                 .show(ctx, |ui| {
-                if self.background_blocked() { ui.disable(); }
+                if self.background_blocked() || super::autoscroll::cancelling(ui.ctx()) { ui.disable(); }
                     if dm_sidebar {
                         self.draw_dm_sidebar(ui, state);
                     } else {
@@ -1131,7 +1132,7 @@ impl NotDiscordUi {
                     .inner_margin(egui::Margin::same(16)),
             )
             .show(ctx, |ui| {
-                if self.background_blocked() { ui.disable(); }
+                if self.background_blocked() || super::autoscroll::cancelling(ui.ctx()) { ui.disable(); }
                 match state.view.as_str() {
                 "chat" | "pins" | "search" | "history" => self.draw_chat(ui, state),
                 "profile" => self.draw_profile(ui, state),
@@ -1987,7 +1988,7 @@ impl NotDiscordUi {
             )
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                if self.background_blocked() { ui.disable(); }
+                if self.background_blocked() || super::autoscroll::cancelling(ui.ctx()) { ui.disable(); }
                 egui::Frame::new()
                     .fill(self.theme.panel)
                     .stroke(egui::Stroke::new(1.0_f32, self.theme.line))

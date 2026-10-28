@@ -1,6 +1,8 @@
 //! [`egui`] bindings for [`winit`](https://github.com/rust-windowing/winit).
 // NotDiscord change, 2026-10-27: forward the paired winit NativeText extension
 // as ordered plain text, leaving physical key and IME lifecycles untouched.
+// NotDiscord change, 2026-10-28: preserve bitmap-only paste as its native
+// shortcut Key event when no textual Paste representation exists.
 // See PATCH-NOTDISCORD.md.
 //!
 //! The library translates winit events to egui, handled copy/paste,
@@ -793,7 +795,7 @@ impl State {
             state,
 
             location: _, // e.g. is it on the numpad?
-            repeat: _,   // egui will figure this out for us
+            repeat,      // Retain native repeat for bitmap-only paste intent
             ..
         } = event;
 
@@ -829,11 +831,18 @@ impl State {
                     self.egui_input.events.push(egui::Event::Copy);
                     return;
                 } else if is_paste_command(self.egui_input.modifiers, active_key) {
-                    if let Some(contents) = self.clipboard.get() {
-                        let contents = contents.replace("\r\n", "\n");
-                        if !contents.is_empty() {
-                            self.egui_input.events.push(egui::Event::Paste(contents));
-                        }
+                    // Text is still represented by one ordinary Paste event.
+                    // With bitmap-only/empty data retain the actual shortcut
+                    // Key event so the application can choose a capable field
+                    // before reading any clipboard image. No fake text/IME.
+                    let contents=self.clipboard.get().map(|text|text.replace("\r\n", "\n"));
+                    if let Some(contents)=contents.filter(|text|!text.is_empty()) {
+                        self.egui_input.events.push(egui::Event::Paste(contents));
+                    }else {
+                        self.egui_input.events.push(egui::Event::Key {
+                            key:active_key,physical_key,pressed:true,repeat:*repeat,
+                            modifiers:self.egui_input.modifiers,
+                        });
                     }
                     return;
                 }

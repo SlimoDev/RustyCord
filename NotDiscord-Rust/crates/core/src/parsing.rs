@@ -850,6 +850,7 @@ pub fn reply_preview(
         author: source.get("author").filter(|v| v.is_object()).map(person),
         content: value_preview(source),
         mentions: message_mentions(source),
+        mention_games: crate::game_mentions::parse(&source["mention_games"]),
         ..MessageReplyPreview::default()
     })
 }
@@ -961,6 +962,7 @@ pub fn message(value: &Value) -> ChatMessage {
         forwarded,
         webhook_id: s(value, "webhook_id"),
         mentions: message_mentions(display),
+        mention_games: crate::game_mentions::parse(&display["mention_games"]),
         reply_preview: reply_preview(value, "", ""),
         reactions: reactions(&value["reactions"]),
         ..ChatMessage::default()
@@ -1067,6 +1069,9 @@ pub fn update_message(previous: &ChatMessage, value: &Value) -> ChatMessage {
     if update_files && display.get("mentions").is_some() {
         m.mentions = message_mentions(display)
     }
+    if update_files && display.get("mention_games").is_some() {
+        m.mention_games=crate::game_mentions::parse(&display["mention_games"]);
+    }
     if let Some(reference) = value.get("message_reference") {
         if !reference.is_object() || i(reference, "type") == 1 {
             m.reply_to = None;
@@ -1126,6 +1131,7 @@ pub fn context_messages(mut messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
                 content: message_preview(original),
                 deleted: original.deleted,
                 mentions: original.mentions.clone(),
+                mention_games: original.mention_games.clone(),
                 ..MessageReplyPreview::default()
             };
             messages[index].reply_preview = Some(preview);

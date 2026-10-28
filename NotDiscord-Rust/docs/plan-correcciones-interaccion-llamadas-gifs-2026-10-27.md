@@ -1,6 +1,6 @@
 # Plan de correcciones de interacción llamadas y GIFs de NotDiscord
 
-Fecha: 27 de octubre de 2026, America/Lima. Estado: corte de planificación conservado; implementación 0.6.0 registrada en el seguimiento final. Skill utilizada: `notdiscord-planificar`.
+Fecha: 27 de octubre de 2026, America/Lima. Estado vigente: 0.6.0 entregada; continuación 0.7.0 implementada y en entrega, con seguimiento al final de este archivo. Se conservan el plan y el seguimiento de la entrega anterior. Skill utilizada: `notdiscord-planificar`.
 
 El plan recoge los 22 puntos solicitados, incluidos menús modulares y el bloqueo al repetir clic derecho. Quedan 21 puntos activos: F12 se retiró por indicación del usuario tras hacer público el repositorio. Las prioridades son diagnosticar la caída de voz y el bloqueo sin ocultarlos, corregir los estados desactualizados y consolidar la interacción de teclado, menús y medios.
 
@@ -342,3 +342,206 @@ Release: [NotDiscord 0.6.0](https://github.com/SlimoDev/RustyCord/releases/tag/N
 NotDiscord+ conserva el ref `d35c06ac7e824c17198791b3d9208f732bc8be81`; la referencia de sus 38 archivos es `FEFB209E0B35C77498DEFC90169B7BBC7519E32BE9C449AFFFDF8ABFBC11C605`. No hay cambios dirigidos a legacy, instalación, accesos directos o datos de usuario. Sólo se publica el instalador, sin portable.
 
 No se ejecutaron el instalador, el cliente ni pruebas funcionales/sintéticas, y no se usó una cuenta de Discord. La compilación y revisión estática no confirman recepción de voz/vídeo, entrada nativa, acciones remotas, geometría o rendimiento real. Esas comprobaciones y la causa específica del incidente anterior de voz permanecen explícitamente pendientes de confirmación/evidencia del usuario.
+
+## Replanificación posterior a 0.6.0
+
+Fecha del nuevo corte: 27 de octubre de 2026, America/Lima. Base: `NotDiscord`, HEAD `11636996979e78a8e662230cedd9fc8df3c40f9e`, manifiesto estándar `0.6.0`. El producto está limpio; se conserva `evidence/` sin seguimiento. Esta sección y los mensajes posteriores prevalecen para los requisitos reabiertos; los registros anteriores describen el trabajo de 0.6.0, no una confirmación funcional de estos casos.
+
+**Clasificación propuesta: Mediana; 0.6.0 → 0.7.0**, por correcciones funcionales y soporte acotado de menciones de fecha/juegos. Se infiere del alcance y es consistente con el criterio vigente; no se ha cambiado el manifiesto ni se renumera 0.6.0. La tarea actual sólo autoriza planificar y obtener evidencia estática de Discord con REA. Se mantienen las restricciones de cuentas, cliente, dispositivos y pruebas funcionales. No se compila, instala ni publica como efecto de este análisis; NotDiscord+ permanece fuera del alcance. F12, retirado por el usuario, sigue retirado: no se reabre el fix del actualizador.
+
+El usuario confirma que siguen fallando autoscroll y los dos controles de cámara/pantalla al navegar, añade encogimiento de GIF al reproducir y aclara que el detector de campos tampoco permite **pegar imágenes con Ctrl+V sin enfoque manual**. Las seis capturas muestran los tokens `<t:1793114201:S>` y `<@$421150694683312138>`, la representación esperada de fecha/juego, opciones `@time`/`@game` y sus tooltips. La página/perfil de juego de la última captura queda expresamente fuera del objetivo: bastan mención con nombre/icono, tooltip y composición/autocompletado del catálogo de Discord.
+
+Prioridad funcional: P1 para los recorridos reabiertos de entrada/llamada; P2 para geometría y nuevos tipos de mención. No es una clasificación de severidad de seguridad. El orden de implementación respeta además las dependencias de R0–R6.
+
+| Continuación | Prioridad | Relación con el plan anterior | Resultado pendiente |
+|---|---|---|---|
+| C01 Autoscroll central | P1 | F09 reabierto; implementación anterior parcial | Gesto de pulsar/mantener/conmutar como el patrón Discord/Chromium en Windows, en áreas desplazables elegibles |
+| C02 Oferta de cámara/pantalla | P1 | F13/F14 reabiertos | Dos controles persistentes por anuncios vigentes, pantalla arriba/cámara abajo, independientemente de decoder y navegación |
+| C03 Geometría GIF | P2 | Nuevo F23 | Play/Stop/Retry no cambian tamaño lógico ni ratio por usar frames reducidos |
+| C04 Fecha y hora | P2 | Nuevo F24 | Interpretar tokens timestamp, tooltip y entrada `@time`, incluida la variante `S` aportada |
+| C05 Juegos | P2 | Nuevo F25 | Interpretar `<@$id>`, nombre/icono/tooltip y autocompletar `@game`; sin página/perfil de juego |
+| C06 Pegado automático | P1 | F18/F19 reabiertos | Primer Ctrl+V de bitmap sin foco previo crea un único adjunto en el destino válido |
+
+### C01 Autoscroll equivalente al gesto esperado
+
+Hay tres problemas de política de interacción y una condición de cancelación que el arreglo anterior no cubrió. No se confirmó que el botón físico se pierda en Windows; los vendors actuales traducen `WM_MBUTTONDOWN/UP` a `MouseInput Middle Pressed/Released` y después a `egui::Event::PointerButton` (`vendor/winit/.../windows/event_loop.rs:1859–1888`; `vendor/egui-winit/src/lib.rs:311–316,603–620`). No volver a parchear el backend ni añadir un hook global sin evidencia de pérdida nativa.
+
+1. `ui/autoscroll.rs:111–112` escucha sólo `button_clicked(Middle)`: en egui es un **release reconocido como clic**, no el down. Mover o mantener por encima de los umbrales de clic puede invalidarlo. Presionar y mover manteniendo no inicia este controlador; los tests existentes (`ui/chat.rs:4482`) sólo representan down/up inmóviles y movimiento posterior.
+2. `unclaimed`, líneas 91–104, veta por `Sense::click/drag`, sin distinguir qué acción pertenece al botón central. Filas de canales/DM y miembros cubren casi todo el ancho y quedan excluidas. Achicar todos los botones/filas sería otra política incorrecta: conservar su área de clic primario y decidir por separado la elegibilidad central.
+3. Los wrappers genéricos conservan el pan por drag de egui. Ese pan aplica `pointer.delta` mientras se mueve el ratón; no mantiene velocidad al dejarlo inmóvil. El chat ya lo desactiva. Al añadir inicio por down, impedir que pan de egui y autoscroll propio modifiquen el mismo offset, preservando touch y arrastre primario.
+4. `begin_frame`, líneas 69–81, cancela por `smooth_scroll_delta` residual y marca cambiado incluso un Owner inactivo. Un down/clic que coincida con la inercia anterior puede descartarse. Distinguir evento nuevo de rueda de su suavizado pendiente.
+
+El comportamiento esperado es el patrón de autoscroll de Discord/Chromium sobre Windows, no un pan que se detiene al dejar de mover el ratón. [Chromium](https://chromium.googlesource.com/chromium/src/+/1f86b5e7905121922d6845a7d4c62a2c6f572e75/third_party/blink/renderer/core/page/autoscroll_controller.cc) conserva estados inicial, mantenido y conmutado y decide al soltar según ese estado. Esta fuente sirve de referencia primaria; no identifica la versión exacta del motor de la instalación de Discord del usuario. [Win32 entrega eventos y captura del ratón](https://learn.microsoft.com/en-us/windows/win32/inputdev/mouse-input); no hay que confundirlos con activar automáticamente un comportamiento completo en cualquier control egui.
+
+Contrato de estado propuesto:
+
+| Evento | Transición y efecto |
+|---|---|
+| Down central en contenedor con overflow y sin otra acción central prioritaria | Fijar origen, capa, viewport, ámbito y dueño; mostrar marcador sin esperar up |
+| Mover fuera de zona muerta manteniendo | Pasar a modo mantenido; velocidad según distancia al origen, continua aunque el puntero quede inmóvil |
+| Up sin haber iniciado movimiento efectivo | Mantener modo conmutado; el movimiento posterior desplaza |
+| Up en modo mantenido | Terminar; no dejar desplazamiento residual |
+| Nuevo gesto de cancelación, Escape, pérdida de foco/ámbito o popup superior | Terminar y consumir el gesto necesario para evitar click-through |
+
+Procesar down/up ordenados incluso en un mismo lote. Elegir un único contenedor interior desplazable y conservarlo al salir el puntero de su rectángulo; cancelar al invalidarse su ámbito. Usar sólo los ejes con overflow real; unificar el wrapper y el historial, que hoy no suministran exactamente el mismo criterio de scrollable. Revisar también las áreas horizontales donde la función admita ese gesto, sin sustituir el arrastre funcional de adjuntos o sliders. Los controles con acción central real mantienen prioridad; que una fila tenga clic primario no la excluye automáticamente.
+
+Conservar geometría/hitboxes corregidas en 0.6, selección, anclas, paginación, scroll ordinario y un solo avance por frame. No volver a describir el rectángulo de imagen anterior a 0.6 como si siguiera sin corregir. No emitir repintados de 16 ms cuando el modo esté inactivo. Zona muerta, cursores por ejes y velocidad se compararán con la referencia; no prometer igualdad numérica sin observación permitida.
+
+**Aceptación:** probar ambos modos, hold mayor a 0,8 s, down/up rápido, puntero inmóvil tras mover, inicio tras wheel, wheel nuevo durante modo activo, límites y áreas anidadas. Chat/historial, rail, canales/DM, miembros, GIFs y diálogos con scroll deben aceptar sus superficies elegibles sin navegar ni seleccionar. Registrar sólo clases de evento/destino/rechazo y offset agregado. La comprobación posterior de ratón real en Windows debe recorrer evento nativo → egui → Owner → offset; una fixture de clic completado no demuestra ese recorrido.
+
+### C02 Separar fuente anunciada recepción e intención de visualización
+
+El orden vertical **pantalla → cámara** ya está implementado (`ui/voice.rs:1365,1467`); repetir ese cambio no resuelve el síntoma. Las rutas que aún mezclan estados son:
+
+- Cámara: `incoming_participant`, `controller/incoming.rs:1852–1853`, fija `CallParticipant.self_video` desde el anuncio Gateway, pero `media_event`, `controller/voice.rs:3217–3218`, lo sobrescribe desde `participant.video` del host. El host publica falso con SSRC cero/decoder retirado (`media-addon/src/host.rs:2423–2426`) o con información de transporte (`1165–1167`). Eso puede borrar un anuncio vigente. La preservación de placeholders de 0.6 depende de que ese mismo booleano siga verdadero.
+- Pantalla: `incoming_media_dispatch`, `incoming.rs:1897–1916`, pone falso en cualquier `STREAM_DELETE`. Se invoca antes de que `voice_dispatch` identifique el cierre esperado del propio espectador (`controller/voice.rs:2351,2534–2549`). El roster privado puede quedar falso y volver al activo mediante `CALL_UPDATE` (`1367–1388`), aunque el emisor siga compartiendo.
+- UI: `ui/voice.rs:1303–1334` aún transforma ausencia temporal de `selected_source/retained` en `view-incoming-media visible=false` y selección de avatar. El dibujo puede cancelar una elección por vida del decoder, pese a que continúe el anuncio.
+- Fallback: `draw_participant_tiles_in_height`, `1149–1181`, construye un participante desde el primer vídeo encontrado y no fusiona la segunda fuente. Disponibilidad UI y validación del actor (`view_source_available`, `controller/voice.rs:1519–1543`) tampoco comparten exactamente el mismo criterio.
+
+Son brechas alcanzables por flujo; no se identifica cuál fue la secuencia exacta en la instalación del usuario. Separar explícitamente **anuncio de cámara, anuncio de pantalla, intención del espectador, visibilidad y decoder**, con origen y época de llamada. Un campo ausente de un delta no equivale a falso. El callback de decoder no es autoridad para retirar la oferta del emisor.
+
+Conservar intención en el actor por cuenta/llamada/participante/tipo de fuente. Un anuncio retirado explícitamente, leave, llamada nueva o acción del usuario invalida lo correspondiente. `paused/removed`, textura liberada, SSRC cero o cierre del propio visor afectan recepción y no borran la oferta. Centralizar disponibilidad para UI y actor y fusionar fuentes del mismo participante. La UI no debe enviar teardown sólo porque un snapshot intermedio no contenga `CallVideo`.
+
+Mantener dos botones anunciados aunque sólo se visualice una fuente a la vez; el pedido no requiere duplicar todos los decoders. Conservar audio, límites de receptores, preferencias y rechazo de eventos antiguos. Revisar DM, grupos y servidores, incluida navegación dentro del mismo guild y hacia otro guild/DM/Home: no todas esas rutas tienen la misma visibilidad.
+
+Hay deuda de tests: `participant_camera_and_screen_have_separate_stacked_toggles_and_restore_avatar`, alrededor de `ui/voice.rs:2199`, conserva una aserción de pantalla debajo de cámara, contraria al orden vigente. Corregir la expectativa y añadir secuencias de eventos; un snapshot fijo con ambos flags verdaderos no cubre su pérdida posterior.
+
+**Aceptación:** anunciar ambas → callback `video=false/SSRC=0` → pausar/retirar decoder → navegar → volver conserva dos botones y elección; cerrar visor → `STREAM_DELETE user_requested` → `CALL_UPDATE` parcial no retira pantalla del emisor. Anuncio falso real retira sólo su fuente; leave/llamada nueva no reviven controles por eventos tardíos. Probar ventanas pequeñas y DPI 100/150 %, con respuestas dentro del clip o alcanzables por scroll, sin reconectar audio al cambiar vista.
+
+### C03 Tamaño lógico del GIF independiente de su bitmap
+
+`decode_animation_checked`, `ui/resources.rs:1381–1387`, reduce los frames según presupuesto de 8 MiB/número de fotogramas y máximos de resolución. WebP animado hace lo mismo (`resources/webp_animation.rs:87–95`). `AnimationFrames` y `Animation` no conservan el canvas original como dimensión distinta de la textura reducida.
+
+Al entrar la animación, `media_card`, `ui/chat.rs:1637–1649`, obtiene `texture.size_vec2()` y usa una escala limitada por `.min(1.)`: el frame reducido no vuelve al rectángulo que ocupaba el poster. El slot exterior puede mantenerse mientras la imagen visible se achica. El visor repite una política semejante (`dialogs.rs:2295–2296,2433–2460`; `viewer_fit`, 727–731). La causa existe también antes de 0.6; no se atribuye su origen al cambio reciente de hitbox.
+
+Conservar separadamente canvas original validado, resolución de frames, dimensiones lógicas y estado de intento del medio. Calcular presentación por dimensiones lógicas y pintar el bitmap reducido dentro de ese rectángulo con filtrado, sin almacenar frames más grandes. Si se limita ampliación al tamaño natural, usar el canvas original, no el thumbnail reducido. No eliminar `.min(1.)` globalmente para todos los tipos de medios sin distinguir sus contratos.
+
+Play, Stop, Retry y carga tardía mantienen slot, ratio y ancla. Si poster y canvas tienen ratios distintos, contener sin deformación y sin saltos de layout; aplicar correcciones acreditadas de metadata de forma controlada. En el visor, «100 %», zoom y pan se refieren a dimensiones lógicas/originales y conservan su ancla al cambiar textura. El catálogo usa miniaturas en celdas fijas: no atribuirle el mismo encogimiento de reproducción sin observarlo.
+
+**Aceptación:** GIF y WebP con igual canvas y distinto número de frames pintan el mismo rectángulo antes/durante/después de Play, incluso si su bitmap se reduce mucho. Cubrir retrato/paisaje, metadata ausente/inconsistente, DPI/resize, retry tardío y visor con zoom. Mantener los límites actuales de 8 MiB de frames, 400 frames, canvas permitido, 64 millones de píxeles procesados y 30 FPS. Ese presupuesto sigue siendo parcial, no RAM total. Evitar una segunda caché ilimitada de geometría.
+
+### C04 Timestamps y entrada de @time
+
+La investigación estática de Discord está en [rea-time-game-2026-10-27.md](rea-time-game-2026-10-27.md), con hashes, rangos, recibos REA y limitaciones. El formato aportado **`<t:1793114201:S>`** es un timestamp en segundos con estilo `S` (fecha corta más hora con segundos). El cliente original también contempla `t/T/d/D/f/F/s/R`; no basta añadir sólo una fecha larga ni limitarse a los siete estilos de documentación antigua. El valor de la captura corresponde a 2026-10-27 10:16:41 en UTC−05:00; no significa que todo token deba mostrar «ahora».
+
+En NotDiscord, `core/src/markdown.rs:397–403` protege `<t:...>` como átomo para no aplicar énfasis dentro, pero no lo interpreta; `message_rich_pattern`, `ui/chat.rs:3096–3101`, no tiene renderer de timestamp. Añadir un nodo tipado con timestamp, formato y rango fuente, validación de conversión/rango y fallback literal para tokens no admitidos. Respetar código, escapes, spoilers y presupuestos del parser.
+
+Formatear según zona y locale del visor. Tooltip con fecha completa; estilo omitido usa el default observado `f`. `R` se actualiza mientras sea visible mediante plazos acotados, sin invalidar todo el AST ni crear un temporizador global por cada mensaje histórico. AST y resultado formateado tienen invalidaciones distintas: reloj/zona/locale no reescriben el mensaje almacenado.
+
+Al escribir `@`, incluir la opción `@time` en el presentador común y abrir un editor acotado de fecha/hora/formato con preview. Confirmar produce el token `<t:...>`; el texto interno de composición `<@time:...>` observado en Discord no debe enviarse como formato final ni implementarse como sustitución global de texto. Enter/Tab seleccionan o confirman dentro del ámbito adecuado; Escape cancela sin perder el borrador; IME no activa envío accidental.
+
+**Aceptación:** muestra `S` de la captura con segundos y tooltip; interpreta estilos y fechas válidas, negativos si se admiten según rango verificado, inválidos/extremos y formato omitido sin panic. Comprobar otra zona/DST/locale con reloj controlado, `R` pasado/futuro y cambio de zona con AST cacheado. Copiar/editar/reenviar conserva token original; un literal en código no se transforma. `@time` inserta una selección de fecha, sin confundir confirmar el selector con enviar el mensaje.
+
+### C05 Mención de juego y catálogo sin página de perfil
+
+Las capturas y el asset de Discord confirman **`<@$421150694683312138>`** como mención del juego Doki Doki Literature Club!. Es un ID de juego, no una mención a una cuenta. El artefacto distingue IDs de juegos de aplicaciones enlazadas y resuelve nombre/icono desde **`mention_games`** del mensaje o su caché de autocompletado. El tooltip usa `@game` y el nombre. Su página/perfil es una acción aparte y queda fuera del alcance solicitado.
+
+El modelo actual `ChatMessage` (`core/src/models.rs:311–346`) no conserva `mention_games`; la proyección de texto y el autocompletado (`ui/completion.rs`, `Choice`) sólo contemplan personas/emojis. Añadir metadata mínima acotada por mensaje y un tipo semántico de mención de juego; no reutilizar `Person`, estados de presencia ni el detector de juegos instalados. Conservar los datos de referencias/snapshots que se presenten y las actualizaciones parciales sin borrar metadata ausente.
+
+Renderer: chip con nombre e icono pequeño si está disponible, tooltip y selección/copias coherentes. No abrir el perfil del usuario ni una página ficticia de juego, y no usar manita si no hay acción real. Un juego no resuelto muestra fallback neutro mientras se resuelve o falla; su texto no desaparece. El token canónico se conserva al serializar, editar y reenviar y nunca incrementa pings/contadores de menciones de usuarios.
+
+Catálogo: el asset consulta GET **`/games/autocomplete`** con `q`/`filter_group` y GET **`/games`** con `game_ids`. No se ejecutaron esas solicitudes ni se probó aceptación/permisos del servidor. Antes de implementar, revalidar el contrato mínimo y el valor adecuado de filtro mediante evidencia; no inventar payloads ni usar una cuenta para experimentar. Reutilizar el cliente API y sus cortes de seguridad/rate limits, con metadata del mensaje como primera fuente.
+
+Al escribir `@`, mostrar `@game` junto a personas y `@time`; elegirlo abre modo de búsqueda de juegos, con nombres de varias palabras. No forzar esa consulta por la gramática actual de personas, que rechaza espacios. El usuario elige un resultado de Discord y se inserta su token con ID estable. No sustituirlo por una lista fija, catálogo de juegos instalados ni títulos inventados.
+
+Usar búsquedas cancelables/correlacionadas por cuenta, generación, editor, revisión, modo y consulta. Aplicar debounce y deduplicación, caché acotada por consulta/ID/bytes/TTL, presentación de pocos resultados visibles y resolución agrupada de IDs no conocidos. Limpiar ámbito al logout. No hacer HTTP desde el renderer ni descargar descripción, capturas, reseñas, tiendas o una página/perfil completo para un nombre. Validar iconos/destinos con el cliente multimedia sin credenciales; conservar filtros de contenido/acceso pertinentes, no inferir permiso sólo por un ID.
+
+Compartir el reconocimiento tipado de timestamp/juego y su presentación con chat, búsqueda, pins, respuestas y notificaciones donde corresponda, sin perder el contexto de origen. La metadata y locale pueden invalidar el texto visible sin duplicar parser/menús. No convertir la nueva mención de juego en un usuario al usar el resolvedor de menciones actual.
+
+**Aceptación:** token de la captura muestra nombre/icono/tooltip; no hay página/perfil de juego. `@` permite ambos modos; consulta de varias palabras, teclado/Tab/Enter/Escape/IME y edición conservan ID. Mensaje con metadata evita consulta; faltantes se agrupan con límite; respuesta de otra apertura/cuenta/consulta no reemplaza el campo actual. Error, juego desconocido o endpoint no disponible tienen fallback sin spinner infinito. No se altera `allowed_mentions` ni se producen notificaciones de usuario por un ID de juego.
+
+### C06 Primer pegado de imagen sin foco manual
+
+El problema se localiza antes del autoenfoque. `vendor/egui-winit/src/lib.rs:831–839` consume Ctrl+V/Shift+Insert y retorna; sólo emite `Event::Paste` si encuentra texto no vacío. Para bitmap sin texto no entrega Paste ni Key V. `ui/input_ownership.rs:28–32`, `paste_input`, reconoce sólo esos eventos y `ui/chat.rs:1866–1874` depende de ese resultado para enfocar el compositor. El fallback Windows `paste_key_state` se consulta después, **sólo si ya tiene foco** (`1951–1967`). No llega la intención que necesita el código para asignar ese foco.
+
+Además, `paste_gesture`, `chat.rs:3450–3463`, descarta el bit de pulsación reciente si no había foco previo. Un gesto rápido liberado antes del frame puede perderse. El polling del estado de teclas no debe ser la fuente principal de un evento que ya ocurrió. Mantener la política existente de clipboard mixto: texto no vacío tiene prioridad y «Pegar imagen» explícito permite elegir bitmap; no describir ese caso como fallo del formato imagen puro.
+
+Conservar la **intención nativa de pegar**, en orden, antes de decidir el campo y sin depender de que exista representación textual. La integración puede preservar el evento real cuando el proveedor no emite Paste o aportar una intención de ventana propia; elegir la solución mínima que no duplique el pegado textual. No crear texto ficticio, IME sintético ni hook global. Arbitrar una sola vez ámbito, propietario y capacidades antes de consultar formatos/preparar el adjunto; no hacer polling o lectura del portapapeles en todos los campos cada frame.
+
+El Owner actual de `input_ownership` no describe capacidad multimedia. Añadir capacidad explícita y preservar permisos `can_send/can_attach`. El compositor permitido recibe imagen aun sin foco previo; un textbox externo conserva prioridad y sólo recibe formatos que soporte. Modal sin capacidad, búsqueda, visor o ventana sin foreground no envían una imagen al compositor de detrás. No ampliar a adjuntos una edición de mensaje que no soporte modificar multimedia.
+
+Reutilizar `Pictures::paste_bitmap`, `resources.rs:1120–1127`, para preparación fuera de UI y los límites/colas existentes. Correlacionar cuenta/canal/operación y limpiar temporales si cambia el destino o se cancela. Consumir una intención una sola vez, incluida pulsación y liberación en el mismo lote; mantener la posibilidad de pegar otra imagen con una pulsación posterior.
+
+**Aceptación:** primer Ctrl+V de bitmap, sin clicar el compositor, adjunta exactamente una imagen; gesto rápido, mantener tecla y rebote no pierden ni duplican. Texto, bitmap, mixto, vacío y Shift+Insert mantienen política. Búsqueda/modal/otro campo, pérdida de foco y permiso denegado no crean adjunto detrás; cambio de cuenta/canal durante la preparación descarta o conserva sólo el destino todavía válido. Registrar únicamente clases/destino funcional/motivo, nunca contenido del clipboard. No se leyó el portapapeles real en esta planificación.
+
+### Orden y comprobaciones de esta continuación
+
+| Tanda | Trabajo y dependencias | Resultado revisable |
+|---|---|---|
+| R0 Contratos y casos | Base vigente, fixtures de secuencias y eventos, criterios nativos/visualización y observabilidad mínima tipada | Reproducciones propuestas que cubren lo que los tests anteriores omitieron; sin ejecutar cliente/cuenta |
+| R1 Entrada central y pegado | C01 y C06; dueño de `input_ownership`, `autoscroll` e integración de eventos | Down/Holding/Toggled y paste sin representación textual llegan una vez al destino correcto |
+| R2 Fuentes de llamada | C02; modelo/actor antes de cambios de representación | Anuncios e intención independientes del decoder; dos botones sobreviven navegación |
+| R3 Geometría de animaciones | C03; metadata y contrato de frames antes del chat/visor | Misma dimensión lógica antes/durante/después de Play, con RAM acotada |
+| R4 Átomos de fecha y juego | C04/C05 recepción; evidencia REA y parser/modelo compartidos | Fecha y juego legibles con tooltips, contexto correcto y tokens conservados |
+| R5 Composición y catálogo | C04/C05 entrada; R1 y R4 | Opciones `@time`/`@game`, selector temporal y catálogo cancelable sin perfil de juego |
+| R6 Integración | Todas las incluidas, checks permitidos y revisión independiente | Estado por requisito, versión propuesta vigente y límites de verificación explícitos |
+
+Asignar propiedad de archivos compartidos: `ui/chat.rs`, `ui/voice.rs`, `controller/voice.rs`, `incoming.rs`, `models.rs` y helpers de entrada tienen varios efectos. Integrar modelo y contratos antes de compilar y evitar parches simultáneos incompatibles. El plan no obliga a una nueva instalación ni publica una release; esos entregables se resuelven según un pedido posterior de programación.
+
+Las comprobaciones propuestas deben diferenciar pruebas puras/sintéticas, compilación de destinos y recorrido real Windows/voz. Mientras continúen las restricciones, no iniciar cliente, cuenta, host, audio, cámara, pantalla o instalador para «probar» un fix. La evidencia estática de Discord no sustituye un ratón real ni una respuesta de API. Conservar rollback de preferencias/modelos y compatibilidad de mensajes serializados antiguos; metadata nueva tiene defaults y presupuestos y no requiere migrar la cuenta.
+
+Estado del nuevo corte:
+
+- [x] Reabrir F09, F13/F14 y F18/F19 con causas nuevas sobre fuentes de 0.6.0.
+- [x] Identificar causa del encogimiento GIF sin retirar límites de memoria.
+- [x] Recibir las seis capturas y contrastar ambos tokens mediante REA sobre asset público identificado.
+- [x] Incorporar composición/autocompletado y excluir página/perfil del juego por el alcance elegido.
+- [x] Implementar R0–R6 tras la solicitud de programación; ver seguimiento 0.7.0.
+- [ ] Verificar el recorrido nativo de rueda/clipboard y las secuencias de fuente/navegación cuando esas pruebas estén permitidas.
+- [x] Revalidar el contrato mínimo y restricciones con fuentes estáticas durante programación; aceptación del servidor pendiente, ninguna cuenta utilizada.
+- [ ] Confirmar apariencia, calidad, comportamiento y límites con evidencias de ejecución permitidas; no marcarlo resuelto sólo por compilar.
+
+Huellas de este corte: `ui/autoscroll.rs` SHA-256 `199a144aa08fcf86a5452fea802951c21428150891ce291658cf935a54a0170b`; `ui/voice.rs` `6b94abd3c5524b29fd10b22c49e38b02cfccf6fba2f594380ef2367647dcb772`; `controller/voice.rs` `49a333aa5ca04c70145ad3932271f2edd0ef5923cc0efd8fa1776a8e67b61aa7`; `ui/resources.rs` `14a269e6ac1000180a2e195be6a1037f3932639872e9499340caeaeeaee515e4`. La revisión base sigue en `11636996979e78a8e662230cedd9fc8df3c40f9e`; revalidar archivos afectados al continuar.
+
+## Seguimiento de programación — continuación 0.7.0
+
+Fecha: 28 de octubre de 2026, America/Lima. El usuario pidió reintentar la
+programación del archivo vigente. Se detectó la ampliación posterior a 0.6.0,
+sin repetir ni renumerar la entrega anterior. Se aplicó `notdiscord-programar`;
+`reverse-engineer-anything` completó evidencia estática de catálogo. Clasificación
+Mediana, inferida del alcance y comunicada antes de versionar: **0.6.0 → 0.7.0**.
+El usuario confirmó además: **«Compilar y publicar el instalador»**, sin ejecutarlo
+ni realizar pruebas funcionales. NotDiscord+ y legacy permanecen fuera de alcance.
+
+| Continuación | Causa seguida y corrección implementada | Evidencia y límite |
+|---|---|---|
+| C01 / R1 | Espera de release/clic, exclusión de filas primarias, pan competidor e inercia de rueda. Control central por eventos down/move/up, Initial/Holding/Toggled, ejes/overflow reales y un dueño; cancelación consume el gesto hasta release también en shell. | Revisión estática cruzada; ratón nativo no probado. `input-0.7.0.md`. |
+| C02 / R2 | Anuncio de emisor confundido con decoder y cierre del espectador. Flags de anuncio con presencia explícita de delta, intención por llamada/participante y disponibilidad UI/actor común; sin teardown por dibujo, fallback fusionado de fuentes. | Revisión de Gateway/actor/UI; transporte y secuencias reales pendientes. `voice-0.7.0.md`. |
+| C03 / R3 | Frame reducido usado como tamaño natural. Canvas original validado separado del bitmap y geometría acotada; tarjeta, Stop/Retry y visor usan tamaño lógico. | No se elevan presupuestos de 8 MiB/400 frames/64 Mp/30 FPS; apariencia y consumo real no medidos. `animation-0.7.0.md`. |
+| C04 / R4–R5 | Timestamp conservado como literal, sin presentación ni entrada. Átomos tipados/rangos, nueve estilos, zona/locale del visor, tooltip y refresco sólo relativo visible; selector @time con DST/ámbito/borrador/IME y sin envío. | Win32/ICU opcional revisados estáticamente; rango admitido 1–9999 y fallback documentado. `timestamps-0.7.0.md`. |
+| C05 / R4–R5 | Falta de mention_games y catálogo semántico. Metadata acotada en mensajes/snapshots/referencias/deltas, nombre/icono/tooltip sin perfil, copia canónica y opciones @game/@time; búsqueda de varias palabras cancelable/correlacionada con cachés, colas, límites y filtros. | Contratos estáticos REA y filtros revalidados; serialización array por compatibilidad inferida y aceptación API sin verificar. `game-catalog-0.7.0.md`, `rea-time-game-2026-10-27.md`. |
+| C06 / R1 | Adaptador consumía Ctrl+V sin emitir intención para bitmap; polling posterior requería foco previo. Tecla real conservada sólo sin Paste textual, capacidad del campo y selección de dueño, permisos y operación correlacionada para worker/temporales. | Sin leer portapapeles real ni probar un dispositivo. `input-0.7.0.md`. |
+
+R0 fijó los contratos y actualizó casos de compilación/expectativas existentes;
+R6 integró cambios y revisión independiente. No se ejecutaron esos casos,
+fixtures ni pruebas sintéticas. La selección de los nuevos átomos conserva el
+token fuente sin ocultar texto ni tapar el azul por el fondo del chip. Parser,
+modelo, presentación de mensajes/pins/búsqueda, respuestas y notificaciones
+comparten reconocimiento; el texto guardado/editado/reenviado no se reescribe.
+Las nuevas colecciones serializadas tienen defaults compatibles. No se cambió
+allowed_mentions ni se trata un juego como un usuario.
+
+Las fuentes del producto conservan las funciones operativas de 0.6.0. F12 sigue
+retirado: publicar esta entrega mediante el flujo existente no reabre ese fix.
+La causa específica del incidente F04 continúa pendiente de diagnósticos del
+incidente; esta tanda no la atribuye al juego, notificación o cámara.
+
+La revisión cruzada cubrió reentrada de Context, selección, presupuestos,
+respuestas antiguas y separación anuncio/recepción. El primer check detectó y
+corrigió un préstamo mutable del indicador de cierre del selector; el check
+integrado de todos los destinos pasó en 35,71 s. La comprobación final y los
+datos del instalador se registran al cerrar la publicación. Las advertencias
+de código no usado y la de literal f32 previo no equivalen a errores de build.
+
+Referencia congelada Plus: rama `d35c06ac7e824c17198791b3d9208f732bc8be81`,
+38 archivos, agregado SHA-256
+`FEFB209E0B35C77498DEFC90169B7BBC7519E32BE9C449AFFFDF8ABFBC11C605`,
+revalidado antes de empaquetar. No se cambian instalación, accesos directos ni
+datos de usuario. Se publicará exclusivamente Setup, sin portable.
+
+Pendiente de confirmación del usuario: gestos físicos de ratón/clipboard,
+IME/Tab/Enter, navegación de dos fuentes, calidad/zoom/DPI, regiones/DST y
+respuestas reales del catálogo. Compilar y revisar fuentes no confirma esos
+comportamientos ni acredita mejoras de rendimiento medidas.
+
+Comprobación final de fuentes: cargo check --workspace --all-targets --release --offline --locked -j1 pasó en 32,70 s. Registros locales de compilación en .tools/temp/current/plan-070/, fuera de Git y del instalador. No se ejecutaron los destinos compilados.

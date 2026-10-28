@@ -64,6 +64,8 @@ pub(super) fn document(ctx: &egui::Context, source: &str, masks: &[Range<usize>]
     let bytes = source.len().saturating_add(masks.len() * std::mem::size_of::<Range<usize>>())
         .saturating_add(std::mem::size_of::<Entry>() + std::mem::size_of::<Document>())
         .saturating_add(document.blocks.capacity() * std::mem::size_of::<markdown::Block>())
+        .saturating_add(document.atoms.capacity()*std::mem::size_of::<notdiscord_core::message_atoms::Atom>())
+        .saturating_add(document.atoms.iter().map(|atom|match &atom.kind{notdiscord_core::message_atoms::Kind::Game(id)=>id.capacity(),_=>0}).sum::<usize>())
         .saturating_add(document.blocks.iter().map(|block| {
             block.spans.capacity() * std::mem::size_of::<markdown::Span>()
                 + match &block.kind { BlockKind::CodeBlock { language: Some(language) } => language.capacity(), _ => 0 }

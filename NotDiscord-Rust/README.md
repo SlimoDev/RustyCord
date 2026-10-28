@@ -1,4 +1,4 @@
-# NotDiscord Rust 0.6.0
+# NotDiscord Rust 0.7.0
 
 Versión principal para Windows en Rust, rama `NotDiscord`. NotDiscord+ conserva su versión anterior en `codex/notdiscord-plus`; esta entrega no actualiza su rama ni su paquete.
 
@@ -22,9 +22,13 @@ NotDiscord utiliza `%LOCALAPPDATA%/NotDiscord/shared/configuration.json` y una s
 
 Plus continúa usando sus archivos anteriores. La sincronización continua y la exclusión bidireccional con Plus quedan pendientes hasta que se autorice actualizar esa variante. NotDiscord puede solicitar el cierre ordenado de una instancia anterior de su instalación y muestra el motivo.
 
-El manifiesto `version.json` identifica versión y rama. La distribución es un único `dist/NotDiscord-Setup-0.6.0.exe`, con el runtime requerido. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
+El manifiesto `version.json` identifica versión y rama. La distribución es un único `dist/NotDiscord-Setup-0.7.0.exe`, con el runtime requerido. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
 
-- [Plan de correcciones y estado de 0.6.0](docs/plan-correcciones-interaccion-llamadas-gifs-2026-10-27.md)
+- [Plan de correcciones y estado de 0.7.0](docs/plan-correcciones-interaccion-llamadas-gifs-2026-10-27.md)
+- [Entrada y pegado](docs/input-0.7.0.md)
+- [Geometría de animaciones](docs/animation-0.7.0.md)
+- [Fechas y selector @time](docs/timestamps-0.7.0.md)
+- [Menciones y catálogo de juegos](docs/game-catalog-0.7.0.md)
 - [Diagnóstico local](docs/diagnostics-0.6.0.md)
 - [Entrada nativa Alt y parches de dependencias](docs/alt-input-0.6.0.md)
 - [Contrato de GIFs y favoritos](docs/gif-060-evidence.md)
