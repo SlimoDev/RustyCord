@@ -1042,7 +1042,7 @@ impl NotDiscordUi {
         }
         if kind == "stream-viewers" { self.ctx.data_mut(|d|d.insert_temp(egui::Id::new("stream-viewers"),data)); return; }
         match kind {
-            "game-catalog"=>{self.game_mentions.receive(&data,&self.state);}
+            "game-catalog"=>{self.game_mentions.receive(&data,&self.state,&self.ctx);}
             "deleted-log-purged" => {
                 let channel = s(&data, "channelId");
                 let message = s(&data, "messageId");
@@ -1591,7 +1591,7 @@ impl eframe::App for NotDiscordUi {
             }
         }
         self.process_updates(ctx);
-        self.game_mentions.sync(&self.state);
+        self.game_mentions.sync(ctx,&self.state);
         if !minimized {
             let scripts = if self.snapshot_fonts_pending && self.cjk_loaded != 3 {
                 snapshot_scripts(&self.state)

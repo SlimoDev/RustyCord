@@ -28,6 +28,7 @@ pub fn token(token: &str) -> Option<Kind> {
 pub fn collect(source: &str, document: &crate::markdown::Document) -> Vec<Atom> {
     let mut atoms=Vec::new();
     let mut candidates=0;
+    let mut lexical=crate::mentions::PlainTextCursor::default();
     for block in &document.blocks {
         for span in block.spans.iter().filter(|s|!s.syntax && !s.style.code && s.link.is_none()) {
             if span.range.start>=64*1024 {continue;}
@@ -36,7 +37,7 @@ pub fn collect(source: &str, document: &crate::markdown::Document) -> Vec<Atom> 
             for (offset,_) in text.match_indices('<') {
                 candidates+=1;if atoms.len()>=256||candidates>512 {return atoms;}
                 let start=span.range.start+offset;
-                if !crate::mentions::plain_text_at(source,start) {continue;}
+                if !lexical.at(source,start) {continue;}
                 let Some(end)=text[offset..].find('>').filter(|end|*end<=64) else {continue;};
                 if let Some(kind)=token(&text[offset..offset+end+1]) {atoms.push(Atom{range:start..start+end+1,kind});}
             }

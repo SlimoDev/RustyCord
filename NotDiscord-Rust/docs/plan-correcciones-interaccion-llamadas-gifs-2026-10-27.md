@@ -545,3 +545,27 @@ respuestas reales del catálogo. Compilar y revisar fuentes no confirma esos
 comportamientos ni acredita mejoras de rendimiento medidas.
 
 Comprobación final de fuentes: cargo check --workspace --all-targets --release --offline --locked -j1 pasó en 32,70 s. Registros locales de compilación en .tools/temp/current/plan-070/, fuera de Git y del instalador. No se ejecutaron los destinos compilados.
+
+### Cierre de la guarda de membresía antes del binario definitivo
+
+La revisión final encontró una secuencia alcanzable que faltaba en C02: un
+callback del mismo host podía recrear un participante tras un leave, y un
+roster completo no retiraba todas las cámaras provisionales. La primera
+compilación de producción, todavía sin publicar, se interrumpió con Ctrl+C y
+se conservó su log como build-before-membership-guard.log; no es el binario
+que se entregará.
+
+La guarda final registra hasta 512 retiradas sin expulsiones inseguras, bloquea
+el fallback desconocido al llenarse o al existir roster completo, purga vídeos
+provisionales y requiere join explícito para levantar la retirada. Mantiene
+fallback previo al primer roster y no toca el host ni la ruta de audio. Los
+casos de regresión se añadieron como fuente y no se ejecutaron. La compilación
+de todos los destinos tras esta corrección pasó en 28,51 s
+(check-membership-final.log). La lectura cruzada confirmó que un delta parcial
+no infiere reincorporación de un remoto ausente.
+
+El cierre también limpia la copia temporal del resultado de juegos en Context
+al cambiar cuenta/generación, ajusta el límite de consulta a cien caracteres y
+reutiliza un cursor léxico monotónico para reconocer átomos sin recorrer de
+nuevo todo el prefijo por cada token. Estos cambios no requieren ejecutar la
+aplicación ni migrar cuentas/datos.

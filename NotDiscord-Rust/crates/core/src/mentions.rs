@@ -33,9 +33,18 @@ pub fn broadcast_at(text: &str, start: usize, end: usize) -> bool {
 
 /// Shared lexical guard for user/broadcast mention renderers and editors.
 pub fn plain_text_at(text: &str, at: usize) -> bool {
+    PlainTextCursor::default().at(text,at)
+}
+/// Monotonic lexical scan for bounded parsers visiting many tokens in one
+/// source. Avoid rescanning the entire prefix for each timestamp/game atom.
+#[derive(Default)]
+pub struct PlainTextCursor { cursor:usize, delimiter:usize }
+impl PlainTextCursor {
+pub fn at(&mut self,text:&str,at:usize)->bool {
     if at > text.len() || !text.is_char_boundary(at) {
         return false;
     }
+    if at<self.cursor {*self=Self::default();}
     let bytes = text.as_bytes();
     let escaped = |at: usize| {
         bytes[..at]
@@ -49,22 +58,21 @@ pub fn plain_text_at(text: &str, at: usize) -> bool {
     if escaped(at) {
         return false;
     }
-    let mut delimiter = 0;
-    let mut cursor = 0;
-    while cursor < at {
-        if bytes[cursor] == b'`' && !escaped(cursor) {
-            let run = bytes[cursor..at].iter().take_while(|b| **b == b'`').count();
-            if delimiter == 0 {
-                delimiter = run;
-            } else if run == delimiter {
-                delimiter = 0;
+    while self.cursor < at {
+        if bytes[self.cursor] == b'`' && !escaped(self.cursor) {
+            let run = bytes[self.cursor..at].iter().take_while(|b| **b == b'`').count();
+            if self.delimiter == 0 {
+                self.delimiter = run;
+            } else if run == self.delimiter {
+                self.delimiter = 0;
             }
-            cursor += run;
+            self.cursor += run;
         } else {
-            cursor += 1;
+            self.cursor += 1;
         }
     }
-    delimiter == 0
+    self.delimiter == 0
+}
 }
 
 pub fn has_broadcast(text: &str) -> bool {

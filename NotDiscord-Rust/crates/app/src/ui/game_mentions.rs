@@ -18,9 +18,12 @@ pub(super) struct State {
     wanted:Vec<String>,pending:HashMap<String,Pending>,search:Option<Search>,commands:Vec<(String,Value)>,
 }
 impl State{
-    pub(super) fn sync(&mut self,state:&AppSnapshot){
+    pub(super) fn sync(&mut self,ctx:&egui::Context,state:&AppSnapshot){
         let owner=state.current_user.as_ref().filter(|_|state.signed_in).map(|p|p.id.as_str()).unwrap_or("");
-        if self.owner!=owner||self.generation!=state.notification_generation{*self=Self{owner:owner.into(),generation:state.notification_generation,..Default::default()};}
+        if self.owner!=owner||self.generation!=state.notification_generation{
+            *self=Self{owner:owner.into(),generation:state.notification_generation,..Default::default()};
+            ctx.data_mut(|data|data.remove::<Results>(egui::Id::new("game-completion-results")));
+        }
         let scope=(state.view.clone(),state.selected_channel_id.clone());
         if self.visible_scope!=scope{
             self.visible_scope=scope;self.wanted.clear();self.missing.clear();
@@ -52,8 +55,8 @@ impl State{
             ||self.pending.values().any(|p|p.stamp["ids"].as_array().is_some_and(|ids|ids.iter().any(|v|v.as_str()==Some(id)))){return;}
         self.wanted.push(id.into());
     }
-    pub(super) fn receive(&mut self,data:&Value,state:&AppSnapshot){
-        self.sync(state);let stamp=&data["stamp"];let request=s(stamp,"request");
+    pub(super) fn receive(&mut self,data:&Value,state:&AppSnapshot,ctx:&egui::Context){
+        self.sync(ctx,state);let stamp=&data["stamp"];let request=s(stamp,"request");
         let Some(pending)=self.pending.get(request) else{return;};
         if pending.stamp!=*stamp||s(stamp,"owner")!=self.owner||stamp["generation"].as_u64()!=Some(self.generation){return;}
         self.pending.remove(request);
@@ -75,7 +78,7 @@ impl State{
         self.pending.retain(|_,p|s(&p.stamp,"opening")!=old.opening);
     }}
     fn search(&mut self,ctx:&egui::Context,state:&AppSnapshot,editor:&str,revision:u64,query:Option<&str>){
-        self.sync(state);let query=query.and_then(|s|s.strip_prefix("@game ")).map(str::trim).filter(|s|!s.is_empty());
+        self.sync(ctx,state);let query=query.and_then(|s|s.strip_prefix("@game ")).map(str::trim).filter(|s|!s.is_empty());
         if let Some(query)=query{
             if self.search.as_ref().is_none_or(|s|s.editor!=editor||s.query!=query||s.revision!=revision){
                 self.cancel_search();self.search=Some(Search{editor:editor.into(),query:query.into(),revision,opening:uuid::Uuid::new_v4().to_string(),at:Instant::now(),sent:false,items:Vec::new(),error:String::new()});

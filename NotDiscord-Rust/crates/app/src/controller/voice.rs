@@ -45,6 +45,7 @@ pub(super) struct VoiceLifecycle {
     // One explicit source choice per participant, scoped to the call attempt.
     // Kept independently of pending work, decoder ids, SSRCs and visibility.
     view_intents: HashMap<String, ViewIntent>,
+    membership: CallMembership,
     inventory_request: u64,
     inventory_pending: bool,
     // Retain only the active channel's ACL if the user navigates elsewhere.
@@ -121,6 +122,25 @@ struct PendingView {
     requested: bool,
 }
 struct ViewIntent { channel:String, owner:String, kind:String, attempt:u64, error:String, waiting_since:Option<Instant> }
+/// Authority belongs to the Gateway roster, not late native callbacks. Before
+/// its first complete roster, native discovery remains a useful fallback.
+#[derive(Default)]
+struct CallMembership { departed:HashSet<String>, complete:bool, unknown_blocked:bool }
+impl CallMembership {
+    fn leave(&mut self,owner:&str) {
+        if self.departed.contains(owner) {return;}
+        if self.departed.len()<512 {self.departed.insert(owner.into());}
+        else {
+            // Never evict a tombstone and thereby permit a late callback to
+            // resurrect an old owner. Unknown native discovery fails closed.
+            self.unknown_blocked=true;
+        }
+    }
+    fn join(&mut self,owner:&str) {self.departed.remove(owner);}
+    fn allows(&self,owner:&str,known:bool)->bool {
+        !self.departed.contains(owner) && (known||!self.complete&&!self.unknown_blocked)
+    }
+}
 #[derive(Clone, Default)]
 struct StreamIdentity { server: String, channel: Option<String> }
 struct WatchStop { attempt:u64, written:bool, pending:u64 }
@@ -646,6 +666,7 @@ impl Controller {
             }) { return Err("No tienes permiso para usar vídeo en este canal.".into()); }
         }
         self.voice_attempt += 1;
+        self.voice_lifecycle.membership=CallMembership::default();
         self.state.voice_error.clear();
         self.wait_voice_join(VoiceJoinPhase::Preflight, 20);
         self.voice_lifecycle.request_pending = true;
@@ -1371,10 +1392,21 @@ impl Controller {
         let channel = s(value, "channel_id");
         self.observe_private_call_event(kind,value);
         if matches!(kind, "CALL_CREATE" | "CALL_UPDATE") && channel == self.voice_channel {
-            if value["voice_states"].is_array() {
-                let present=items(&value["voice_states"]).iter().map(|state|s(state,"user_id")).filter(|id|parsing::valid_id(id)).collect::<HashSet<_>>();
-                let me=self.me();let removed=self.call_people.keys().filter(|id|*id!=&me&&!present.contains(*id)).cloned().collect::<HashSet<_>>();
+            let present=value["voice_states"].as_array().filter(|states|states.len()<=256
+                && states.iter().all(|state|parsing::valid_id(&s(state,"user_id"))))
+                .map(|states|states.iter().map(|state|s(state,"user_id")).collect::<HashSet<_>>());
+            if let Some(present)=&present {
+                let me=self.me();
+                let removed=self.call_people.keys().cloned()
+                    .chain(self.state.call_videos.iter().filter(|video|!video.local).map(|video|video.user_id.clone()))
+                    .chain(self.voice_lifecycle.view_intents.values().map(|view|view.owner.clone()))
+                    .filter(|id|id!=&me&&!present.contains(id)&&parsing::valid_id(id)).collect::<HashSet<_>>();
+                self.voice_lifecycle.membership.complete=true;
+                for owner in &removed {self.voice_lifecycle.membership.leave(owner);}
+                for owner in present {self.voice_lifecycle.membership.join(owner);}
                 self.call_people.retain(|id,_|id==&me||present.contains(id));
+                self.state.call_videos.retain(|video|video.local||!removed.contains(&video.user_id));
+                self.voice_lifecycle.video_sessions.retain(|id,_|self.state.call_videos.iter().any(|video|video.id==*id));
                 self.voice_lifecycle.pending_views.retain(|_,view|!removed.contains(&view.owner));
                 self.voice_lifecycle.view_intents.retain(|_,view|!removed.contains(&view.owner));
                 let watches=self.voice_lifecycle.watches.iter().filter(|(_,watch)|removed.contains(&s(watch,"owner"))).map(|(key,_)|key.clone()).collect::<Vec<_>>();
@@ -1387,6 +1419,9 @@ impl Controller {
                 .find(|call| call.channel_id == channel)
             {
                 for person in &call.call_participants {
+                    let confirmed=present.as_ref().is_some_and(|present|present.contains(&person.user.id));
+                    if present.as_ref().is_some_and(|present|!present.contains(&person.user.id))
+                        || !confirmed&&!self.native_member_allowed(&person.user.id) {continue;}
                     if !self.call_people.contains_key(&person.user.id) && self.call_people.len() >= 256 { continue; }
                     let mut person = person.clone();
                     if let Some(old) = self.call_people.get(&person.user.id) {
@@ -1441,6 +1476,7 @@ impl Controller {
         self.voice_lifecycle.join_wait=None;
         self.voice_lifecycle.pending_views.clear();
         self.voice_lifecycle.view_intents.clear();
+        self.voice_lifecycle.membership=CallMembership::default();
         self.state.call_videos.clear();
         self.voice_lifecycle.video_sessions.clear();
         self.voice_lifecycle.watches.clear();
@@ -1537,6 +1573,7 @@ impl Controller {
         }
     }
     fn view_source_available(&self, channel: &str, owner: &str, kind: &str) -> bool {
+        if channel==self.voice_channel && !self.native_member_allowed(owner) {return false;}
         let person = if self.voice_channel == channel {
             self.call_people.get(owner)
         } else {
@@ -1554,6 +1591,10 @@ impl Controller {
                 })
         });
         call_source_available(person,owner,kind,if channel==self.voice_channel {&self.state.call_videos}else{&[]})
+    }
+    fn native_member_allowed(&self,owner:&str)->bool {
+        !self.voice_channel.is_empty() && parsing::valid_id(owner) && (owner==self.me()
+            || self.voice_lifecycle.membership.allows(owner,self.call_people.contains_key(owner)))
     }
     fn viewing_source(&self, owner:&str, kind:&str)->bool {
         self.voice_lifecycle.view_intents.get(&format!("{}:{owner}",self.voice_channel))
@@ -2440,6 +2481,11 @@ impl Controller {
                     // Only explicit channel:null removes current membership.
                     self.voice_channel.clone()
                 } else { s(value, "channel_id") };
+                if id!=self.me() && parsing::valid_id(&id) && !self.voice_channel.is_empty()
+                    && value.get("channel_id").is_some() {
+                    if channel==self.voice_channel {self.voice_lifecycle.membership.join(&id);}
+                    else {self.voice_lifecycle.membership.leave(&id);}
+                }
                 self.voice_lifecycle.view_intents.retain(|_,view|view.owner!=id ||
                     channel==self.voice_channel && !(view.kind=="camera"&&value.get("self_video")==Some(&Value::Bool(false))
                         ||view.kind=="screen"&&value.get("self_stream")==Some(&Value::Bool(false))));
@@ -2982,6 +3028,7 @@ impl Controller {
                 if matches!(kind.as_str(),"videoStream"|"videoError"|"watchState") {Box::pin(self.media_event(event)).await?;}
             }
             "videoStream" => {
+                if !b(&value,"local") && !self.native_member_allowed(&s(&value,"userId")) {return Ok(());}
                 if b(&value, "preview")
                     && value["previewToken"].as_u64() != Some(self.voice_lifecycle.preview_attempt)
                 {
@@ -3276,6 +3323,7 @@ impl Controller {
                 if !parsing::valid_id(&id) {
                     return Ok(());
                 }
+                if !self.native_member_allowed(&id) {return Ok(());}
                 if s(&value, "event") == "participant" && value["present"] == false {
                     // Receiver removal is not a Gateway leave. Keep its source
                     // offers and membership until the authoritative delta.
@@ -3520,6 +3568,46 @@ fn apply_readiness(state: &mut AppSnapshot, value: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Regression sequences are compiled with all-targets, never executed while
+    // the user's functional-test restriction remains in force.
+    #[test]
+    fn native_membership_tombstones_are_bounded_without_unsafe_eviction() {
+        let mut membership=CallMembership::default();
+        assert!(membership.allows("100",false));
+        membership.leave("100");assert!(!membership.allows("100",true));
+        membership.join("100");assert!(membership.allows("100",false));
+        membership.complete=true;assert!(!membership.allows("200",false));assert!(membership.allows("200",true));
+        membership=CallMembership::default();
+        for id in 1..=513 {membership.leave(&id.to_string());}
+        assert_eq!(membership.departed.len(),512);assert!(membership.unknown_blocked);
+        assert!(!membership.allows("1",true));assert!(!membership.allows("513",false));
+        membership.join("1");assert!(membership.allows("1",true));
+    }
+    #[tokio::test]
+    async fn gateway_leave_and_complete_roster_reject_late_native_discovery_until_explicit_join() {
+        let (mut c,_)=Controller::test_fixture();c.voice_channel="200".into();
+        c.state.current_user=Some(Person{id:"100".into(),..Default::default()});
+        c.call_people.insert("300".into(),CallParticipant{user:Person{id:"300".into(),..Default::default()},self_video:true,screen_sharing:true,..Default::default()});
+        c.state.call_videos.push(CallVideo{id:30,user_id:"300".into(),kind:"camera".into(),active:true,..Default::default()});
+        c.voice_dispatch("VOICE_STATE_UPDATE",&json!({"user_id":"300","channel_id":null})).await.unwrap();
+        for value in [json!({"event":"participant","userId":"300","present":true}),
+            json!({"event":"speaking","userId":"300","active":true}),
+            json!({"event":"videoStream","id":31,"userId":"300","kind":"camera","state":"playing","active":true})] {
+            c.media_event(value).await.unwrap();
+        }
+        assert!(!c.call_people.contains_key("300"));assert!(c.state.call_videos.is_empty());
+        assert!(!c.view_source_available("200","300","camera"));
+        c.voice_dispatch("VOICE_STATE_UPDATE",&json!({"user_id":"300","self_video":true})).await.unwrap();
+        assert!(!c.native_member_allowed("300"),"a partial delta is not a rejoin");
+        c.voice_dispatch("VOICE_STATE_UPDATE",&json!({"user_id":"300","channel_id":"200","self_video":true})).await.unwrap();
+        assert!(c.native_member_allowed("300"));assert!(c.call_people["300"].self_video);
+        c.state.call_videos.push(CallVideo{id:40,user_id:"400".into(),kind:"camera".into(),active:true,..Default::default()});
+        c.voice_call_dispatch("CALL_UPDATE",&json!({"channel_id":"200","voice_states":[{"user_id":"300"}]})).await.unwrap();
+        assert!(!c.state.call_videos.iter().any(|video|video.user_id=="400"));
+        assert!(!c.native_member_allowed("400"));assert!(!c.native_member_allowed("500"));
+        c.media_event(json!({"event":"participant","userId":"500","present":true})).await.unwrap();
+        assert!(!c.call_people.contains_key("500"));assert!(c.media.is_none());
+    }
     #[tokio::test]
     async fn guild_join_and_receive_controls_cross_gateway_and_fake_bridge_without_real_account() {
         let (mut c,_,mut replies)=target();

@@ -14,7 +14,7 @@ pub(in crate::ui) enum Choice {
 
 pub(in crate::ui) fn query(text: &str, cursor: usize) -> Option<(usize, String)> {
     let chars:Vec<_>=text.chars().collect();let end=cursor.min(chars.len());
-    if let Some(start)=chars[..end].iter().rposition(|ch|*ch=='@').filter(|start|end-*start<=107) {
+    if let Some(start)=chars[..end].iter().rposition(|ch|*ch=='@').filter(|start|end-*start<=106) {
         let tail:String=chars[start..end].iter().collect();
         if tail.starts_with("@game ")&&!tail.contains(['\n','\r'])&&(start==0||chars[start-1].is_whitespace())
             &&text.char_indices().nth(start).is_some_and(|(byte,_)|super::plain_text_at(text,byte)){
