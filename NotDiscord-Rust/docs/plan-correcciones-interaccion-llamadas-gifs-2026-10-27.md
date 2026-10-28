@@ -1,6 +1,6 @@
 # Plan de correcciones de interacción llamadas y GIFs de NotDiscord
 
-Fecha: 27 de octubre de 2026, America/Lima. Estado vigente: 0.6.0 entregada; continuación 0.7.0 implementada y en entrega, con seguimiento al final de este archivo. Se conservan el plan y el seguimiento de la entrega anterior. Skill utilizada: `notdiscord-planificar`.
+Fecha: 27 de octubre de 2026, America/Lima. Estado vigente: 0.6.0 entregada; continuación 0.7.0 entregada, con seguimiento al final de este archivo. Se conservan el plan y el seguimiento de la entrega anterior. Skill utilizada: `notdiscord-planificar`.
 
 El plan recoge los 22 puntos solicitados, incluidos menús modulares y el bloqueo al repetir clic derecho. Quedan 21 puntos activos: F12 se retiró por indicación del usuario tras hacer público el repositorio. Las prioridades son diagnosticar la caída de voz y el bloqueo sin ocultarlos, corregir los estados desactualizados y consolidar la interacción de teclado, menús y medios.
 
@@ -569,3 +569,35 @@ al cambiar cuenta/generación, ajusta el límite de consulta a cien caracteres y
 reutiliza un cursor léxico monotónico para reconocer átomos sin recorrer de
 nuevo todo el prefijo por cada token. Estos cambios no requieren ejecutar la
 aplicación ni migrar cuentas/datos.
+### Instalador 0.7.0 publicado
+
+La compilación definitiva `cargo build --workspace --release --offline --locked
+-j1` pasó en **7 min 35 s**, desde
+`103dcc8d73eaf1cc44ef205abc51c68f04548a23` (también build ID y etiqueta
+`NotDiscord-v0.7.0`). El manifiesto de las 425 fuentes compiladas tiene SHA-256
+`12da302d479f1a183b78ed6407dccebcdc70eb1d9b3f54b3579519a60a30f9ae`.
+Se conservaron las advertencias existentes, sin errores de build.
+
+Preparación del runtime: 31 componentes x64 verificados por inventario; wrapper
+idéntico al de esta revisión. Payload: 41 archivos verificados, sin datos ni
+cuentas. Inno Setup generó únicamente el instalador; no se ejecutó Setup ni el
+cliente. El addon nativo conserva el hash de 0.6.0.
+
+| Artefacto | Identidad |
+|---|---|
+| Instalador | `NotDiscord-Setup-0.7.0.exe`, 118 783 187 bytes |
+| SHA-256 del instalador | `43e139b0a21b45bd06688460d30e3fd3326213bcdba188995c68f91f3dd5cb1c` |
+| SHA-256 del ejecutable | `93b4388b2be56fe1828b136a458ac964f068beabbb18d769875c837aa38165ae` |
+| SHA-256 del addon Rust | `0ab369b57973d1837b68b34881f3168e1a68b2a94e7d3441c7a1607131cc75d5` |
+
+GitHub confirmó release pública, no draft/prerelease, título exacto
+**NotDiscord 0.7.0**, un único asset uploaded y tamaño/digest idénticos al local:
+[NotDiscord 0.7.0](https://github.com/SlimoDev/RustyCord/releases/tag/NotDiscord-v0.7.0).
+Después de esa comprobación se publica el manifiesto con sus hashes en la rama
+NotDiscord. El instalador conserva `release: null` de la revisión compilada;
+no se recompila para introducir el hash de sí mismo.
+
+Las ramas Plus y legacy continúan en `d35c06ac7e824c17198791b3d9208f732bc8be81`
+y `637d41f897a0e435c3d7e26d1c400afd6a640d0e`, respectivamente. No se ejecutaron
+pruebas funcionales/sintéticas ni se usó una cuenta de Discord; las limitaciones
+y confirmaciones pendientes de las secciones anteriores siguen vigentes.
