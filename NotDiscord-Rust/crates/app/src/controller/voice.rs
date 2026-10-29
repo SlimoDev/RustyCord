@@ -38,6 +38,7 @@ pub(super) struct VoiceLifecycle {
     video_visibility_request: Option<(u64,bool)>,
     video_visibility_confirmed: Option<bool>,
     video_visibility_failed: bool,
+    diagnostic_sources: Option<u64>,
     watch_attempt: u64,
     watches: HashMap<String, Value>,
     watch_stops: HashMap<String, WatchStop>,
@@ -1233,7 +1234,7 @@ impl Controller {
                 self.state.camera_preparing = false;
                 if action.id == "stop" {
                     self.state.camera_enabled = false;
-                } else if self.state.voice_encryption_ready && s(&result, "state") == "active" {
+                } else if (self.state.voice_encryption_ready||self.state.camera_enabled) && s(&result, "state") == "active" {
                     self.state.camera_enabled = true;
                     self.media_preferences.camera_id = action.id;
                     let _ = storage::save_json(
@@ -1461,6 +1462,10 @@ impl Controller {
                     let mut person = person.clone();
                     if let Some(old) = self.call_people.get(&person.user.id) {
                         person.speaking = old.speaking;
+                        if kind=="CALL_UPDATE" {
+                            let delta=value["voice_states"].as_array().and_then(|states|states.iter().find(|state|s(state,"user_id")==person.user.id));
+                            preserve_partial_source_offers(&mut person,old,delta);
+                        }
                     }
                     self.call_people.insert(person.user.id.clone(), person);
                 }
@@ -1737,6 +1742,38 @@ impl Controller {
     fn native_member_allowed(&self,owner:&str)->bool {
         !self.voice_channel.is_empty() && parsing::valid_id(owner) && (owner==self.me()
             || self.voice_lifecycle.membership.allows(owner,self.call_people.contains_key(owner)))
+    }
+    fn observe_remote_source(&mut self, owner:&str, kind:&str) {
+        // Positive SSRC/source discovery may fill an unknown Gateway field.
+        // Keep it on the call member, not on a decoder that is freed on hide.
+        // An explicit Gateway false is a withdrawal and always wins.
+        if owner==self.me()||!matches!(kind,"camera"|"screen")||!self.native_member_allowed(owner) {return;}
+        if !self.call_people.contains_key(owner) {
+            if self.call_people.len()>=256 {return;}
+            let user=self.people.get(owner).cloned().unwrap_or(Person {id:owner.into(),name:"Usuario".into(),..Default::default()});
+            self.call_people.insert(owner.into(),CallParticipant {user,..Default::default()});
+        }
+        if let Some(person)=self.call_people.get_mut(owner) {
+            match kind {
+                "camera" if !person.camera_announcement_known=>person.self_video=true,
+                "screen" if !person.screen_announcement_known=>person.screen_sharing=true,
+                _=>(),
+            }
+        }
+    }
+    fn observe_remote_video_source(&mut self, value:&Value) {
+        if b(value,"local")||b(value,"preview")||!matches!(s(value,"state").as_str(),"active"|"playing"|"waiting"|"loading"|"paused"|"starting") {return;}
+        let owner=s(value,"userId");let kind=s(value,"kind");
+        let current=match kind.as_str() {
+            "camera"=>value["mediaSession"].as_u64().filter(|session|*session>0)==self.voice_lifecycle.native_voice
+                &&self.voice_lifecycle.native_voice.is_some(),
+            "screen"=>self.voice_lifecycle.watches.get(&s(value,"streamKey")).is_some_and(|watch|
+                s(watch,"owner")==owner&&value["token"].as_u64().is_some_and(|token|watch["attempt"].as_u64()==Some(token))
+                &&value["mediaSession"].as_u64().filter(|session|*session>0).is_some_and(|session|
+                    watch["nativeSession"].as_u64().map_or(watch["started"]==true,|current|current==session))),
+            _=>false,
+        };
+        if current {self.observe_remote_source(&owner,&kind);}
     }
     fn viewing_source(&self, owner:&str, kind:&str)->bool {
         self.voice_lifecycle.view_intents.get(&format!("{}:{owner}",self.voice_channel))
@@ -3200,6 +3237,7 @@ impl Controller {
                     return Ok(());
                 }
                 let mut status = s(&value, "state");
+                self.observe_remote_video_source(&value);
                 let local_kind=s(&value,"kind");
                 if b(&value,"local")&&!b(&value,"preview")&&self.voice_lifecycle.local_preview.as_ref().is_some_and(|preview|preview.kind==local_kind) {
                     self.voice_lifecycle.local_preview=None;
@@ -3438,15 +3476,14 @@ impl Controller {
                     return Ok(());
                 }
                 let state = s(&value, "state");
-                self.state.screen_paused = state == "paused";
-                self.state.screen_sharing = matches!(
-                    state.as_str(),
-                    "capture-requested" | "audio-attached" | "sharing" | "paused" | "started"
-                );
-                self.state.screen_preparing = matches!(
-                    state.as_str(),
-                    "connecting" | "negotiating" | "waiting-peer" | "connected"
-                );
+                let transient=matches!(state.as_str(),"connecting"|"negotiating"|"waiting-peer"|"connected");
+                if matches!(state.as_str(),"capture-requested"|"audio-attached"|"sharing"|"paused"|"started") {
+                    self.state.screen_sharing=true;
+                    self.state.screen_paused=state=="paused";
+                }
+                // A GoLive transport can renegotiate without withdrawing its
+                // already confirmed capture/publication offer.
+                self.state.screen_preparing=transient&&!self.state.screen_sharing;
                 if matches!(state.as_str(), "error" | "stopped" | "disconnected") {
                     self.stop_share().await?;
                 }
@@ -3471,11 +3508,21 @@ impl Controller {
                     return Ok(());
                 }
                 let state = s(&value, "state");
-                self.state.camera_enabled = self.state.voice_encryption_ready
-                    && matches!(state.as_str(), "started" | "active");
-                self.state.camera_preparing = state == "preparing";
+                if matches!(state.as_str(),"started"|"active") {
+                    // Re-keying temporarily clears encryption readiness. It
+                    // does not withdraw a camera that was already confirmed.
+                    // A first activation still requires the encrypted call.
+                    if self.state.voice_encryption_ready {self.state.camera_enabled=true;}
+                    if self.state.camera_enabled {self.state.camera_preparing=false;}
+                } else if state=="preparing" {
+                    self.state.camera_preparing=true;
+                }
                 if matches!(state.as_str(), "error" | "stopped") {
                     self.state.camera_enabled = false;
+                    self.state.camera_preparing = false;
+                    // A terminal callback can overtake the command reply.
+                    // Late ACKs/active callbacks from this token cannot revive it.
+                    self.voice_lifecycle.camera_attempt+=1;
                     self.voice_gateway().await?;
                 }
                 self.refresh_call();
@@ -3513,8 +3560,12 @@ impl Controller {
                         if s(&value, "event") == "speaking" {
                             p.speaking = b(&value, "active");
                         }
-                        // Native participant.video describes the receiver/SSRC,
-                        // not the publisher's Gateway camera announcement.
+                        // A negative receiver callback never withdraws an
+                        // offer. Positive discovery may fill an unknown one.
+                    }
+                    if s(&value,"event")=="participant"&&value["video"]==true
+                        &&value["mediaSession"].as_u64().is_none_or(|session|Some(session)==self.voice_lifecycle.native_voice) {
+                        self.observe_remote_source(&id,"camera");
                     }
                 }
                 self.refresh_call();
@@ -3682,8 +3733,25 @@ impl Controller {
                 .cmp(&a.is_self)
                 .then(a.user.name.cmp(&b.user.name))
         });
+        let sources=notdiscord_core::diagnostics::call_sources_summary(&self.state);
+        if self.voice_lifecycle.diagnostic_sources!=Some(sources) {
+            notdiscord_core::diagnostics::record(notdiscord_core::diagnostics::Component::Voice,notdiscord_core::diagnostics::Code::CallSourcesState,notdiscord_core::diagnostics::Phase::Dispatch,sources);
+            self.voice_lifecycle.diagnostic_sources=Some(sources);
+        }
         self.decorate_dms();
         self.publish();
+    }
+}
+fn preserve_partial_source_offers(next:&mut CallParticipant,previous:&CallParticipant,delta:Option<&Value>) {
+    if let Some(video)=delta.and_then(|value|value["self_video"].as_bool()) {
+        next.self_video=video;next.camera_announcement_known=true;
+    } else {
+        next.self_video=previous.self_video;next.camera_announcement_known=previous.camera_announcement_known;
+    }
+    if let Some(screen)=delta.and_then(|value|value["self_stream"].as_bool()) {
+        next.screen_sharing=screen;next.screen_announcement_known=true;
+    } else {
+        next.screen_sharing=previous.screen_sharing;next.screen_announcement_known=previous.screen_announcement_known;
     }
 }
 fn inventory_status(error: &str) -> &'static str {
@@ -5579,6 +5647,97 @@ mod tests {
         wait_named_calls(&receiver_calls,"shutdown",1).await;
         assert!(!c.call_people.contains_key("300")&&c.voice_lifecycle.watches.is_empty()&&c.state.call_videos.is_empty());
         assert!(c.state.voice_connected&&c.media.as_ref().unwrap().same_instance(&main)&&main_calls.lock().unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn unknown_remote_offers_outlive_decoder_replacement_and_navigation() {
+        let (mut c,_,_)=target();c.state.voice_connected=true;c.state.voice_encryption_ready=true;
+        c.voice_lifecycle.native_voice=Some(10);c.voice_lifecycle.video_visible=Some(false);
+        let peer=Person {id:"300".into(),name:"Synthetic peer".into(),..Default::default()};
+        c.call_people.insert(peer.id.clone(),CallParticipant {user:peer.clone(),..Default::default()});
+        let key="call:200:300";
+        c.voice_lifecycle.watches.insert(key.into(),json!({"owner":"300","attempt":4,"nativeSession":20,"started":true}));
+        c.media_event(json!({"event":"videoStream","id":31,"userId":"300","kind":"camera","mediaSession":10,"state":"paused"})).await.unwrap();
+        c.media_event(json!({"event":"videoStream","id":32,"userId":"300","kind":"screen","mediaSession":20,"streamKey":key,"token":4,"state":"paused"})).await.unwrap();
+        assert!(c.call_people["300"].self_video&&c.call_people["300"].screen_sharing);
+        assert!(!c.call_people["300"].camera_announcement_known&&!c.call_people["300"].screen_announcement_known);
+        let mut select=UiAction::id("view-incoming-media","300");select.channel_id="200".into();select.text="camera".into();
+        select.extra=json!({"voiceAttempt":7,"visible":true}).to_string();c.media_action(&select).await.unwrap();
+        c.media_event(json!({"event":"videoStream","id":31,"userId":"300","kind":"camera","mediaSession":10,"state":"removed"})).await.unwrap();
+        c.media_event(json!({"event":"participant","userId":"300","present":false,"video":false})).await.unwrap();
+        c.state.call_videos.clear();c.reset_navigation();
+        c.state.incoming_calls.push(IncomingCall {channel_id:"200".into(),call_participants:vec![CallParticipant {user:peer,..Default::default()}],..Default::default()});
+        c.voice_call_dispatch("CALL_UPDATE",&json!({"channel_id":"200","voice_states":[{"user_id":"300"}]})).await.unwrap();
+        assert!(c.state.call_videos.is_empty());
+        for kind in ["camera","screen"] {assert!(c.view_source_available("200","300",kind));}
+        assert_eq!(c.voice_lifecycle.view_intents["200:300"].kind,"camera");
+        assert!(c.state.voice_connected&&c.voice_attempt==7);
+    }
+    #[tokio::test]
+    async fn explicit_withdrawal_wins_over_stale_callbacks_and_partial_call_mirrors() {
+        let (mut c,_,_)=target();c.voice_lifecycle.native_voice=Some(10);c.voice_lifecycle.video_visible=Some(false);
+        let peer=Person {id:"300".into(),name:"Synthetic peer".into(),..Default::default()};
+        c.call_people.insert(peer.id.clone(),CallParticipant {user:peer.clone(),..Default::default()});
+        c.media_event(json!({"event":"participant","userId":"300","present":true,"video":true})).await.unwrap();
+        assert!(c.view_source_available("200","300","camera"));
+        c.voice_dispatch("VOICE_STATE_UPDATE",&json!({"user_id":"300","channel_id":"200","self_video":false})).await.unwrap();
+        for event in [json!({"event":"participant","userId":"300","present":true,"video":true}),
+            json!({"event":"videoStream","id":31,"userId":"300","kind":"camera","mediaSession":10,"state":"playing","active":true})] {
+            c.media_event(event).await.unwrap();
+        }
+        assert!(!c.view_source_available("200","300","camera"));
+        c.state.incoming_calls.push(IncomingCall {channel_id:"200".into(),call_participants:vec![CallParticipant {user:peer,self_video:true,camera_announcement_known:true,..Default::default()}],..Default::default()});
+        c.voice_call_dispatch("CALL_UPDATE",&json!({"channel_id":"200","voice_states":[{"user_id":"300"}]})).await.unwrap();
+        assert!(!c.call_people["300"].self_video&&c.call_people["300"].camera_announcement_known);
+        c.voice_call_dispatch("CALL_UPDATE",&json!({"channel_id":"200","voice_states":[{"user_id":"300","self_video":true}]})).await.unwrap();
+        assert!(c.view_source_available("200","300","camera"));
+        c.voice_dispatch("VOICE_STATE_UPDATE",&json!({"user_id":"300","channel_id":null})).await.unwrap();
+        c.media_event(json!({"event":"participant","userId":"300","present":true,"video":true})).await.unwrap();
+        assert!(!c.call_people.contains_key("300"));
+    }
+    #[tokio::test]
+    async fn confirmed_local_camera_and_screen_survive_transport_transitions_but_stops_are_independent() {
+        let (mut c,_,_)=target();c.state.voice_connected=true;c.state.voice_encryption_ready=true;
+        c.state.camera_enabled=true;c.state.screen_sharing=true;c.stream_source="window:123".into();
+        c.voice_lifecycle.native_voice=Some(10);c.voice_lifecycle.native_share=Some(20);
+        let me=c.state.current_user.clone().unwrap();c.call_people.insert(me.id.clone(),CallParticipant {user:me,is_self:true,..Default::default()});
+        c.media_event(json!({"event":"voiceState","mediaSession":10,"state":"negotiating","transportReady":true,"encryptionReady":false})).await.unwrap();
+        for state in ["preparing","active"] {
+            c.media_event(json!({"event":"cameraState","mediaSession":10,"state":state})).await.unwrap();
+            assert!(c.state.camera_enabled);
+        }
+        for state in ["connecting","negotiating","waiting-peer","connected"] {
+            c.media_event(json!({"event":"shareState","mediaSession":20,"state":state})).await.unwrap();
+            assert!(c.state.screen_sharing&&!c.state.screen_preparing);
+        }
+        c.media_event(json!({"event":"voiceState","mediaSession":10,"state":"connected","transportReady":true,"encryptionReady":true})).await.unwrap();
+        assert!(c.call_people["100"].self_video&&c.call_people["100"].screen_sharing);
+        c.media_event(json!({"event":"cameraState","mediaSession":10,"state":"stopped"})).await.unwrap();
+        assert!(!c.state.camera_enabled&&c.state.screen_sharing);
+        c.media_event(json!({"event":"shareState","mediaSession":20,"state":"stopped"})).await.unwrap();
+        assert!(!c.state.screen_sharing&&c.state.voice_connected&&c.voice_attempt==7);
+        c.state.voice_encryption_ready=false;
+        c.media_event(json!({"event":"cameraState","mediaSession":10,"state":"active"})).await.unwrap();
+        assert!(!c.state.camera_enabled,"A new camera is never enabled before encryption is ready");
+    }
+    #[tokio::test]
+    async fn camera_ack_preserves_confirmed_source_across_rekey_but_cannot_revive_a_terminal_token() {
+        let (mut c,_,_)=target();c.voice_lifecycle.native_voice=Some(10);c.voice_lifecycle.camera_attempt=4;
+        c.state.voice_connected=true;c.state.voice_encryption_ready=true;
+        c.media_event(json!({"event":"cameraState","token":4,"mediaSession":10,"state":"active"})).await.unwrap();
+        let mut ack=UiAction::id("__voice-camera","synthetic-camera");ack.extra=c.meta().to_string();
+        c.media_event(json!({"event":"voiceState","mediaSession":10,"state":"negotiating","transportReady":true,"encryptionReady":false})).await.unwrap();
+        c.voice_complete(ack,wrapped(Ok(json!({"state":"active"})))).await.unwrap();
+        assert!(c.state.camera_enabled&&!c.state.voice_encryption_ready,"Confirmed capture survives an ACK during rekey");
+        for terminal in ["stopped","error"] {
+            let (mut c,_,_)=target();c.voice_lifecycle.native_voice=Some(10);c.voice_lifecycle.camera_attempt=4;
+            c.state.voice_connected=true;c.state.voice_encryption_ready=true;c.state.camera_enabled=true;
+            let mut ack=UiAction::id("__voice-camera","synthetic-camera");ack.extra=c.meta().to_string();
+            c.media_event(json!({"event":"cameraState","token":4,"mediaSession":10,"state":terminal})).await.unwrap();
+            assert!(!c.state.camera_enabled&&c.voice_lifecycle.camera_attempt>4);
+            c.voice_complete(ack,wrapped(Ok(json!({"state":"active"})))).await.unwrap();
+            c.media_event(json!({"event":"cameraState","token":4,"mediaSession":10,"state":"active"})).await.unwrap();
+            assert!(!c.state.camera_enabled,"Terminal {terminal} cannot be undone by an old ACK or callback");
+        }
     }
     #[tokio::test]
     async fn pending_local_offers_survive_both_selection_orders_and_visibility_ack_race() {

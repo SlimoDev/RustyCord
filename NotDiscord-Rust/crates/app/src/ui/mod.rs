@@ -1615,6 +1615,7 @@ impl eframe::App for NotDiscordUi {
                         )
                     ));
             if self.video_visibility != Some((visible, call_panel_visible)) {
+                crate::diagnostics::call_sources(ctx, &self.state, call_panel_visible);
                 self.send(
                     "video-visible",
                     "",

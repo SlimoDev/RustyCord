@@ -586,9 +586,16 @@ pub fn ready_metadata(data: &Value) -> Value {
                 let mut compact=json!({
                 "guild_id":guild_id,"user_id":user,"channel_id":channel,
                 "self_mute":b(value,"self_mute"),"self_deaf":b(value,"self_deaf"),
-                "mute":b(value,"mute"),"deaf":b(value,"deaf"),
-                "self_video":b(value,"self_video"),"self_stream":b(value,"self_stream")
+                "mute":b(value,"mute"),"deaf":b(value,"deaf")
                 });
+                // Omitted media flags are unknown, not a publisher withdrawal.
+                // Synthesizing false here makes the seed authoritative and
+                // prevents later source discovery from filling that absence.
+                for field in ["self_video","self_stream"] {
+                    if let Some(flag)=value.get(field).and_then(Value::as_bool) {
+                        compact[field]=json!(flag);
+                    }
+                }
                 let member=if value["member"].is_object(){Some(&value["member"])}else{members.get(user.as_str()).copied()};
                 let identity=member.and_then(|member|member.get("user")).filter(|identity|s(identity,"id")==user)
                     .or_else(||value.get("user").filter(|identity|s(identity,"id")==user)).or_else(||known_users.get(user.as_str()).copied());
@@ -1092,5 +1099,26 @@ mod tests {
         assert_eq!(state["member"]["nick"],"Server");assert_eq!(state["member"]["user"]["username"],"Account");assert_eq!(state["member"]["user"]["global_name"],"Global");
         assert!(state["member"]["user"].get("email").is_none());assert!(state.get("session_id").is_none());assert!(state["member"].get("roles").is_none());
         assert!(retained_dispatch("GUILD_MEMBER_REMOVE"));
+    }
+    #[test]
+    fn ready_voice_seed_preserves_unknown_false_and_true_media_announcements() {
+        let metadata=ready_metadata(&json!({"guilds":[{"id":"10","voice_states":[
+            {"user_id":"1","channel_id":"30"},
+            {"user_id":"2","channel_id":"30","self_video":false,"self_stream":true},
+            {"user_id":"3","channel_id":"30","self_video":true,"self_stream":false},
+            {"user_id":"4","channel_id":"30","self_video":null,"self_stream":"false"},
+            {"user_id":"5","channel_id":"30","self_video":true}
+        ]}]}));
+        let states=items(&metadata["guild_voice_states"][0]["states"]);
+        for index in [0,3] {
+            assert!(states[index].get("self_video").is_none());
+            assert!(states[index].get("self_stream").is_none());
+        }
+        assert_eq!(states[1]["self_video"],false);
+        assert_eq!(states[1]["self_stream"],true);
+        assert_eq!(states[2]["self_video"],true);
+        assert_eq!(states[2]["self_stream"],false);
+        assert_eq!(states[4]["self_video"],true);
+        assert!(states[4].get("self_stream").is_none());
     }
 }

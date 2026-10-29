@@ -47,6 +47,7 @@ impl NotDiscordUi {
         state: &AppSnapshot,
         max_height: f32,
     ) {
+        crate::diagnostics::call_sources(ui.ctx(), state, true);
         let mic = ui
             .ctx()
             .data(|data| data.get_temp::<Value>(egui::Id::new("mic-test-state")))

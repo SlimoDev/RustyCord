@@ -4,6 +4,17 @@ use eframe::egui;
 use notdiscord_core::diagnostics::{self as log, Component, Code, Phase};
 use serde_json::Value;
 
+pub fn call_sources(ctx: &egui::Context, state: &notdiscord_core::models::AppSnapshot, panel_visible: bool) {
+    let bits = log::call_sources_summary(state) | ((panel_visible as u64) << 63);
+    let key = egui::Id::new("call-sources-diagnostic-state");
+    let changed = ctx.data_mut(|data| {
+        if data.get_temp::<u64>(key) == Some(bits) { return false; }
+        data.insert_temp(key, bits);
+        true
+    });
+    if changed { log::record(Component::App, Code::CallSourcesState, Phase::Present, bits); }
+}
+
 pub fn media_event(value: &Value) {
     let correlation=value["mediaSession"].as_u64().unwrap_or(0);
     let phase=match value["phase"].as_str().unwrap_or_default() {

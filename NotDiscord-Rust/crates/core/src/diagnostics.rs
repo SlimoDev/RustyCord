@@ -12,7 +12,7 @@ pub enum Code { Started, CleanShutdown, PreviousUnclean, Recoverable, TaskFailed
     VisibilityChanged, FocusChanged, ToastQueued, ToastActivated, SoundQueued, Panic,
     TransportHttp, TransportTls, TransportIo, TransportCapacity, TransportProtocol,
     TransportClosed, TransportAlreadyClosed, TransportUtf8, TransportEndpoint, TransportFormat,
-    ControlReadFailed, ControlWriteFailed, ControlTimeout, VideoPipeFailed, AppStartFailed, HostForcedStop }
+    ControlReadFailed, ControlWriteFailed, ControlTimeout, VideoPipeFailed, AppStartFailed, HostForcedStop, CallSourcesState }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum Phase { Start, Stop, Connect, Read, Write, Enqueue, Heartbeat, Dispatch, Present, Persist, Unknown }
 #[derive(Clone, Debug, Serialize)]
@@ -28,6 +28,31 @@ static RECORDER: OnceLock<Arc<Recorder>> = OnceLock::new();
 const PREFIX: &str = "nddiag-";
 const FILE_LIMIT: u64 = 1024 * 1024;
 const TOTAL_LIMIT: u64 = 16 * FILE_LIMIT;
+
+/// State/counts only: no owner, channel, device, URL or message enters a record.
+/// Bits 0..7: local camera/screen, preparation, crypto, voice, known announcements.
+/// Bytes 1..5: remote camera, screen, both, unknown camera, unknown screen counts.
+/// Byte 6: video descriptors. Bits 56..62: participants; bit 63 is reserved for UI visibility.
+pub fn call_sources_summary(state: &crate::models::AppSnapshot) -> u64 {
+    let own = state.call_participants.iter().find(|person| person.is_self);
+    let flags = [state.camera_enabled, state.screen_sharing, state.camera_preparing,
+        state.screen_preparing, state.voice_encryption_ready, state.voice_connected,
+        own.is_some_and(|person| person.camera_announcement_known),
+        own.is_some_and(|person| person.screen_announcement_known)];
+    let mut bits = flags.iter().enumerate().fold(0, |bits, (index, flag)| bits | ((*flag as u64) << index));
+    let mut counts = [0u64; 5];
+    for person in state.call_participants.iter().filter(|person| !person.is_self) {
+        let camera = crate::models::call_source_available(Some(person), &person.user.id, "camera", &state.call_videos);
+        let screen = crate::models::call_source_available(Some(person), &person.user.id, "screen", &state.call_videos);
+        for (count, present) in counts.iter_mut().zip([camera, screen, camera && screen,
+            !person.camera_announcement_known, !person.screen_announcement_known]) {
+            *count += present as u64;
+        }
+    }
+    for (index, count) in counts.iter().enumerate() { bits |= (*count).min(255) << (8 * (index + 1)); }
+    bits | ((state.call_videos.len().min(255) as u64) << 48)
+        | ((state.call_participants.len().min(127) as u64) << 56)
+}
 
 fn own_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix(PREFIX) else { return false; };
@@ -161,7 +186,7 @@ pub fn record(component: Component, code: Code, phase: Phase, correlation: u64) 
     let Some(recorder)=RECORDER.get() else { return; };
     let event=Event {schema:1,utc:chrono::Utc::now().to_rfc3339(),monotonic_ms:recorder.start.elapsed().as_millis().min(u64::MAX as u128) as u64,
         sequence:recorder.sequence.fetch_add(1,Ordering::Relaxed),version:recorder.version.clone(),build:option_env!("NOTDISCORD_BUILD_ID").filter(|id|matches!(id.len(),40|64)&&id.bytes().all(|b|b.is_ascii_hexdigit())),component,code,phase,correlation,
-        severity:match code {Code::Panic|Code::HostExited|Code::TaskFailed|Code::AppStartFailed=>"error",Code::Started|Code::CleanShutdown|Code::MenuOpened|Code::MenuDemand|Code::VisibilityChanged|Code::FocusChanged|Code::ToastQueued|Code::ToastActivated|Code::SoundQueued=>"info",_=>"warning"},
+        severity:match code {Code::Panic|Code::HostExited|Code::TaskFailed|Code::AppStartFailed=>"error",Code::Started|Code::CleanShutdown|Code::MenuOpened|Code::MenuDemand|Code::VisibilityChanged|Code::FocusChanged|Code::ToastQueued|Code::ToastActivated|Code::SoundQueued|Code::CallSourcesState=>"info",_=>"warning"},
         repetitions:1,dropped_before:recorder.dropped.swap(0,Ordering::Relaxed)};
     if let Ok(mut ring)=recorder.ring.try_lock() {
         if let Some(last)=ring.back_mut() && last.component==component && last.code==code && last.phase==phase && last.correlation==correlation && event.monotonic_ms.saturating_sub(last.monotonic_ms)<1000 {
