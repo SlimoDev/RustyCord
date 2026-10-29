@@ -40,10 +40,14 @@ Los conteos se saturan; no se asignan números persistentes a los usuarios. La d
 
 ## Comprobaciones y límites
 
-Revisión estática y regresiones añadidas como fuente; no se ejecutan pruebas funcionales, sintéticas ni con dispositivos por la restricción vigente. Compilación y entrega se registrarán al finalizar. El comportamiento real permanece pendiente de confirmación del usuario. Sin una retirada explícita, una oferta observada y desconocida se conserva hasta salir o renovarse la llamada; el fin de un decoder no demuestra por sí mismo el fin de la publicación.
+Revisión estática y regresiones añadidas como fuente; no se ejecutaron pruebas funcionales, sintéticas ni con dispositivos por la restricción vigente. El comportamiento real permanece pendiente de confirmación del usuario. Sin una retirada explícita, una oferta observada y desconocida se conserva hasta salir o renovarse la llamada; el fin de un decoder no demuestra por sí mismo el fin de la publicación.
 
 - Revisión independiente final: sin hallazgos bloqueantes, incluida la carrera de ACK y los límites de privacidad de diagnóstico.
 - `git diff --check`: correcto.
 - `cargo check --workspace --all-targets --release --offline --locked -j1`: correcto, 41,94 segundos; compila las regresiones sin ejecutarlas. Conserva las advertencias previas fuera de este cambio.
 - Runtime preparado y contrastado: 31 componentes; no se ejecuta.
-- Instalador y compilación de producción: pendientes de registrar tras su generación.
+- `cargo build --workspace --release --offline --locked -j1`: correcto, 8 minutos y 7 segundos. Revisión de fuentes `7768c143a411f6e6898b16a2ab755b1fa5bbfc1e`, 425 archivos y SHA-256 del inventario `43743ebe7c8ff0f91922d1c1b327106da7b03f57bf52fb861b204f9b4d08ddb7`. Se contrastaron de nuevo antes de empaquetar.
+- Paquete de 41 archivos y verificación estática correctos. Complemento nativo sin cambios: SHA-256 `0ab369b57973d1837b68b34881f3168e1a68b2a94e7d3441c7a1607131cc75d5`. Ejecutable incluido: `7170f4f4df449ec6e93fc39634192f91d8e0913bcb3f990db6756dad241c3885`.
+- [NotDiscord 0.9.0](https://github.com/SlimoDev/RustyCord/releases/tag/NotDiscord-v0.9.0): instalador único `NotDiscord-Setup-0.9.0.exe`, 118798165 bytes, SHA-256 local y digest de GitHub `cdaf17e1a6f51e975811008a790bfa6605011ae5d494cec026dc40dfd84b1b69`. El manifiesto se anuncia después de contrastar el asset remoto. No se reconstruye Setup con su propio hash dentro.
+- No se ejecutó el cliente ni el instalador; se conservaron instalación, accesos directos y datos locales.
+- Plus conserva 38 archivos y el inventario SHA-256 `FEFB209E0B35C77498DEFC90169B7BBC7519E32BE9C449AFFFDF8ABFBC11C605`. Su rama sigue en `d35c06ac7e824c17198791b3d9208f732bc8be81`; `legacy` permanece en `637d41f897a0e435c3d7e26d1c400afd6a640d0e`.
