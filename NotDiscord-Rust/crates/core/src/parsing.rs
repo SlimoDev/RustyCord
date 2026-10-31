@@ -965,6 +965,11 @@ pub fn message(value: &Value) -> ChatMessage {
         mention_games: crate::game_mentions::parse(&display["mention_games"]),
         reply_preview: reply_preview(value, "", ""),
         reactions: reactions(&value["reactions"]),
+        nonce: match &value["nonce"] {
+            Value::String(nonce) => nonce.clone(),
+            Value::Number(nonce) => nonce.to_string(),
+            _ => String::new(),
+        },
         ..ChatMessage::default()
     };
     if m.message_type == 3 {

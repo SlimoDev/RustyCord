@@ -11,10 +11,12 @@ impl NotDiscordUi {
         for (index, block) in document.blocks.iter().enumerate() {
             ui.push_id(("message-markdown", index), |ui| {
                 let code = matches!(&block.kind, BlockKind::CodeBlock { .. });
+                let failed = self.local_projection.as_ref().is_some_and(|local| local.failed);
+                let ink = if failed { SEND_FAILED } else { self.theme.ink };
                 let (size, color) = match &block.kind {
-                    BlockKind::Heading { level } => (self.prefs.chat_size * match level { 1 => 1.6, 2 => 1.35, _ => 1.15 }, self.theme.ink),
-                    BlockKind::Subtext => ((self.prefs.chat_size * 0.85).max(11.), self.theme.muted),
-                    _ => (self.prefs.chat_size, self.theme.ink),
+                    BlockKind::Heading { level } => (self.prefs.chat_size * match level { 1 => 1.6, 2 => 1.35, _ => 1.15 }, ink),
+                    BlockKind::Subtext => ((self.prefs.chat_size * 0.85).max(11.), if failed { ink } else { self.theme.muted }),
+                    _ => (self.prefs.chat_size, ink),
                 };
                 let row = ui.horizontal_top(|ui| {
                     if block.quote_depth > 0 { ui.add_space(f32::from(block.quote_depth.min(8)) * 9.); }

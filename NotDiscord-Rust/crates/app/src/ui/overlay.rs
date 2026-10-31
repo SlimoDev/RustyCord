@@ -3,7 +3,7 @@
 use super::*;
 
 #[derive(Clone, Copy)]
-enum Surface { Dialog, Picker, Viewer, Search }
+enum Surface { Dialog, ColorEditor, Picker, Viewer, Search, TextViewer, Diagnostics }
 
 fn bounds(ctx: &egui::Context, id: &str) -> Option<egui::Rect> {
     let id = egui::Id::new(id);
@@ -18,8 +18,14 @@ impl NotDiscordUi {
     /// controller releases its connections and the desktop ownership lease.
     /// Ordinary outside-click cancellation continues to restore its backup.
     pub fn prepare_orderly_close(&mut self) -> Result<(), String> {
+        // An unaccepted preview never reaches disk through this path.
+        self.cancel_color_editor();
         let result = (|| {
             if self.settings_backup.is_some() || matches!(self.dialog, Some(Dialog::Settings)) {
+                if [&self.prefs.background, &self.prefs.separator, &self.prefs.accent_color]
+                    .into_iter().any(|color| theme::parse_color(color).is_none()) {
+                    return Err("Los colores de ajustes no son válidos.".to_owned());
+                }
                 self.prefs.save(&self.data_dir)?;
                 self.settings_backup = None;
             }
@@ -47,7 +53,7 @@ impl NotDiscordUi {
         let key = egui::Id::new("overlay-dismiss-frame");
         if ctx.data(|data| data.get_temp::<u64>(key)) == Some(frame) { return; }
         ctx.data_mut(|data| data.insert_temp(key, frame));
-        let mut surfaces = Vec::with_capacity(4);
+        let mut surfaces = Vec::with_capacity(6);
         if let Some(dialog) = &self.dialog {
             let id = match dialog {
                 Dialog::Settings => "settings-dialog",
@@ -66,6 +72,9 @@ impl NotDiscordUi {
             };
             if let Some(rect) = bounds(ctx, id) { surfaces.push((Surface::Dialog, rect)); }
         }
+        if self.color_editor.is_some() {
+            if let Some(rect) = bounds(ctx, "color-editor") { surfaces.push((Surface::ColorEditor, rect)); }
+        }
         if self.search_open {
             if let Some(rect) = bounds(ctx, "search-completion") { surfaces.push((Surface::Search, rect)); }
         }
@@ -74,6 +83,12 @@ impl NotDiscordUi {
         }
         if self.viewer.is_some() {
             if let Some(rect) = bounds(ctx, "media-viewer") { surfaces.push((Surface::Viewer, rect)); }
+        }
+        if self.text_viewer.is_some() {
+            if let Some(rect) = bounds(ctx, "text-viewer") { surfaces.push((Surface::TextViewer, rect)); }
+        }
+        if crate::diagnostics::is_open(ctx) {
+            if let Some(rect) = bounds(ctx, "diagnostic-panel") { surfaces.push((Surface::Diagnostics, rect)); }
         }
         let Some((top, top_rect)) = surfaces.last().copied() else { return; };
         let escape = ctx.input(|input| input.key_pressed(egui::Key::Escape));
@@ -89,7 +104,11 @@ impl NotDiscordUi {
             }
         });
         match top {
+            Surface::ColorEditor => self.cancel_color_editor(),
+            Surface::TextViewer => self.close_text_viewer(),
+            Surface::Diagnostics => crate::diagnostics::close(ctx),
             Surface::Dialog => {
+                self.color_editor = None;
                 if let Some(backup) = self.settings_backup.take() {
                     self.prefs = backup;
                     self.theme = Theme::from_preferences(&self.prefs);

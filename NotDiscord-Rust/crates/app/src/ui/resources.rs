@@ -367,7 +367,7 @@ fn probe_forbids_network() -> bool {
         true
     } else { false }
 }
-fn client() -> Option<&'static reqwest::blocking::Client> {
+pub(super) fn client() -> Option<&'static reqwest::blocking::Client> {
     #[cfg(feature = "offline-probes")]
     if probe_forbids_network() { return None; }
     HTTP.get_or_init(|| {

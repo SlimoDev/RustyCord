@@ -5,8 +5,12 @@ use super::*;
 #[derive(Clone)]
 pub(super) enum Target {
     Link(String),
-    Media { url: String, poster: String, name: String },
+    Media { url: String, poster: String, name: String, gif: bool },
     Person(Person),
+}
+
+pub(super) fn gif_value(url: &str, poster: &str, name: &str) -> PickerValue {
+    PickerValue { value: url.into(), name: short(name, 150), image_url: poster.into(), ..Default::default() }
 }
 
 #[derive(Clone)]
@@ -134,7 +138,7 @@ impl NotDiscordUi {
         egui::Popup::context_menu(response).id(popup_id).open_memory(command).show(|ui| {
             match &target {
                 Some(Target::Link(url)) => self.message_link_menu(ui, url),
-                Some(Target::Media { url, poster, name }) => self.media_preview_menu(ui, url, poster, name),
+                Some(Target::Media { url, poster, name, gif }) => self.media_preview_menu(ui, url, poster, name, *gif),
                 Some(Target::Person(person)) => self.people_menu(ui, person, state),
                 None => {},
             }
@@ -159,7 +163,25 @@ impl NotDiscordUi {
         }
     }
 
-    pub(super) fn media_preview_menu(&mut self, ui: &mut egui::Ui, url: &str, poster: &str, name: &str) {
+    fn gif_favorite_menu(&mut self, ui: &mut egui::Ui, value: PickerValue) {
+        self.ensure_gif_favorites(false);
+        let favorite = self.gif_favorite_state(&value);
+        let (enabled, label) = self.gif_favorite_action(&favorite);
+        if !enabled && !self.paint_scope_suspended() && matches!(self.gif_favorites_status(), super::super::dialogs::GifFavorites::Failed | super::super::dialogs::GifFavorites::Uncertain) {
+            if ui.button("Comprobar estado").on_hover_text("Hace una lectura de Discord; no modifica nada.").clicked() {
+                self.ensure_gif_favorites(true);
+                ui.close();
+            }
+        } else if ui.add_enabled(enabled, egui::Button::new(label)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            self.set_gif_favorite(value, favorite);
+            ui.close();
+        }
+    }
+    pub(super) fn media_preview_menu(&mut self, ui: &mut egui::Ui, url: &str, poster: &str, name: &str, gif: bool) {
+        if gif {
+            self.gif_favorite_menu(ui, gif_value(url, poster, name));
+            ui.separator();
+        }
         if ui.button("Reintentar vista previa").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             self.pictures.retry(poster, 384);
             self.pictures.retry(url, 384);

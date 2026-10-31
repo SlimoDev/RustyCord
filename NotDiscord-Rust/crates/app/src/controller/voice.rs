@@ -3853,7 +3853,7 @@ mod tests {
         let (bridge,calls)=MediaBridge::fake(move|command,args| {
             match command {
                 "connectVoice"=> {assert_eq!(args["guildId"],"500");assert_eq!(args["channelId"],"200");Ok(json!({"session":10,"state":"connecting"}))},
-                "mute"=>Ok(json!({})),
+                "mute"|"setPeerVideoVisible"=>Ok(json!({})),
                 "setVideoStreamVisible"=> {if args["visible"]==true {resources.lock().unwrap().insert("camera".into());}else{resources.lock().unwrap().remove("camera");}Ok(json!({}))},
                 "watchStream"=> {assert_eq!(args["streamOwnerId"],"300");assert_eq!(args["selfMute"],true);resources.lock().unwrap().insert("screen".into());Ok(json!({"state":"connecting"}))},
                 "stopWatchStream"=>{resources.lock().unwrap().remove("screen");Ok(json!({"state":"stopped"}))},
@@ -3898,7 +3898,9 @@ mod tests {
         assert!(active.lock().unwrap().is_empty());assert!(c.voice_lifecycle.watches.is_empty());
         assert!(c.state.voice_connected);assert!(!c.state.screen_sharing);
         assert!(!calls.lock().unwrap().iter().any(|command|matches!(command.as_str(),"watchStream"|"stopWatchStream"|"shutdown")));
-        while let Ok(payload)=wire.try_recv(){assert_ne!(payload["op"],19,"Stopping a receiver must not delete the sender's stream");}
+        // The original client's STREAM_STOP also sends streamDelete for viewers.
+        let mut stops=0;while let Ok(payload)=wire.try_recv(){stops+=usize::from(payload["op"]==19);}
+        assert_eq!(stops,1,"Stopping a receiver closes its own view exactly once");
         c.stop_voice().await;assert!(c.state.call_videos.is_empty()&&c.media.is_none());
         gateway.stop();tokio::time::timeout(Duration::from_secs(1),task).await.unwrap().unwrap();
     }
@@ -4410,7 +4412,8 @@ mod tests {
         let mut info = json!({"owner":"300","server":"400","channel":"401","endpoint":"synthetic.discord.media","token":"SYNTHETIC-NOT-REAL","attempt":1,"started":false});
         c.voice_lifecycle.watches.insert(key.into(), info.clone());
         c.try_watch(key).await.unwrap();
-        assert!(reply(&mut c, &mut rx).await.is_err());
+        // A rejected watch is reported on the watch itself; audio continues.
+        reply(&mut c, &mut rx).await.unwrap();
         wait_calls(&calls, 2).await;
         assert!(!c.voice_lifecycle.watches.contains_key(key));
         info["attempt"] = json!(3);
@@ -5286,7 +5289,7 @@ mod tests {
         c.media_action(&action).await.unwrap();
         // A departing peer does not invalidate an ACK for this same call.
         c.media_event(json!({"event":"participant","userId":"300","present":false})).await.unwrap();
-        assert!(!c.call_people.contains_key("300"));
+        assert!(c.call_people.contains_key("300"),"Only the Gateway delta ends membership");
         reply(&mut c,&mut replies).await.unwrap();
         assert_eq!(c.media_preferences.user_volumes["300"],175.);
         c.media_event(json!({"event":"participant","userId":"300","present":true})).await.unwrap();
@@ -5302,7 +5305,7 @@ mod tests {
         restarted.refresh_call();
         assert_eq!(restarted.call_people["300"].volume_percent,175.);assert_eq!(restarted.call_people["400"].volume_percent,100.);
         assert_eq!(restarted.media_parameters_for(&restarted.media_preferences)["userVolumes"]["300"],175.);
-        assert_eq!(restarted.receiver_parameters()["userVolumes"]["300"],175.);
+        assert_eq!(restarted.receiver_parameters()["userVolumes"],json!({}));
         let (bridge,calls)=MediaBridge::fake(|command,args| {assert_eq!(command,"connectVoice");assert_eq!(args["participantVolumes"]["300"],175.);assert_eq!(args["userVolumesRevision"],0);assert!(args["participantVolumes"].get("400").is_none());Ok(json!({"session":42}))});
         restarted.media=Some(bridge);restarted.try_voice().await.unwrap();reply(&mut restarted,&mut rx).await.unwrap();
         assert_eq!(calls.lock().unwrap().as_slice(),["connectVoice"]);
@@ -5326,8 +5329,10 @@ mod tests {
         c.voice_complete(stale,wrapped(Ok(json!({})))).await.unwrap();
         let saved:MediaPreferences=storage::read_json(&c.data.join("media-settings.json"),32768);
         assert_eq!(saved.user_volumes["300"],250.);assert_eq!((saved.input_volume,saved.output_volume),(100,100));
-        assert_eq!(c.receiver_parameters()["userVolumesRevision"],accepted_revision);
-        assert_eq!(c.receiver_parameters()["userVolumes"]["300"],250.);
+        // Individual volumes belong to the call; the stream receiver gets none.
+        assert_eq!(c.media_parameters_for(&c.media_preferences)["userVolumesRevision"],accepted_revision);
+        assert_eq!(c.media_parameters_for(&c.media_preferences)["userVolumes"]["300"],250.);
+        assert_eq!(c.receiver_parameters()["userVolumes"],json!({}));
     }
     #[tokio::test]
     async fn individual_volume_failed_ack_or_persistence_error_keeps_controls_honest() {

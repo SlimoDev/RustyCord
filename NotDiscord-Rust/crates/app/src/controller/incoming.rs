@@ -398,6 +398,7 @@ impl Controller {
                 self.rebuild_channels();
             }
             self.publish();
+            if kind == "MESSAGE_CREATE" {self.observe_own_send(&value);}
             return Ok(());
         }
         match kind {
@@ -2761,6 +2762,12 @@ mod tests {
     fn member(id: &str) -> Value {
         json!({"member":{"user":{"id":id,"username":format!("user{id}")}}})
     }
+    /// The code only accepts a list id it can derive from the channel.
+    fn confirm_binding(c: &mut Controller, binding: &str) {
+        c.guild_raw = json!({"id":"10","roles":[{"id":"10","permissions":"66560"}]});
+        c.guild_acl = Some(GuildAccess::from_values(&c.guild_raw, &json!({}), "1"));
+        c.channels.insert("20".into(), json!({"id":"20","guild_id":"10","type":0,"member_list_id":binding}));
+    }
     #[test]
     fn partial_channel_update_preserves_acl() {
         let previous = json!({"id":"20","type":0,"permission_overwrites":[{"id":"10","type":0,"deny":"1024","allow":"0"}]});
@@ -2807,6 +2814,7 @@ mod tests {
     fn member_lists_scoped_to_explicit_channel_and_sync_clears_range() {
         let (mut c, _) = Controller::test_fixture();
         channel(&mut c);
+        confirm_binding(&mut c, "private-list");
         let packet = |channel: &str, entries: Vec<Value>| json!({"guild_id":"10","channel_id":channel,"id":"private-list","member_count":2,"ops":[{"op":"SYNC","range":[0,1],"items":entries}]});
         c.member_list(&packet("21", vec![member("2")]));
         assert!(c.state.guild_members.is_empty());
@@ -2828,6 +2836,7 @@ mod tests {
     fn confirmed_private_member_binding_accepts_incremental_packets_and_dies_on_navigation() {
         let (mut c, _) = Controller::test_fixture();
         channel(&mut c);
+        confirm_binding(&mut c, "scoped-list");
         c.member_list(&json!({"guild_id":"10","channel_id":"20","id":"scoped-list","member_count":1,"ops":[{"op":"SYNC","range":[0,0],"items":[member("2")]}]}));
         c.member_list(&json!({"guild_id":"10","id":"scoped-list","member_count":1,"ops":[{"op":"UPDATE","index":0,"item":member("3") }]}));
         assert_eq!(c.state.guild_members[0].user.id, "3");
@@ -2845,7 +2854,9 @@ mod tests {
         ]});
         c.self_member = json!({"roles":["30"]});
         c.guild_acl = Some(GuildAccess::from_values(&c.guild_raw, &c.self_member, "1"));
-        c.channels.insert("20".into(), json!({"id":"20","guild_id":"10","type":0}));
+        let mut raw = json!({"id":"20","guild_id":"10","type":0});
+        if !public { raw["member_list_id"] = binding.into(); }
+        c.channels.insert("20".into(), raw);
         c.rebuild_channels();
         c.state.channel_access = c.channel_access(&c.channels["20"]);
         c.member_demand = Some(("10".into(), "20".into()));
@@ -2886,6 +2897,7 @@ mod tests {
         assert!(c.member_demand.is_none());
         assert_ne!(c.state.member_context_version, version);
         c.member_demand = Some(("10".into(), "20".into()));
+        c.channels.get_mut("20").unwrap()["member_list_id"] = "private-new".into();
         c.dispatch("GUILD_MEMBER_LIST_UPDATE", json!({"guild_id":"10","id":"private-old","member_count":1,"ops":[{"op":"SYNC","range":[0,0],"items":[member("3")]}]})).await.unwrap();
         assert!(c.state.guild_members.is_empty());
         assert!(c.member_list_id.is_empty());
@@ -2895,7 +2907,9 @@ mod tests {
     fn explicitly_rebound_member_lists_never_merge_old_slots_or_accept_old_ids() {
         let (mut c, _) = Controller::test_fixture();
         channel(&mut c);
+        confirm_binding(&mut c, "old");
         c.member_list(&json!({"guild_id":"10","channel_id":"20","id":"old","member_count":2,"ops":[{"op":"SYNC","range":[0,1],"items":[member("2"),member("3")]}]}));
+        confirm_binding(&mut c, "new");
         c.member_list(&json!({"guild_id":"10","channel_id":"20","id":"new","member_count":1,"ops":[{"op":"UPDATE","index":0,"item":member("4") }]}));
         assert_eq!(c.state.guild_members.len(), 1);
         assert_eq!(c.state.guild_members[0].user.id, "4");
@@ -2932,7 +2946,7 @@ mod tests {
         c.member_demand = Some(("10".into(), "20".into()));
         c.guild_raw = json!({"id":"10","roles":[{"id":"10","permissions":"1024"}]});
         c.guild_acl = Some(GuildAccess::from_values(&c.guild_raw, &json!({}), "1"));
-        c.channels.insert("20".into(), json!({"id":"20","guild_id":"10","type":0,"permission_overwrites":[{"id":"99","type":0,"deny":"1024","allow":"0"}]}));
+        c.channels.insert("20".into(), json!({"id":"20","guild_id":"10","type":0,"permission_overwrites":[{"id":"99","type":9,"deny":"1024","allow":"0"}]}));
         c.state.messages = vec![ChatMessage {
             channel_id: "20".into(),
             author: Person { id: "2".into(), ..Default::default() },

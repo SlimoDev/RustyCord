@@ -876,7 +876,7 @@ impl NotDiscordUi {
 
     pub(super) fn background_blocked(&self) -> bool {
         self.dialog.is_some() || self.picker.is_some() || self.time_picker.is_some() || self.viewer.is_some() || self.search_open
-            || crate::diagnostics::is_open(&self.ctx)
+            || self.text_viewer.is_some() || crate::diagnostics::is_open(&self.ctx)
             || self.ctx.data(|data|data.get_temp::<u64>(egui::Id::new("overlay-dismissal-block")))
                 == Some(self.ctx.cumulative_frame_nr())
     }
@@ -1408,6 +1408,7 @@ impl NotDiscordUi {
             }
         }
         if !open {
+            self.color_editor = None;
             if let Some(backup) = self.settings_backup.take() {
                 self.prefs = backup;
                 self.theme = Theme::from_preferences(&self.prefs);
@@ -1789,6 +1790,61 @@ impl NotDiscordUi {
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(format!("{}\n{username}", person.name))
     }
+    fn gif_lookup_command(&mut self) {
+        let scope=self.paint_scope.clone();
+        let opening=uuid::Uuid::new_v4().to_string();
+        let stamp=crate::pickers::CatalogRequest{owner:scope.owner.clone(),generation:scope.generation,opening:opening.clone(),
+            request:uuid::Uuid::new_v4().to_string(),mode:"favorites".into(),query:String::new(),limit:96};
+        self.gif_favorites_opening=opening;
+        self.gif_favorites=GifFavorites::Loading;
+        self.send("picker-history","","",serde_json::json!({"owner":scope.owner,"generation":scope.generation}).to_string(),"");
+        self.send("gif-catalog","","",serde_json::to_string(&stamp).unwrap_or_default(),"");
+    }
+    /// One demand per session, or one explicit check. Hovering and repainting
+    /// only reach this guard; the read itself is a single request.
+    pub(super) fn ensure_gif_favorites(&mut self,check:bool){
+        if !self.paint_scope.suspended && (check||self.gif_favorites==GifFavorites::Unknown){self.gif_lookup_command();}
+    }
+    pub(super) fn gif_favorite_state(&self,value:&PickerValue)->GifFavorite{
+        let descriptor=value.descriptor();
+        let remote=self.remote_gif_favorites.iter().find(|item|gif_value_descriptor(item).same_medium(&descriptor)).map(|item|s(item,"Url").to_owned());
+        let local=self.picker_history.gif_favorites.iter().find(|item|item.descriptor().same_medium(&descriptor)).cloned();
+        GifFavorite{saved:local.is_some()||remote.is_some(),remote:remote.filter(|url|!url.is_empty()),local}
+    }
+    pub(super) fn gif_favorites_status(&self)->GifFavorites{self.gif_favorites}
+    pub(super) fn paint_scope_suspended(&self)->bool{self.paint_scope.suspended}
+    fn gif_removal_pending(&self)->bool{
+        let id=egui::Id::new(("gif-removal",&self.picker_account,self.state.notification_generation));
+        self.ctx.data(|memory|memory.get_temp::<(String,String)>(id).is_some())
+    }
+    /// Sole entry to the favorites writer for the catalog and the chat. New
+    /// saves stay local; a copy already in Discord is removed there as well.
+    pub(super) fn set_gif_favorite(&mut self,value:PickerValue,favorite:GifFavorite){
+        let scope=self.paint_scope.clone();
+        if let Some(remote_url)=favorite.remote{
+            let operation=uuid::Uuid::new_v4().to_string();
+            let pending_id=egui::Id::new(("gif-removal",&self.picker_account,scope.generation));
+            self.ctx.data_mut(|memory|memory.insert_temp(pending_id,(remote_url.clone(),operation.clone())));
+            let extra=serde_json::json!({"owner":scope.owner,"generation":scope.generation,"operation":operation}).to_string();
+            self.send("gif-favorite-remove",remote_url,"",extra,"");
+        }else{
+            let saved=!favorite.saved;
+            let value=favorite.local.unwrap_or(value);
+            self.send("picker-favorite","","",serde_json::json!({"owner":scope.owner,"generation":scope.generation,"value":value,"saved":saved}).to_string(),"");
+        }
+    }
+    /// Unknown remote state offers no action: it could silently duplicate or
+    /// leave a Discord copy behind. Shared by the menu and the hover star.
+    pub(super) fn gif_favorite_action(&self,favorite:&GifFavorite)->(bool,&'static str){
+        if self.paint_scope.suspended{return (false,"Sin conexión con Discord");}
+        if self.gif_removal_pending(){return (false,"Actualizando favoritos…");}
+        match self.gif_favorites{
+            GifFavorites::Ready if favorite.saved=>(true,"Quitar de favoritos"),
+            GifFavorites::Ready=>(true,"Guardar GIF"),
+            GifFavorites::Failed|GifFavorites::Uncertain=>(false,"Favoritos sin comprobar"),
+            _=>(false,"Consultando favoritos…"),
+        }
+    }
     fn picker_scope(&self, state: &AppSnapshot) -> Value {
         serde_json::json!({"owner":state.current_user.as_ref().map_or("",|person|person.id.as_str()),"generation":state.notification_generation})
     }
@@ -1807,6 +1863,14 @@ impl NotDiscordUi {
     pub(super) fn receive_gif_catalog(&mut self,data:&Value){
         let Ok(stamp)=serde_json::from_value::<crate::pickers::CatalogRequest>(data["stamp"].clone())else{return};
         if stamp.owner!=self.picker_account||stamp.generation!=self.state.notification_generation{return;}
+        if stamp.opening==self.gif_favorites_opening{
+            // A cached answer carries no separate favorites update.
+            match serde_json::from_value::<crate::pickers::GifPage>(data["page"].clone()){
+                Ok(page) if s(data,"error").is_empty()=>self.receive_gif_favorite_page(page),
+                _=>self.gif_favorites=GifFavorites::Failed,
+            }
+            return;
+        }
         let Some(picker)=&mut self.picker else{return};
         if !picker.gif||picker.open_id!=stamp.opening||picker.request_id!=stamp.request
             ||picker.category!=stamp.mode||picker.limit as usize!=stamp.limit{return;}
@@ -1822,10 +1886,12 @@ impl NotDiscordUi {
     }
     pub(super) fn receive_gif_favorites(&mut self,data:&Value){
         if s(data,"owner")!=self.picker_account||data["generation"].as_u64()!=Some(self.state.notification_generation){return;}
-        if let Ok(page)=serde_json::from_value::<crate::pickers::GifPage>(data["page"].clone()){
-            self.remote_gif_favorites=page.items.into_iter().take(400).filter_map(|item|serde_json::to_value(item).ok()).collect();
-            if let Some(picker)=&mut self.picker{picker.items_dirty=true;}
-        }
+        if let Ok(page)=serde_json::from_value::<crate::pickers::GifPage>(data["page"].clone()){self.receive_gif_favorite_page(page);}
+    }
+    fn receive_gif_favorite_page(&mut self,page:crate::pickers::GifPage){
+        self.remote_gif_favorites=page.items.into_iter().take(400).filter_map(|item|serde_json::to_value(item).ok()).collect();
+        self.gif_favorites=GifFavorites::Ready;
+        if let Some(picker)=&mut self.picker{picker.items_dirty=true;}
     }
     pub(super) fn receive_gif_favorite_result(&mut self,data:&Value){
         if s(data,"owner")!=self.picker_account||data["generation"].as_u64()!=Some(self.state.notification_generation){return;}
@@ -1833,6 +1899,7 @@ impl NotDiscordUi {
         let matches=self.ctx.data(|memory|memory.get_temp::<(String,String)>(id)).is_some_and(|(url,operation)|url==s(data,"url")&&operation==s(data,"operation"));
         if !matches{return;}
         self.ctx.data_mut(|memory|memory.remove::<(String,String)>(id));
+        if data["uncertain"]==true{self.gif_favorites=GifFavorites::Uncertain;}
         if !s(data,"error").is_empty(){self.error=s(data,"error").into();}
     }
     fn request_gif_catalog(&mut self,picker:&mut Picker,state:&AppSnapshot){
@@ -2014,6 +2081,10 @@ impl NotDiscordUi {
                     if picker.pending {
                         ui.spinner();
                     }
+                    if self.gif_favorites==GifFavorites::Uncertain && ui.button("Comprobar estado")
+                        .on_hover_text("Hace una lectura de Discord; no vuelve a modificar nada.").clicked() {
+                        self.ensure_gif_favorites(true);
+                    }
                     let rows = picker.items.len().div_ceil(3);
                     theme::vertical_scroll(ui)
                         .id_salt("gif-items")
@@ -2052,19 +2123,13 @@ impl NotDiscordUi {
                                             }
                                             let remote_url=(!s(item,"NotDiscordRemoteUrl").is_empty()).then(||s(item,"NotDiscordRemoteUrl").to_owned());
                                             let favorite=field(item,"NotDiscordSaved").and_then(Value::as_bool).unwrap_or(false);
-                                            let pending_id=egui::Id::new(("gif-removal",&self.picker_account,state.notification_generation));
-                                            let removing=self.ctx.data(|memory|memory.get_temp::<(String,String)>(pending_id).is_some());
+                                            let removing=self.gif_removal_pending();
                                             if ui.add_enabled(!removing,egui::Button::new(if favorite{"★ Guardado"}else{"☆ Guardar"}).small())
                                                 .on_hover_text(if remote_url.is_some(){"Quitar de Discord y del guardado local"}else{"Guardar o quitar para esta cuenta de NotDiscord"}).clicked(){
-                                                if let Some(remote_url)=remote_url{
-                                                    let operation=uuid::Uuid::new_v4().to_string();
-                                                    self.ctx.data_mut(|memory|memory.insert_temp(pending_id,(remote_url.clone(),operation.clone())));
-                                                    let mut scope=self.picker_scope(state);scope["operation"]=operation.into();let extra=scope.to_string();
-                                                    self.send("gif-favorite-remove",remote_url,"",extra,"");
-                                                }else{
-                                                    let value=gif_picker_value(item);
-                                                    self.history_command("picker-favorite",serde_json::json!({"value":value,"saved":!favorite}),state);
-                                                }
+                                                let value=gif_picker_value(item);
+                                                let mut state=self.gif_favorite_state(&value);
+                                                state.saved=favorite;state.remote=remote_url;
+                                                self.set_gif_favorite(value,state);
                                             }
                                         });
                                     }
@@ -2604,3 +2669,14 @@ fn gif_picker_value(value:&Value)->PickerValue{
         height:field(value,"Height").and_then(Value::as_i64).unwrap_or(0).clamp(0,8192)as i32}
 }
 fn gif_value_descriptor(value:&Value)->notdiscord_core::parsing::MediaDescriptor{gif_picker_value(value).descriptor()}
+#[derive(Clone,Copy,Default,PartialEq,Eq)]
+pub(super) enum GifFavorites{#[default]Unknown,Loading,Ready,Failed,Uncertain}
+pub(super) struct GifFavorite{pub(super) saved:bool,pub(super) remote:Option<String>,local:Option<PickerValue>}
+#[derive(Clone,Default)]
+pub(super) struct PaintScope{owner:String,generation:u64,suspended:bool}
+impl PaintScope{
+    pub(super) fn of(state:&AppSnapshot)->Self{
+        Self{owner:state.current_user.as_ref().map_or(String::new(),|person|person.id.clone()),
+            generation:state.notification_generation,suspended:state.connection_phase.suspended()}
+    }
+}

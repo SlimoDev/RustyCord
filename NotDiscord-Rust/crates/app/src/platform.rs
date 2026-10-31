@@ -26,6 +26,29 @@ pub fn open_link(url: &str) -> Result<(), String> {
         .map_err(|_| "No se pudo abrir el enlace.".into())
 }
 
+/// Selects exactly this file in Explorer. A missing file is an error, never a
+/// reason to show another one. COM is per thread: call it away from painting.
+pub fn reveal_file(path: &std::path::Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::{core::PCWSTR, Win32::{System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
+        UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems}}};
+    if !path.is_file() { return Err("El archivo ya no está disponible.".into()); }
+    let wide = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<_>>();
+    // SAFETY: wide is NUL-terminated and outlives both calls, and the PIDL is
+    // owned here until ILFree. COM stays balanced within this function.
+    unsafe {
+        let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        let item = ILCreateFromPathW(PCWSTR(wide.as_ptr()));
+        let shown = if item.is_null() { false } else {
+            let shown = SHOpenFolderAndSelectItems(item, None, 0).is_ok();
+            ILFree(Some(item as *const _));
+            shown
+        };
+        if initialized { CoUninitialize(); }
+        if shown { Ok(()) } else { Err("No se pudo mostrar el archivo en el Explorador.".into()) }
+    }
+}
+
 /// Normalize an invite before delegating its review to Discord's website.
 /// This never forwards credentials, query parameters, or arbitrary URL paths.
 pub fn official_invite_url(value: &str) -> Result<String, String> {

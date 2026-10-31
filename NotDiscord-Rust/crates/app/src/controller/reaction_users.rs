@@ -71,6 +71,7 @@ impl Controller {
         }
         let prepared = (|| {
             if uuid::Uuid::parse_str(&s(&result,"requestId")).is_err() { return Err("Solicitud de reacción no válida.".to_owned()); }
+            if self.transport_suspended() { return Err(super::connection::OFFLINE.to_owned()); }
             let message = self.state.messages.iter().chain(&self.state.pinned_messages)
                 .find(|message|message.id==action.id && message.channel_id==action.channel_id && !message.deleted).ok_or("El mensaje ya no está disponible.")?;
             let key = super::social::reaction_key(&action.text)?;

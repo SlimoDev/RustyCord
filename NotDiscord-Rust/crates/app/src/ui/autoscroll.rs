@@ -203,6 +203,7 @@ impl ScrollArea {
     pub(crate) fn vertical() -> Self { Self {inner:egui::ScrollArea::vertical(),middle:true,salt:Id::new("scroll_area"),axes:egui::Vec2b::new(false,true),source:Default::default()} }
     // Horizontal strips keep their own drag gesture; free space can own middle scrolling.
     pub(super) fn horizontal() -> Self { Self {inner:egui::ScrollArea::horizontal(),middle:true,salt:Id::new("scroll_area"),axes:egui::Vec2b::new(true,false),source:Default::default()} }
+    pub(super) fn both() -> Self { Self {inner:egui::ScrollArea::both(),middle:true,salt:Id::new("scroll_area"),axes:egui::Vec2b::new(true,true),source:Default::default()} }
     pub(super) fn middle_scroll(mut self, enabled: bool) -> Self {self.middle=enabled;self}
     pub(crate) fn id_salt(mut self,salt:impl std::hash::Hash)->Self {self.salt=Id::new(&salt);self.inner=self.inner.id_salt(salt);self}
     pub(super) fn max_width(mut self,value:f32)->Self {self.inner=self.inner.max_width(value);self}

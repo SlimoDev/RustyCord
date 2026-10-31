@@ -2,7 +2,7 @@
 //! scoped to the signed-in session; it never persists people or hover state.
 use super::*;
 
-const DWELL: f64 = 1.2;
+const DWELL: f64 = 0.5;
 const TTL: f64 = 30.;
 const TIMEOUT: f64 = 10.;
 const CAPACITY: usize = 32;
@@ -63,7 +63,7 @@ fn in_hover(hover: &Hover, position: egui::Pos2, now: f64) -> bool {
     let area=if hover.open&&hover.popup.is_positive() {hover.anchor.union(hover.popup)} else {hover.anchor};
     over_surface(hover,position)||now-hover.last_inside<=TRANSIT_GRACE&&area.expand(6.).contains(position)
 }
-fn read_revoked(state: &AppSnapshot, channel: &str) -> bool {
+pub(in super::super) fn read_revoked(state: &AppSnapshot, channel: &str) -> bool {
     let access = if channel == state.selected_channel_id { Some(&state.channel_access) }
         else { state.channels.iter().chain(&state.direct_messages)
             .find(|item| item.id == channel).and_then(|item| item.access.as_ref()) };
@@ -81,8 +81,10 @@ pub(super) fn begin_frame(ctx: &egui::Context, state: &AppSnapshot) {
         if cache.scope != scope || !state.signed_in || !matches!(state.view.as_str(), "chat" | "pins" | "search") {
             *cache = Cache { scope, ..Default::default() };
         }
-        cache.entries.retain(|entry| now - entry.at < TTL && !read_revoked(state, &entry.key.channel)
-            && !known_changed(state,&entry.key));
+        // Expiring data never re-enables a failed attempt: an error stays until
+        // the explicit retry, or the reaction itself changes.
+        cache.entries.retain(|entry| (matches!(entry.result,ResultState::Error(_)) || now - entry.at < TTL)
+            && !read_revoked(state, &entry.key.channel) && !known_changed(state,&entry.key));
         if cache.pending.as_ref().is_some_and(|pending| now - pending.since >= TIMEOUT) {
             if let Some(pending) = cache.pending.take() {
                 cache.entries.retain(|entry| entry.key != pending.key);
@@ -232,10 +234,16 @@ impl NotDiscordUi {
         let key = hover.key.clone();
         cache.entries.retain(|entry| !matches!(&entry.result,ResultState::Loading)
             || cache.pending.as_ref().is_some_and(|pending|pending.key==entry.key));
-        let entry = cache.entries.iter().find(|entry| entry.key == key && now - entry.at < TTL);
+        let entry = cache.entries.iter().find(|entry| entry.key == key
+            && (matches!(entry.result,ResultState::Error(_)) || now - entry.at < TTL));
         let query_available=cache.pending.as_ref().is_none_or(|pending|
             !pending.key.same_reaction(&key)||pending.key.count!=key.count);
-        if entry.is_none() && query_available {
+        let suspended=state.connection_phase.suspended();
+        if entry.is_none() && suspended {
+            cache.entries.push(Entry { key: key.clone(), at: now,
+                result: ResultState::Error("Sin conexión con Discord. Podrás consultarlo cuando se recupere.".into()) });
+            trim(&mut cache);
+        } else if entry.is_none() && query_available {
             let id = uuid::Uuid::new_v4().to_string();
             let action = UiAction { kind: "reaction-users".into(), id: key.message.clone(),
                 channel_id: key.channel.clone(), text: key.emoji.clone(),
@@ -248,6 +256,10 @@ impl NotDiscordUi {
             trim(&mut cache);
         }
         let result = cache.entries.iter().find(|entry| entry.key == key).map(|entry| &entry.result);
+        // Pins and search can show another channel of this server; nicknames of
+        // the selected server are valid there, but never in another one.
+        let same_guild = message.channel_id==state.selected_channel_id
+            || state.channels.iter().any(|channel|channel.id==message.channel_id);
         let mut selected_kind = key.kind;
         let mut retry=false;let mut scrollable=false;
         let bounds=ui.ctx().content_rect().shrink(4.);
@@ -291,14 +303,14 @@ impl NotDiscordUi {
                                 let scrolled=theme::vertical_scroll(ui).id_salt(("reaction-error",panel_id))
                                     .max_height(error_height).show(ui,|ui| {ui.label(error);});
                                 scrollable=scrolled.content_size.y>scrolled.inner_rect.height()+0.5;
-                                retry=ui.button("Reintentar").clicked();
+                                retry=ui.add_enabled(!suspended,egui::Button::new("Reintentar")).clicked();
                             }
                             Some(ResultState::Ready{users,more})=>{
                                 if users.is_empty(){ui.label("Sin usuarios disponibles para este tipo de reacción.");}
                                 let scrolled=theme::vertical_scroll(ui).id_salt(("reaction-people",&key.channel,&key.message,&key.emoji,key.kind))
                                     .max_height(list_height).show(ui,|ui| {
                                         for person in users {
-                                            let name=if message.channel_id==state.selected_channel_id {state.guild_display_name(person)}
+                                            let name=if same_guild {state.guild_display_name(person)}
                                                 else {super::super::mentions::person_name(person)};
                                             let (rect,row)=ui.allocate_exact_size(egui::vec2(ui.available_width(),34.),egui::Sense::click());
                                             let row=row.on_hover_cursor(egui::CursorIcon::PointingHand);

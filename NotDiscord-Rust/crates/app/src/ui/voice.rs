@@ -1575,19 +1575,21 @@ impl NotDiscordUi {
         if sections.section(ui,stream_volume_applicable(participant,state)) {
             self.draw_stream_volume_control(ui,state);
         }
-        if !sections.section(ui,other) {return;}
+        // The own tile adjusts the microphone; everyone else's, their playback.
+        let own=valid&&!other;
+        if !sections.section(ui,other||own) {return;}
         let enabled=!incoming&&state.voice_connected&&state.call_channel_id==channel&&state.call_instance_id==attempt;
         let key=egui::Id::new(("participant-volume",channel,attempt,&participant.user.id));
-        let maximum=500.;
+        let maximum=if own {200.} else {500.};
         let confirmed=if participant.volume_percent.is_finite(){participant.volume_percent.clamp(0.,maximum)}else{100.};
         let pending=ui.ctx().data(|data|data.get_temp::<(f32,Instant)>(key)).filter(|(value,time)|*value!=confirmed&&time.elapsed()<Duration::from_secs(3));
         let mut value=pending.map(|(value,_)|value).unwrap_or(confirmed);
-        ui.label(format!("Volumen de voz del participante · {confirmed:.0} %"));
+        ui.label(format!("{} · {confirmed:.0} %",if own {"Volumen de tu micrófono"} else {"Volumen de voz del participante"}));
         let response=ui.add_enabled(enabled,egui::Slider::new(&mut value,0.0..=maximum).integer().suffix(" %"));
         #[cfg(test)] ui.ctx().data_mut(|data|data.insert_temp(egui::Id::new(("participant-volume-slider",&participant.user.id)),response.rect));
         if response.changed() {ui.ctx().data_mut(|data|data.insert_temp(key,(value,Instant::now())));}
         if enabled&&(response.drag_stopped()||response.changed()&&!response.dragged()) {
-            self.send("participant-volume",&participant.user.id,value.to_string(),json!({"voiceAttempt":attempt}).to_string(),channel);
+            self.send(if own {"participant-input-volume"} else {"participant-volume"},&participant.user.id,value.to_string(),json!({"voiceAttempt":attempt}).to_string(),channel);
         }
         if pending.is_some() {ui.small("Aplicando volumen…");ui.ctx().request_repaint_after(Duration::from_millis(100));}
     }
@@ -1881,9 +1883,7 @@ mod tests {
         state.call_videos.clear();prune_expanded_video(&ctx,&state);
         assert!(ctx.data(|data|data.get_temp::<CallExpansion>(egui::Id::new("call-expanded-video"))).is_none());
         frame(&mut app,&state,vec![]);
-        let released=commands.try_recv().unwrap();assert_eq!(released.kind,"view-incoming-media");
-        assert_eq!(serde_json::from_str::<Value>(&released.extra).unwrap()["visible"],false);
-        assert!(commands.try_recv().is_err());
+        assert!(commands.try_recv().is_err(),"Drawing a snapshot cannot tear down reception");
     }
     #[test]
     fn ptt_capture_waits_for_opening_click_release_and_accepts_all_key_families() {
@@ -2066,8 +2066,11 @@ mod tests {
         state.call_videos[0].status = "paused".into();
         let output = frame(&mut app, &state);
         assert!(!has_image(&output));
-        assert!(output.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(text) if text.galley.job.text=="Pantalla · Mostrar")));
+        assert!(output.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(text) if text.galley.job.text=="Pantalla · Dejar de ver")),
+            "A paused decoder keeps the viewer's explicit choice");
         state.call_videos[0].active = true;
+        // Only a known announcement retires a source; absence is not a withdrawal.
+        state.call_participants[0].screen_announcement_known = true;
         state.call_participants[0].screen_sharing = false;
         let output = frame(&mut app, &state);
         assert!(!has_image(&output));
@@ -2075,10 +2078,7 @@ mod tests {
         state.call_videos[0].preview = true;
         let output = frame(&mut app, &state);
         assert!(!has_image(&output));
-        let release=actions.try_recv().unwrap();
-        assert_eq!((release.kind.as_str(),release.text.as_str()),("view-incoming-media","screen"));
-        assert_eq!(serde_json::from_str::<Value>(&release.extra).unwrap()["visible"],false);
-        assert!(actions.try_recv().is_err(),"source retirement releases the selected sink without opening devices or beginning another view");
+        assert!(actions.try_recv().is_err(),"source retirement opens no device, begins no view and tears nothing down from a draw");
     }
     #[test]
     fn participant_camera_and_screen_have_separate_stacked_toggles_and_restore_avatar() {
@@ -2284,7 +2284,8 @@ mod tests {
                 )))).expect("both pending offers have a button without requiring two previews");
                 let (screen,screen_clip)=button("screen");
                 let (camera,camera_clip)=button("camera");
-                assert!(screen_clip.contains_rect(screen) && camera_clip.contains_rect(camera),"preview={preview:?}, width={width}");
+                // Tile and button widths are computed apart: allow sub-pixel rounding.
+                assert!(screen_clip.expand(0.5).contains_rect(screen) && camera_clip.expand(0.5).contains_rect(camera),"preview={preview:?}, width={width}");
                 assert!(camera.top()>=screen.bottom());
                 for (kind,label) in [("screen","Pantalla"),("camera","Cámara")] {
                     let action=if preview==Some(kind) {"Ocultar vista previa"}else{"Mostrar vista previa"};
@@ -2599,10 +2600,7 @@ mod tests {
             shown(&new_call, ids[1]),
             "An old call's hidden selection cannot leak into the new call instance"
         );
-        let release=actions.try_recv().unwrap();
-        assert_eq!((release.kind.as_str(),release.text.as_str()),("view-incoming-media","screen"));
-        assert_eq!(serde_json::from_str::<Value>(&release.extra).unwrap()["visible"],false);
-        assert!(actions.try_recv().is_err(),"source retirement may release its sink but cannot emit join/capture commands");
+        assert!(actions.try_recv().is_err(),"source retirement cannot emit join/capture commands or tear down reception from a draw");
     }
     #[test]
     fn incoming_call_actions_use_the_real_channel_and_cancelled_calls_disappear() {
@@ -3114,8 +3112,9 @@ mod tests {
                     _ => None,
                 })
                 .unwrap();
+            // Header and controls are the floor: they stay reachable, never clipped.
             assert!(
-                panel.height() <= budget + 1.,
+                panel.height() <= budget.max(137.) + 1.,
                 "Call exceeded explicit budget {budget}: {panel:?}"
             );
             if budget == 300. {

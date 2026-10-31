@@ -220,8 +220,18 @@ pub(super) fn draw_member_voice_flags(ui:&mut egui::Ui,rect:egui::Rect,state:&Ap
     }
     right
 }
+fn connection_notice_visible(state: &AppSnapshot) -> bool {
+    // A chosen presence or an isolated failed request never reaches this phase,
+    // and a terminal safety stop keeps its own banner and action.
+    state.signed_in && state.connection_phase.lost()
+        && state.network_safety == notdiscord_core::safety::SafetyState::Allowed
+}
+fn connection_notice_height(state: &AppSnapshot, compact: bool) -> f32 {
+    if !connection_notice_visible(state) { 0. } else if compact { 46. } else { 70. }
+}
 fn left_footer_height(state: &AppSnapshot, compact: bool, update_visible: bool) -> f32 {
     (if state.signed_in { 78. } else { 110. })
+        + connection_notice_height(state, compact)
         + if update_visible { 58. } else { 0. }
         + if own_game(state).is_some() { if compact { 42. } else { 64. } } else { 0. }
         + if state.voice_connected || state.voice_connecting { 64. } else { 0. }
@@ -2115,6 +2125,7 @@ impl NotDiscordUi {
                         if !state.signed_in && ui.button("Iniciar sesión").clicked() {
                             self.simple("login");
                         }
+                        if connection_notice_visible(state) { self.draw_connection_notice(ui, state, compact); }
                         if self.updater.control_visible() {
                             ui.separator();
                             self.updater.button(ui);
@@ -2123,6 +2134,30 @@ impl NotDiscordUi {
             });
         #[cfg(test)] ctx.data_mut(|data| data.insert_temp(egui::Id::new("left-footer-rect"), footer.response.rect));
         #[cfg(not(test))] let _ = footer;
+    }
+    fn draw_connection_notice(&mut self, ui: &mut egui::Ui, state: &AppSnapshot, compact: bool) {
+        use notdiscord_core::models::ConnectionPhase;
+        let remaining = state.connection_retry_at.map_or(0, |at| (at.signed_duration_since(chrono::Utc::now()).num_seconds() + 1).max(0));
+        if state.connection_phase == ConnectionPhase::Cooldown {
+            ui.ctx().request_repaint_after(Duration::from_secs(1));
+        }
+        let detail = match state.connection_phase {
+            ConnectionPhase::Recovering => "Conectando…".to_owned(),
+            ConnectionPhase::Cooldown if remaining > 0 => format!("Espera {remaining} s"),
+            ConnectionPhase::Cooldown => "Preparando reintento…".to_owned(),
+            _ => "Detenido hasta que lo pidas".to_owned(),
+        };
+        ui.separator();
+        if !compact { ui.colored_label(Color32::from_rgb(242, 63, 67), "Sin conexión con Discord"); }
+        ui.horizontal(|ui| {
+            let retry = state.connection_phase == ConnectionPhase::RetryAvailable;
+            let hint = "Hace un único intento. Tus borradores y mensajes pendientes se conservan y no se reenvían solos.";
+            if ui.add_enabled(retry, egui::Button::new("Reintentar conexión")).on_hover_text(hint).on_disabled_hover_text(hint)
+                .on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                self.simple("connection-retry");
+            }
+            ui.add(egui::Label::new(RichText::new(detail).size(12.).color(self.theme.muted)).truncate());
+        });
     }
     fn account_menu(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
         let mut sections=super::menus::Sections::new();
@@ -3398,7 +3433,9 @@ mod shell_tests {
     #[test]
     fn friend_message_button_responds_at_the_right_edge() {
         let (mut app, mut commands) = harness();
-        let state = state();
+        let mut state = state();
+        // The default filter lists connected friends only.
+        state.user_presences.insert("person".into(), UserPresence { status: "online".into(), ..Default::default() });
         let _ = frame(&mut app, &state, vec![], 0., false);
         let output = frame(&mut app, &state, vec![], 0.1, false);
         let position = text(&output, "Mensaje").expect("botón Mensaje visible");

@@ -11,6 +11,7 @@ mod mentions;
 mod markdown_cache;
 mod text_budget;
 pub(crate) mod timestamps;
+mod text_viewer;
 mod txt_import;
 mod sound_settings;
 mod media_limit;
@@ -196,7 +197,37 @@ struct Draft {
     revision: u64,
     mentions: Vec<Mention>,
     captured_at: Option<Instant>,
+    captured_stamp: Option<Timestamp>,
+    /// A recovered unconfirmed send keeps its identity: sending it again meets
+    /// the existing duplicate barrier instead of bypassing it with a new nonce.
+    retained_submission: Option<String>,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SendFailureClass { Retryable, Waiting, Unknown, Blocked }
+#[derive(Clone)]
+struct SendFailure {
+    class: SendFailureClass,
+    message: String,
+    retry_at: Option<Instant>,
+    checked: bool,
+}
+impl SendFailure {
+    fn retryable(message: impl Into<String>) -> Self {
+        Self { class: SendFailureClass::Retryable, message: message.into(), retry_at: None, checked: false }
+    }
+    fn from_update(data: &Value) -> Self {
+        let class = match s(data, "class") {
+            "retryable" => SendFailureClass::Retryable,
+            "wait" => SendFailureClass::Waiting,
+            "blocked" => SendFailureClass::Blocked,
+            _ => SendFailureClass::Unknown,
+        };
+        let retry_at = field(data, "retryAfterMs").and_then(Value::as_u64)
+            .map(|delay| Instant::now() + Duration::from_millis(delay));
+        Self { class, message: s(data, "message").into(), retry_at, checked: data["checked"] == true }
+    }
+}
+struct LocalProjection { paths: Vec<PathBuf>, failed: bool }
 #[derive(Default)]
 struct ChatPosition {
     offset: f32,
@@ -320,6 +351,10 @@ pub struct NotDiscordUi {
     time_picker: Option<timestamps::Picker>,
     picker_history: PickerHistory,
     remote_gif_favorites: Vec<Value>,
+    gif_favorites: dialogs::GifFavorites,
+    gif_favorites_opening: String,
+    // Message rows paint with the frame's snapshot moved out of self.
+    paint_scope: dialogs::PaintScope,
     picker_account: String,
     txt_import: Option<txt_import::Importer>,
     profile_tab: usize,
@@ -331,12 +366,16 @@ pub struct NotDiscordUi {
     forward_pending: bool,
     forward_result: Value,
     viewer: Option<Viewer>,
+    text_viewer: Option<text_viewer::TextViewer>,
+    color_editor: Option<appearance::ColorEditor>,
     error: String,
     submissions: HashMap<String, (String, u64)>,
     submitted_paths: HashMap<String, Vec<PathBuf>>,
     // Captured sends own their text/files independently of the next draft.
     sent_drafts: HashMap<String, Draft>,
-    failed_submissions: HashSet<String>,
+    failed_submissions: HashMap<String, SendFailure>,
+    // Set only while a captured send is drawn through the message row.
+    local_projection: Option<LocalProjection>,
     owned_temporary: HashSet<PathBuf>,
     focus_id: String,
     focus_until: Option<Instant>,
@@ -503,6 +542,9 @@ impl NotDiscordUi {
             time_picker: None,
             picker_history: PickerHistory::default(),
             remote_gif_favorites: Vec::new(),
+            gif_favorites: Default::default(),
+            gif_favorites_opening: String::new(),
+            paint_scope: Default::default(),
             picker_account: String::new(),
             txt_import: None,
             profile_tab: 0,
@@ -514,11 +556,14 @@ impl NotDiscordUi {
             forward_pending: false,
             forward_result: Value::Null,
             viewer: None,
+            text_viewer: None,
+            color_editor: None,
             error: String::new(),
             submissions: HashMap::new(),
             submitted_paths: HashMap::new(),
             sent_drafts: HashMap::new(),
-            failed_submissions: HashSet::new(),
+            failed_submissions: HashMap::new(),
+            local_projection: None,
             owned_temporary: HashSet::new(),
             focus_id: String::new(),
             focus_until: None,
@@ -742,7 +787,8 @@ impl NotDiscordUi {
     fn cleanup_unreferenced_temporary(&mut self, paths: &[PathBuf]) {
         let unused = paths.iter().filter(|path| !self.drafts.values().chain(self.sent_drafts.values())
             .any(|draft| draft.paths.contains(path))
-            && !self.viewer.as_ref().is_some_and(|viewer| viewer.local_path.as_ref() == Some(*path)))
+            && !self.viewer.as_ref().is_some_and(|viewer| viewer.local_path.as_ref() == Some(*path))
+            && !self.text_viewer_holds(path))
             .cloned().collect::<Vec<_>>();
         self.cleanup_temporary(&unused);
     }
@@ -780,6 +826,7 @@ impl NotDiscordUi {
                         markdown_cache::clear(ctx);
                         menus::clear(ctx);
                         self.remote_gif_favorites.clear();
+                        self.gif_favorites = Default::default();
                         self.picker=None;
                         if let Some(importer) = &mut self.txt_import { importer.cancel(); }
                         self.clear_edit_prompt(ctx);
@@ -905,11 +952,13 @@ impl NotDiscordUi {
                         self.profile_editor = None;
                         self.sound_importer.cancel();
                         self.viewer = None;
+                        self.text_viewer = None;
                         let owned = self.owned_temporary.iter().cloned().collect::<Vec<_>>();
                         self.cleanup_temporary(&owned);
                         self.picker_account = account.into();
                         self.picker_history = PickerHistory::default();
                         self.remote_gif_favorites.clear();
+                        self.gif_favorites = Default::default();
                         self.picker = None;
                         self.dialog = None;
                         self.forward_pending = false;
@@ -1081,12 +1130,16 @@ impl NotDiscordUi {
                 self.dialog = Some(Dialog::CamerasPreview);
                 self.dialog_error.clear();
             }
+            "attachment-url" => self.receive_attachment_url(&data),
             "send-ack" => {
                 let submission = s(&data, "submissionId");
                 let detached = self.sent_drafts.remove(submission).is_some();
                 self.failed_submissions.remove(submission);
                 if let Some((channel, revision)) = self.submissions.remove(submission) {
-                    if self.state.view == "chat" && self.state.selected_channel_id == channel {
+                    // Confirmation can arrive much later than the capture; it
+                    // must not pull a reader who has since scrolled away.
+                    if self.state.view == "chat" && self.state.selected_channel_id == channel
+                        && self.positions.get(&channel).is_none_or(|position| position.at_bottom) {
                         self.prepare_latest_scroll_for(&channel);
                     }
                     let paths = self.submitted_paths.remove(submission).unwrap_or_default();
@@ -1108,10 +1161,10 @@ impl NotDiscordUi {
                     if channel == s(&data, "channelId")
                         && field(&data, "revision").and_then(Value::as_u64) == Some(*revision)
                     {
-                        self.failed_submissions.insert(submission.to_owned());
-                        self.error =
-                            "No se confirmó el envío. Puedes reintentar o recuperar el mensaje pendiente; el nuevo borrador se conserva."
-                                .into();
+                        if *channel != self.state.selected_channel_id {
+                            self.error = "Un mensaje de otro canal no se pudo enviar; sigue en esa conversación.".into();
+                        }
+                        self.failed_submissions.insert(submission.to_owned(), SendFailure::from_update(&data));
                     }
                 }
             }
@@ -1681,6 +1734,7 @@ impl eframe::App for NotDiscordUi {
         member_demand::begin_frame(ctx);
         autoscroll::begin_frame(ctx);
         if !minimized {
+            self.paint_scope = dialogs::PaintScope::of(&state);
             self.dismiss_outside_overlays(ctx);
             input_ownership::begin(self,ctx,&state);
             self.draw_modal_barrier(ctx);
@@ -1689,6 +1743,7 @@ impl eframe::App for NotDiscordUi {
             self.draw_picker(ctx, &state);
             self.draw_viewer(ctx);
             self.draw_timestamp_picker(ctx,&state);
+            self.draw_text_viewer(ctx,&state);
             crate::diagnostics::draw(ctx);
             self.flush_game_queries();
         }

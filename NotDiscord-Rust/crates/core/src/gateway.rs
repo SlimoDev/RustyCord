@@ -1,5 +1,6 @@
 use crate::{
     api::ServiceError,
+    models::ConnectionPhase,
     parsing::{b, i, items, limited, s},
     safety::{SafetyGate, SafetyState},
     settings_proto,
@@ -33,7 +34,33 @@ const EVENT_DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 pub enum GatewayEvent {
     Dispatch { kind: String, data: Value },
     Status(String),
+    Connection(ConnectionChange),
     Safety(SafetyState),
+}
+/// `wait` is the minimum delay before a new attempt can be requested, and
+/// `resumed` tells whether a synchronized session replayed its missed events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConnectionChange {
+    pub phase: ConnectionPhase,
+    pub wait: Duration,
+    pub resumed: bool,
+}
+/// A request only counts while the owner is parked; clicks during an attempt
+/// or its cooldown coalesce into nothing instead of queueing another one.
+#[derive(Default)]
+struct RecoverySignal {
+    requested: AtomicBool,
+    wake: Notify,
+}
+impl RecoverySignal {
+    fn request(&self) {
+        self.requested.store(true, Ordering::Release);
+        self.wake.notify_one();
+    }
+    fn arm(&self) { self.requested.store(false, Ordering::Release); }
+    async fn wait(&self) {
+        while !self.requested.swap(false, Ordering::AcqRel) { self.wake.notified().await; }
+    }
 }
 #[derive(Clone, Debug)]
 pub enum GatewayCommand {
@@ -113,6 +140,7 @@ struct Inner {
     ready: Arc<AtomicBool>,
     safety: SafetyGate,
     game_presence: Arc<GamePresencePolicy>,
+    recovery: Arc<RecoverySignal>,
 }
 impl Drop for Inner {
     fn drop(&mut self) {
@@ -179,7 +207,7 @@ impl GatewayHandle {
                 if let Some(done)=envelope.done { let _=done.send(result); }
             }
         });
-        (Self {inner:Arc::new(Inner {commands,cancel,ready:Arc::new(AtomicBool::new(true)),safety,game_presence})},values,task)
+        (Self {inner:Arc::new(Inner {commands,cancel,ready:Arc::new(AtomicBool::new(true)),safety,game_presence,recovery:Default::default()})},values,task)
     }
     /// Admit a desired-state update without waiting for its wire flush. Only
     /// presence and subscriptions are coalesced; media mutations retain order.
@@ -225,6 +253,11 @@ impl GatewayHandle {
     }
     pub fn stop(&self) {
         self.inner.cancel.cancel()
+    }
+    /// Ask the session owner for one attempt after it stopped. Its resume state,
+    /// limits and subscriptions stay in the same task; nothing else restarts.
+    pub fn request_recovery(&self) {
+        self.inner.recovery.request()
     }
     pub fn is_ready(&self) -> bool {
         self.inner.ready.load(Ordering::Acquire)
@@ -277,6 +310,7 @@ fn spawn_secret_at(
     let cancel = CancellationToken::new();
     let ready = Arc::new(AtomicBool::new(false));
     let game_presence = Arc::new(GamePresencePolicy::default());
+    let recovery = Arc::new(RecoverySignal::default());
     let handle = GatewayHandle {
         inner: Arc::new(Inner {
             commands,
@@ -284,6 +318,7 @@ fn spawn_secret_at(
             ready: ready.clone(),
             safety: safety.clone(),
             game_presence: game_presence.clone(),
+            recovery: recovery.clone(),
         }),
     };
     tokio::spawn(run_with_game_policy(
@@ -296,6 +331,7 @@ fn spawn_secret_at(
         safety,
         url,
         game_presence,
+        recovery,
     ));
     (handle, event_rx)
 }
@@ -333,12 +369,12 @@ async fn run(
     safety: SafetyGate,
     url: String,
 ) {
-    run_with_game_policy(Arc::new(token),initial_status,commands,events,cancel,ready,safety,url,Arc::new(GamePresencePolicy::default())).await;
+    run_with_game_policy(Arc::new(token),initial_status,commands,events,cancel,ready,safety,url,Arc::new(GamePresencePolicy::default()),Default::default()).await;
 }
 async fn run_with_game_policy(
     token: Arc<Zeroizing<String>>, initial_status: Option<String>, commands: mpsc::Receiver<Envelope>,
     events: mpsc::Sender<GatewayEvent>, cancel: CancellationToken, ready: Arc<AtomicBool>,
-    safety: SafetyGate, url: String, game_presence: Arc<GamePresencePolicy>,
+    safety: SafetyGate, url: String, game_presence: Arc<GamePresencePolicy>, recovery: Arc<RecoverySignal>,
 ) {
     runtime::run(
         token,
@@ -351,6 +387,7 @@ async fn run_with_game_policy(
         url,
         runtime::Policy::default(),
         game_presence,
+        recovery,
     )
     .await;
 }
@@ -689,6 +726,7 @@ mod tests {
                 ready: Arc::new(AtomicBool::new(true)),
                 safety: gate.clone(),
                 game_presence: Arc::new(GamePresencePolicy::default()),
+                recovery: Default::default(),
             }),
         };
         let pending_handle = handle.clone();
@@ -986,7 +1024,7 @@ mod tests {
     #[test]
     fn privacy_withdrawal_invalidates_an_already_queued_publication_even_when_clear_queue_is_full() {
         let (commands,mut queue)=mpsc::channel(1);let policy=Arc::new(GamePresencePolicy::default());
-        let handle=GatewayHandle{inner:Arc::new(Inner{commands,cancel:CancellationToken::new(),ready:Arc::new(AtomicBool::new(true)),safety:SafetyGate::default(),game_presence:policy.clone()})};
+        let handle=GatewayHandle{inner:Arc::new(Inner{commands,cancel:CancellationToken::new(),ready:Arc::new(AtomicBool::new(true)),safety:SafetyGate::default(),game_presence:policy.clone(),recovery:Default::default()})};
         let game=crate::game_presence::GamePresence::from_name("Old synthetic game").unwrap();
         handle.enqueue(GatewayCommand::RichPresence{status:"online".into(),activity:Some(game.clone())}).unwrap();
         let captured=handle.game_presence_epoch();assert!(handle.enqueue_clear_game_presence("online").is_err());
@@ -1053,6 +1091,7 @@ mod tests {
                 ready: Arc::new(AtomicBool::new(true)),
                 safety: SafetyGate::default(),
                 game_presence: Arc::new(GamePresencePolicy::default()),
+                recovery: Default::default(),
             }),
         };
         let result = handle

@@ -17,7 +17,7 @@ fn policy() -> Policy {
         identify_gap: Duration::from_millis(5),
         rate_cooldown: Duration::from_millis(50),
         min_heartbeat: Duration::from_millis(5),
-        attempts: 2,
+        manual_cooldown: Duration::from_millis(20),
     }
 }
 fn envelope(command: GatewayCommand) -> Envelope {
@@ -116,6 +116,7 @@ fn runner_with_game_policy(
         format!("ws://{}/", listener.local_addr().unwrap()),
         test_policy,
         game_policy,
+        Default::default(),
     ));
     (task, gate, cancel, is_ready, output, commands)
 }
@@ -612,7 +613,8 @@ async fn resumed_requires_a_hello_and_a_preexisting_resume_handshake() {
         assert_eq!(gate.state(), SafetyState::SynchronizationRequired);
         assert!(!is_ready.load(Ordering::Acquire));
         while let Ok(event) = output.try_recv() {
-            assert!(!matches!(event,GatewayEvent::Status(status) if status=="En línea"));
+            assert!(!matches!(&event,GatewayEvent::Status(status) if status=="En línea"));
+            assert!(!matches!(event,GatewayEvent::Connection(change) if change.phase==ConnectionPhase::Synchronized));
         }
     }
 }
@@ -718,7 +720,7 @@ async fn clearing_during_reconnect_withdraws_cached_rich_activity_before_ready_a
     let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let shared=Arc::new(GamePresencePolicy::default());
     let mut test_policy=policy();test_policy.backoff=Duration::from_millis(40);
     let(task,gate,cancel,is_ready,_output,commands)=runner_with_game_policy(&listener,32,test_policy,shared.clone());
-    let handle=GatewayHandle{inner:Arc::new(Inner{commands:commands.clone(),cancel:cancel.clone(),ready:is_ready.clone(),safety:gate.clone(),game_presence:shared})};
+    let handle=GatewayHandle{inner:Arc::new(Inner{commands:commands.clone(),cancel:cancel.clone(),ready:is_ready.clone(),safety:gate.clone(),game_presence:shared,recovery:Default::default()})};
     let old=crate::game_presence::GamePresence::from_rpc("424004941485572097","RPCS3",&json!({"details":"Old synthetic game"})).unwrap();
     let captured_epoch=handle.game_presence_epoch();
     let mut first=loopback(&listener).await;handshake(&mut first,2).await;ready(&mut first).await;
@@ -771,9 +773,9 @@ async fn expired_session_starts_a_fresh_session() {
 }
 
 #[tokio::test]
-async fn ready_then_immediate_failure_does_not_reset_the_reconnection_budget() {
+async fn ready_then_immediate_failure_stops_after_one_automatic_recovery() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let (task, gate, _cancel, is_ready, _output, _commands) = runner(&listener, 32, policy());
+    let (task, gate, cancel, is_ready, mut output, _commands) = runner(&listener, 32, policy());
     for attempt in 0..2 {
         let mut socket = loopback(&listener).await;
         handshake(&mut socket, if attempt == 0 { 2 } else { 6 }).await;
@@ -797,68 +799,109 @@ async fn ready_then_immediate_failure_does_not_reset_the_reconnection_budget() {
             .await
             .unwrap();
     }
+    stopped(&mut output).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(60), listener.accept()).await.is_err(),
+        "A stopped series must not open a third connection on its own"
+    );
+    assert_eq!(gate.state(), SafetyState::Allowed);
+    assert!(!is_ready.load(Ordering::Acquire));
+    cancel.cancel();
     tokio::time::timeout(Duration::from_secs(2), task)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(gate.state(), SafetyState::SynchronizationRequired);
-    assert!(!is_ready.load(Ordering::Acquire));
+}
+async fn stopped(output: &mut mpsc::Receiver<GatewayEvent>) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(event) = output.recv().await {
+            if matches!(event,GatewayEvent::Connection(change) if change.phase==ConnectionPhase::RetryAvailable) {return;}
+        }
+        panic!("The owner ended instead of waiting for an explicit attempt");
+    })
+    .await
+    .unwrap();
+}
+#[tokio::test]
+async fn parked_owner_coalesces_stale_clicks_and_resumes_on_one_explicit_request() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (commands, rx) = mpsc::channel(32);
+    let (events, mut output) = mpsc::channel(32);
+    let cancel = CancellationToken::new();
+    let recovery = Arc::new(RecoverySignal::default());
+    let mut test_policy = policy();
+    test_policy.manual_cooldown = Duration::from_millis(30);
+    let task = tokio::spawn(super::run(
+        Arc::new(Zeroizing::new("offline-synthetic-credential-only".to_owned())),
+        None, rx, events, cancel.clone(), Arc::new(AtomicBool::new(false)), SafetyGate::default(),
+        format!("ws://{}/", listener.local_addr().unwrap()), test_policy,
+        Arc::new(GamePresencePolicy::default()), recovery.clone(),
+    ));
+    let mut first = loopback(&listener).await;
+    handshake(&mut first, 2).await;
+    ready(&mut first).await;
+    first.close(Some(CloseFrame {code: CloseCode::from(4000), reason: "Offline loss".into()})).await.unwrap();
+    let mut second = loopback(&listener).await;
+    hello(&mut second).await;
+    assert_eq!(packet(&mut second).await["op"], 6);
+    second.close(Some(CloseFrame {code: CloseCode::from(4000), reason: "Offline loss".into()})).await.unwrap();
+    // These clicks arrive before the attempt is offered and must not count.
+    for _ in 0..10 {recovery.request();}
+    stopped(&mut output).await;
+    assert!(tokio::time::timeout(Duration::from_millis(40), listener.accept()).await.is_err());
+    for _ in 0..10 {recovery.request();}
+    let mut third = loopback(&listener).await;
+    hello(&mut third).await;
+    assert_eq!(packet(&mut third).await["op"], 6, "An explicit attempt keeps the resume state");
+    assert!(tokio::time::timeout(Duration::from_millis(40), listener.accept()).await.is_err());
+    drop(commands);
+    cancel.cancel();
+    tokio::time::timeout(Duration::from_secs(2), task).await.unwrap().unwrap();
 }
 
 #[tokio::test]
-async fn no_hello_and_no_ready_are_bounded_without_a_real_account() {
+async fn no_hello_and_no_ready_stop_after_one_opening_attempt() {
     for send_hello in [false, true] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let (task, gate, _cancel, _ready, _output, _commands) = runner(&listener, 32, policy());
-        let server = tokio::spawn(async move {
-            let mut clients = tokio::task::JoinSet::new();
-            for _ in 0..2 {
-                let mut socket = loopback(&listener).await;
-                clients.spawn(async move {
-                    if send_hello {
-                        hello(&mut socket).await;
-                        while let Some(Ok(message)) = socket.next().await {
-                            if let Message::Text(text) = message {
-                                let value: Value = serde_json::from_str(&text).unwrap();
-                                if value["op"] == 1 {
-                                    socket
-                                        .send(Message::Text(json!({"op":11}).to_string().into()))
-                                        .await
-                                        .unwrap();
-                                }
-                            }
-                        }
-                    } else {
-                        std::future::pending::<()>().await;
+        let (task, gate, cancel, _ready, mut output, _commands) = runner(&listener, 32, policy());
+        let mut socket = loopback(&listener).await;
+        if send_hello {
+            hello(&mut socket).await;
+        }
+        let client = tokio::spawn(async move {
+            while let Some(Ok(message)) = socket.next().await {
+                if let Message::Text(text) = message {
+                    let value: Value = serde_json::from_str(&text).unwrap();
+                    if value["op"] == 1 {
+                        let _ = socket.send(Message::Text(json!({"op":11}).to_string().into())).await;
                     }
-                });
+                }
             }
-            std::future::pending::<()>().await;
         });
+        stopped(&mut output).await;
+        assert!(tokio::time::timeout(Duration::from_millis(40), listener.accept()).await.is_err());
+        assert_eq!(gate.state(), SafetyState::Allowed);
+        cancel.cancel();
         tokio::time::timeout(Duration::from_secs(2), task)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(gate.state(), SafetyState::SynchronizationRequired);
-        server.abort();
+        client.abort();
     }
 }
 
 #[tokio::test]
-async fn websocket_handshake_timeout_is_bounded_and_stops_reconnecting() {
+async fn websocket_handshake_timeout_is_bounded_and_stops_after_one_attempt() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let (task, gate, _cancel, _ready, _output, _commands) = runner(&listener, 32, policy());
-    let server = tokio::spawn(async move {
-        let mut streams = Vec::new();
-        for _ in 0..2 {
-            streams.push(listener.accept().await.unwrap().0);
-        }
-        std::future::pending::<()>().await;
-    });
+    let (task, gate, cancel, _ready, mut output, _commands) = runner(&listener, 32, policy());
+    let (stream, _) = listener.accept().await.unwrap();
+    stopped(&mut output).await;
+    assert!(tokio::time::timeout(Duration::from_millis(40), listener.accept()).await.is_err());
+    assert_eq!(gate.state(), SafetyState::Allowed);
+    drop(stream);
+    cancel.cancel();
     tokio::time::timeout(Duration::from_secs(2), task)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(gate.state(), SafetyState::SynchronizationRequired);
-    server.abort();
 }

@@ -13,7 +13,7 @@ mod context_menu;
 mod markdown;
 #[path = "chat/scroll_follow.rs"]
 mod scroll_follow;
-pub(super) use reaction_tooltip::{clear_reaction_users, reaction_panel_open, reaction_panel_rect, reaction_users_result};
+pub(super) use reaction_tooltip::{clear_reaction_users, reaction_panel_open, reaction_panel_rect, reaction_users_result, read_revoked};
 
 pub(super) fn same_message_storage(previous: &AppSnapshot, next: &AppSnapshot) -> bool {
     previous.notification_generation == next.notification_generation
@@ -441,7 +441,9 @@ impl NotDiscordUi {
         let middle_owns_wheel = super::autoscroll::active(ui.ctx()) || ui.input(|input|
             input.raw.events.iter().any(|event|matches!(event,egui::Event::PointerButton {button:egui::PointerButton::Middle,pressed:true,..})));
         let fresh_wheel=ui.input(|input|input.raw.events.iter().any(|event|matches!(event,egui::Event::MouseWheel {..})));
+        // An open menu owns the wheel, even with the pointer over a row behind it.
         let wheel_delta = if advance_motion && ui.is_enabled() && !self.background_blocked()
+            && !egui::Popup::is_any_open(ui.ctx())
             && (!middle_owns_wheel || fresh_wheel)
             && history_wheel_target(ui.ctx(), out.inner_rect, ui.layer_id()) {
             // Consume only leftovers from nested content. Owning this here
@@ -600,9 +602,11 @@ impl NotDiscordUi {
             return self.draw_call_record(ui, m, state);
         }
         let selected = m.id == self.focus_id;
+        // A local row has no remote id yet: no pin, delete, reaction or forward.
+        let local = self.local_projection.is_some();
         let personal_reply = replies_to_current_user(m, state)
             || super::mentions::highlights_current_user(m, state);
-        let shortcuts_allowed = ui.is_enabled() && !ui.ctx().wants_keyboard_input()
+        let shortcuts_allowed = !local && ui.is_enabled() && !ui.ctx().wants_keyboard_input()
             && !egui::Popup::is_any_open(ui.ctx()) && !self.background_blocked();
         let mut continuation_time = None;
         let action_key = egui::Id::new(("message-actions", &m.channel_id, &m.id));
@@ -778,6 +782,7 @@ impl NotDiscordUi {
                                             self.message_text(ui, &sticker.code(), m, state);
                                         }
                                     }
+                                    if local { self.draw_local_attachments(ui); }
                                     for a in m.attachments.iter().filter(|attachment| !m.deleted && !m.components_v2
                                         && !m.components.iter().any(|component| matches!(component.kind, 11..=13)
                                             && !component.url.is_empty() && notdiscord_core::parsing::same_media_resource(&component.url, &attachment.url))) {
@@ -809,7 +814,9 @@ impl NotDiscordUi {
                                                 let link = ui.link(format!("📎 {}", a.name));
                                                 context_menu::capture(ui, &link, || context_menu::Target::Link(a.url.clone()));
                                                 if link.clicked() {
-                                                    let _ = crate::platform::open_link(&a.url);
+                                                    // Text stays in the app; other types keep their own action.
+                                                    if super::text_viewer::text_attachment(a) { self.open_remote_text(m, a, state); }
+                                                    else { let _ = crate::platform::open_link(&a.url); }
                                                 }
                                                 ui.small(format!(
                                                     "{:0.1} MiB",
@@ -866,7 +873,7 @@ impl NotDiscordUi {
         }
         history_register_row(ui.ctx(), response.id);
         let text_shortcuts = ui.ctx().data(|data| data.get_temp::<MessageTextGesture>(egui::Id::new("message-text-shortcuts"))).unwrap_or_default();
-        self.message_context_menu(ui, &response, m, state, None);
+        if !local { self.message_context_menu(ui, &response, m, state, None); }
         let own = state.current_user.as_ref().is_some_and(|person| person.id == m.author.id);
         if shortcuts_allowed && m.deleted && state.signed_in {
             let delete_click = text_shortcuts.delete_clicked || response.clicked() && ui.ctx().input(|input| input.key_down(egui::Key::Delete));
@@ -898,7 +905,7 @@ impl NotDiscordUi {
                 self.prompt_for("Editar mensaje", "Contenido del mensaje", "edit", &m.id, &m.content, &m.channel_id, true);
             }
         }
-        if !own && !m.deleted && state.view == "chat" && state.signed_in
+        if !local && !own && !m.deleted && state.view == "chat" && state.signed_in
             && state.current_user.is_some() && m.channel_id == state.selected_channel_id
             && !state.busy && state.channel_access.can_send && ui.is_enabled()
             && !self.background_blocked() && !egui::Popup::is_any_open(ui.ctx())
@@ -931,6 +938,7 @@ impl NotDiscordUi {
         let popup_id = egui::Id::new(("message-overflow", &m.channel_id, &m.id));
         let popup_id = if state.view == "history" { popup_id.with(ui.id()) } else { popup_id };
         let menu_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+        if local { return response; }
         if row_hovered && owned_hover && interaction::controls_allowed(ui.ctx()) && ui.is_enabled() && !context_menu::is_open(&response)
             && !m.deleted && matches!(state.view.as_str(), "pins" | "search") && state.signed_in {
             self.reference_message_actions(ui, m, state, action_key, response.rect, previous_actions);
@@ -1712,10 +1720,11 @@ impl NotDiscordUi {
             });
         }
         if !context_menu::capture(ui, &response, || context_menu::Target::Media {
-            url: url.into(), poster: poster.into(), name: name.into(),
+            url: url.into(), poster: poster.into(), name: name.into(), gif,
         }) {
-            response.context_menu(|ui| self.media_preview_menu(ui, url, poster, name));
+            response.context_menu(|ui| self.media_preview_menu(ui, url, poster, name, gif));
         }
+        if gif { self.gif_favorite_star(ui, hit_rect, context_menu::gif_value(url, poster, name)); }
         let preview_limit = self.pictures.image_error(url, 384)
             .or_else(|| self.pictures.image_error(poster, 384))
             .filter(|error| super::media_limit::is_limit_error(error))
@@ -1769,6 +1778,24 @@ impl NotDiscordUi {
             if let Some(error) = self.pictures.animation_error(url).map(str::to_owned) {
                 self.media_error_link(ui, &error);
             }
+        }
+    }
+    /// Drawn after the card's hit area, so it wins inside its own corner while
+    /// Play, Ampliar and the card keep every other point.
+    fn gif_favorite_star(&mut self, ui: &mut egui::Ui, card: egui::Rect, value: PickerValue) {
+        let star = egui::Rect::from_min_size(egui::pos2(card.right() - 30., card.top() + 6.), egui::vec2(24., 24.));
+        if !ui.rect_contains_pointer(card) || !card.contains_rect(star) { return; }
+        self.ensure_gif_favorites(false);
+        let favorite = self.gif_favorite_state(&value);
+        let (enabled, label) = self.gif_favorite_action(&favorite);
+        let response = ui.interact(star, ui.id().with(("gif-favorite-star", &value.value)),
+            if enabled { egui::Sense::click() } else { egui::Sense::hover() });
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+        ui.painter().rect_filled(star, 12., Color32::from_black_alpha(170));
+        ui.painter().text(star.center(), egui::Align2::CENTER_CENTER, if favorite.saved { "★" } else { "☆" },
+            egui::FontId::proportional(16.), Color32::WHITE);
+        if response.on_hover_text(label).on_hover_cursor(if enabled { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Default }).clicked() {
+            self.set_gif_favorite(value, favorite);
         }
     }
     pub(super) fn media_menu(&mut self, ui: &mut egui::Ui, url: &str, name: &str) {
@@ -2063,7 +2090,9 @@ impl NotDiscordUi {
                                             ui.vertical(|ui| {
                                                 ui.set_width(PREPARED_CARD_WIDTH);
                                                 let previewable = previewable_path(path);
-                                                let (slot,response)=ui.allocate_exact_size(egui::vec2(PREPARED_CARD_WIDTH,PREPARED_PREVIEW_HEIGHT),if previewable { egui::Sense::click() } else { egui::Sense::hover() });
+                                                let name=if self.owned_temporary.contains(path) {"Imagen pegada.png".into()}else{path.file_name().unwrap_or_default().to_string_lossy()};
+                                                let readable = !previewable && super::text_viewer::text_attachment_name(&name);
+                                                let (slot,response)=ui.allocate_exact_size(egui::vec2(PREPARED_CARD_WIDTH,PREPARED_PREVIEW_HEIGHT),if previewable || readable { egui::Sense::click() } else { egui::Sense::hover() });
                                                 ui.painter().rect_filled(slot,4,self.theme.base);
                                                 let side=(PREPARED_CARD_WIDTH*ui.ctx().pixels_per_point()).ceil() as u32;
                                                 if previewable {
@@ -2079,13 +2108,16 @@ impl NotDiscordUi {
                                                         });
                                                     }
                                                 } else {
-                                                    ui.painter().text(slot.center(),egui::Align2::CENTER_CENTER,"Archivo adjunto",egui::FontId::proportional(12.),self.theme.muted);
+                                                    ui.painter().text(slot.center(),egui::Align2::CENTER_CENTER,if readable {"Abrir texto"} else {"Archivo adjunto"},egui::FontId::proportional(12.),self.theme.muted);
                                                 }
-                                                if previewable && response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                if previewable && response.clone().on_hover_cursor(egui::CursorIcon::PointingHand)
                                                     .on_hover_text("Abrir vista previa del adjunto sin enviarlo").clicked() {
                                                     self.viewer = Some(Viewer { url: String::new(), local_path: Some(path.clone()), zoom: 1., pan: Vec2::ZERO });
                                                 }
-                                                let name=if self.owned_temporary.contains(path) {"Imagen pegada.png".into()}else{path.file_name().unwrap_or_default().to_string_lossy()};
+                                                if readable && response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .on_hover_text("Leer el texto sin enviarlo").clicked() {
+                                                    self.open_local_text(path,&name);
+                                                }
                                                 ui.add(egui::Label::new(RichText::new(name).size(13.)).truncate());
                                                 ui.add(egui::Label::new(RichText::new(prepared_file_size(ui.ctx(),path)).size(12.).color(self.theme.muted)).truncate());
                                                 ui.scope(|ui|{
@@ -2425,15 +2457,17 @@ impl NotDiscordUi {
                 self.error = "Hay 64 envíos pendientes. Reintenta o descarta uno; el borrador actual se conserva.".into();
                 restore_post_send_text(&mut draft, &after_enter, self.composer_cursor);
             } else {
-                let submission = uuid::Uuid::new_v4().simple().to_string();
                 let mut captured = std::mem::take(&mut draft);
+                let submission = captured.retained_submission.take()
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
                 captured.captured_at = Some(Instant::now());
+                captured.captured_stamp = Some(chrono::Local::now().fixed_offset());
                 self.submitted_paths.insert(submission.clone(), captured.paths.clone());
                 self.submissions.insert(submission.clone(), (channel.clone(), captured.revision));
                 self.sent_drafts.insert(submission.clone(), captured);
-                if self.send_captured_draft(&submission, channel, state) {
-                    self.go_to_latest_for(channel, latest_window(ui.ctx(), state));
-                }
+                // The row is local from this frame on, whatever the network does.
+                self.send_captured_draft(&submission, channel, state, false);
+                self.go_to_latest_for(channel, latest_window(ui.ctx(), state));
                 draft.text = after_enter.clone();
                 if !draft.text.is_empty() { draft.revision = 1; }
                 self.composer_cursor = draft.text.chars().count();
@@ -2466,7 +2500,7 @@ impl NotDiscordUi {
             );
         }
     }
-    fn send_captured_draft(&mut self, submission: &str, channel: &str, state: &AppSnapshot) -> bool {
+    fn send_captured_draft(&mut self, submission: &str, channel: &str, state: &AppSnapshot, retry: bool) -> bool {
         let Some(draft) = self.sent_drafts.get(submission) else { return false; };
         // Painting temporarily moves self.state out of the app. Use the drawn
         // snapshot, and never validate a queued send against another channel.
@@ -2477,63 +2511,176 @@ impl NotDiscordUi {
             Err("Vuelve al canal del mensaje pendiente para comprobar sus límites y reintentarlo. El borrador se conserva.".into())
         };
         if let Err(error) = validation {
-            self.failed_submissions.insert(submission.to_owned());
-            self.error = error;
+            self.failed_submissions.insert(submission.to_owned(), SendFailure::retryable(error));
             return false;
         }
         let text = outgoing_mentions(draft);
         let extra = serde_json::json!({"replyId":draft.reply.as_ref().map(|r|r.message_id.as_str()).unwrap_or(""),
             "paths":draft.paths.iter().map(|p|p.to_string_lossy()).collect::<Vec<_>>(),
-            "submissionId":submission,"revision":draft.revision}).to_string();
+            "submissionId":submission,"revision":draft.revision,"retry":retry}).to_string();
         self.failed_submissions.remove(submission);
         if self.command.send(UiAction { kind: "send-prepared".into(), text, extra, channel_id: channel.into(), ..Default::default() }).is_err() {
-            self.failed_submissions.insert(submission.to_owned());
-            self.error = "El servicio de envío se cerró; el mensaje pendiente se conserva para recuperarlo.".into();
+            self.failed_submissions.insert(submission.to_owned(), SendFailure::retryable("El servicio de envío se cerró; el mensaje pendiente se conserva para recuperarlo."));
             return false;
         }
         true
     }
+    /// One explicit check of an unconfirmed send. It can only confirm it.
+    fn reconcile_captured_draft(&mut self, submission: &str, revision: u64, channel: &str) {
+        let extra = serde_json::json!({"submissionId":submission,"revision":revision}).to_string();
+        if self.command.send(UiAction { kind: "send-reconcile".into(), extra, channel_id: channel.into(), ..Default::default() }).is_ok() {
+            if let Some(failure) = self.failed_submissions.get_mut(submission) {
+                failure.message = "Comprobando…".into();
+                failure.retry_at = Some(Instant::now() + SEND_CHECK_COOLDOWN);
+            }
+        }
+    }
+    fn forget_captured_draft(&mut self, submission: &str) -> Option<Draft> {
+        self.submissions.remove(submission);
+        self.submitted_paths.remove(submission);
+        self.failed_submissions.remove(submission);
+        self.sent_drafts.remove(submission)
+    }
+    /// Captured sends reuse the normal row, so confirmation swaps data and not
+    /// layout. They never enter the canonical cache without a real remote id.
     fn draw_pending_messages(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
         let channel = &state.selected_channel_id;
         let mut pending = self.submissions.iter().filter(|(_, (owner, _))| owner == channel)
             .filter_map(|(id, _)| self.sent_drafts.get(id).map(|draft| (id.clone(), draft.clone())))
             .collect::<Vec<_>>();
+        if pending.is_empty() { return; }
         pending.sort_by(|a, b| a.1.captured_at.cmp(&b.1.captured_at).then(a.0.cmp(&b.0)));
+        let mut previous = state.messages.last().cloned();
         for (id, draft) in pending {
-            let failed = self.failed_submissions.contains(&id);
-            egui::Frame::new().fill(self.theme.panel).corner_radius(4).inner_margin(6.).show(ui, |ui| {
-                ui.label(RichText::new(if failed { "Envío sin confirmar" } else { "Enviando…" }).size(12.).color(self.theme.muted));
-                if !draft.text.is_empty() { ui.label(RichText::new(short(&draft.text, 300)).size(self.prefs.chat_size).color(self.theme.muted)); }
-                if !draft.paths.is_empty() { ui.small(format!("{} archivo(s) adjunto(s)", draft.paths.len())); }
-                if failed {
-                    ui.horizontal_wrapped(|ui| {
-                        if ui.add_enabled(state.channel_access.can_send && !state.busy, egui::Button::new("Reintentar")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            // Same submission -> same server nonce, including after ambiguous failure.
-                            if self.send_captured_draft(&id, channel, state) {
+            let failure = self.failed_submissions.get(&id).cloned();
+            let message = local_message(&id, &draft, state);
+            let continuation = previous.as_ref().is_some_and(|previous| can_group(previous, &message));
+            self.local_projection = Some(LocalProjection { paths: draft.paths.clone(), failed: failure.is_some() });
+            ui.push_id(("local-message", &id), |ui| self.draw_message(ui, &message, state, continuation));
+            self.local_projection = None;
+            if let Some(failure) = failure {
+                ui.push_id(("send-failure", &id), |ui| self.draw_send_failure(ui, &id, &draft, &failure, state));
+            }
+            previous = Some(message);
+        }
+    }
+    fn draw_local_attachments(&mut self, ui: &mut egui::Ui) {
+        let paths = self.local_projection.as_ref().map(|local| local.paths.clone()).unwrap_or_default();
+        for path in paths {
+            let name = if self.owned_temporary.contains(&path) { "Imagen pegada.png".into() } else { path.file_name().unwrap_or_default().to_string_lossy() };
+            if previewable_path(&path) {
+                let max = egui::vec2(ui.available_width().min(360.), 220.);
+                let side = (360. * ui.ctx().pixels_per_point()).ceil() as u32;
+                let texture = self.pictures.texture_path(&path, side);
+                let dimensions = texture.as_ref().map(|texture| { let size = texture.size(); (size[0] as u32, size[1] as u32) });
+                let (rect, response) = ui.allocate_exact_size(media_slot_size(max, dimensions), egui::Sense::click());
+                if let Some(texture) = texture {
+                    egui::Image::new(&texture).paint_at(ui, rect);
+                } else {
+                    ui.painter().rect_filled(rect, 5., self.theme.surface);
+                }
+                if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    self.viewer = Some(Viewer { url: String::new(), local_path: Some(path.clone()), zoom: 1., pan: Vec2::ZERO });
+                }
+            } else {
+                ui.horizontal(|ui| {
+                    let link = ui.link(format!("📎 {name}"));
+                    if super::text_viewer::text_attachment_name(&name) && link.clicked() { self.open_local_text(&path, &name); }
+                    ui.small(prepared_file_size(ui.ctx(), &path));
+                });
+            }
+        }
+    }
+    fn draw_send_failure(&mut self, ui: &mut egui::Ui, id: &str, draft: &Draft, failure: &SendFailure, state: &AppSnapshot) {
+        let channel = &state.selected_channel_id;
+        let waiting = failure.retry_at.map_or(0, |at| at.saturating_duration_since(Instant::now()).as_secs_f32().ceil() as u64);
+        if waiting > 0 { ui.ctx().request_repaint_after(Duration::from_secs(1)); }
+        let suspended = state.connection_phase.suspended();
+        let (summary, link) = match failure.class {
+            SendFailureClass::Retryable => (None, Some("Click aquí para reintentar enviar el mensaje")),
+            SendFailureClass::Waiting => (Some(format!("Discord limitó los envíos. Espera {waiting} s antes de reintentar.")),
+                Some("Click aquí para reintentar enviar el mensaje")),
+            SendFailureClass::Unknown => (Some("No se pudo confirmar si Discord lo recibió.".to_owned()),
+                (!failure.checked).then_some("Click aquí para comprobar si se envió")),
+            SendFailureClass::Blocked => (None, None),
+        };
+        ui.horizontal(|ui| {
+            ui.add_space(66.);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.;
+                for text in summary.iter().map(String::as_str).chain((!failure.message.is_empty()).then_some(failure.message.as_str())) {
+                    ui.add(egui::Label::new(RichText::new(text).size(12.).color(SEND_FAILED)).wrap());
+                }
+                if let Some(label) = link {
+                    let ready = waiting == 0 && !suspended && state.channel_access.can_send;
+                    let response = ui.add(egui::Label::new(RichText::new(label).size(13.)
+                        .color(if ready { SEND_FAILED } else { SEND_FAILED.gamma_multiply(0.6) }))
+                        .selectable(false).sense(if ready { egui::Sense::click() } else { egui::Sense::hover() }));
+                    if ready {
+                        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if response.hovered() {
+                            ui.painter().hline(response.rect.x_range(), response.rect.bottom(), egui::Stroke::new(1_f32, SEND_FAILED));
+                        }
+                        if response.clicked() {
+                            if failure.class == SendFailureClass::Unknown {
+                                self.reconcile_captured_draft(id, draft.revision, channel);
+                            } else if self.send_captured_draft(id, channel, state, true) {
+                                // Same submission, same nonce: the identity of the intent never changes.
                                 self.go_to_latest_for(channel, latest_window(ui.ctx(), state));
                             }
                         }
-                        let empty = self.drafts.get(channel).is_none_or(|next| next.text.is_empty() && next.paths.is_empty() && next.reply.is_none());
-                        if ui.add_enabled(empty, egui::Button::new("Recuperar borrador"))
-                            .on_hover_text("Disponible cuando el siguiente borrador esté vacío; nunca lo sobrescribe.")
-                            .on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            self.drafts.insert(channel.clone(), draft.clone());
-                            self.sent_drafts.remove(&id); self.submissions.remove(&id);
-                            self.submitted_paths.remove(&id); self.failed_submissions.remove(&id);
-                        }
-                        if ui.button("Copiar texto").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() { ui.ctx().copy_text(draft.text.clone()); }
-                        if ui.button("Descartar pendiente").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            self.sent_drafts.remove(&id); self.submissions.remove(&id);
-                            self.submitted_paths.remove(&id); self.failed_submissions.remove(&id);
-                            self.cleanup_unreferenced_temporary(&draft.paths);
-                        }
-                    });
+                    } else if suspended {
+                        response.on_hover_text("Disponible cuando se recupere la conexión.");
+                    }
                 }
+                ui.horizontal_wrapped(|ui| {
+                    let empty = self.drafts.get(channel).is_none_or(|next| next.text.is_empty() && next.paths.is_empty() && next.reply.is_none());
+                    let unknown = failure.class == SendFailureClass::Unknown;
+                    if ui.add_enabled(empty, egui::Button::new(RichText::new("Recuperar borrador").size(12.)).small())
+                        .on_hover_text("Disponible cuando el siguiente borrador esté vacío; nunca lo sobrescribe.")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        let mut recovered = draft.clone();
+                        recovered.retained_submission = unknown.then(|| id.to_owned());
+                        self.drafts.insert(channel.clone(), recovered);
+                        self.forget_captured_draft(id);
+                        if !unknown { self.send("send-discard", id, "", "", channel); }
+                    }
+                    if ui.add(egui::Button::new(RichText::new("Copiar texto").size(12.)).small()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        ui.ctx().copy_text(draft.text.clone());
+                    }
+                    if ui.add(egui::Button::new(RichText::new("Descartar").size(12.)).small())
+                        .on_hover_text(if unknown { "Sólo lo quita de esta vista; no cancela lo que Discord pudiera haber recibido." } else { "Quitar este mensaje pendiente" })
+                        .on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        self.forget_captured_draft(id);
+                        self.send("send-discard", id, "", "", channel);
+                        self.cleanup_unreferenced_temporary(&draft.paths);
+                    }
+                });
             });
-        }
+        });
     }
 }
 const CHAT_COMPOSER_GAP: f32 = 10.;
+pub(super) const SEND_FAILED: Color32 = Color32::from_rgb(242, 63, 67);
+const SEND_CHECK_COOLDOWN: Duration = Duration::from_secs(30);
+
+/// Presentation of a captured send. It never enters the cache or an action:
+/// the "local-" prefix cannot be a snowflake, so no remote route accepts it.
+fn local_message(id: &str, draft: &Draft, state: &AppSnapshot) -> ChatMessage {
+    ChatMessage {
+        id: format!("local-{id}"),
+        channel_id: state.selected_channel_id.clone(),
+        author: state.current_user.clone().unwrap_or_default(),
+        content: outgoing_mentions(draft),
+        timestamp: draft.captured_stamp.unwrap_or_else(|| chrono::Local::now().fixed_offset()),
+        mentions: draft.mentions.iter().map(|mention| Person {
+            id: mention.id.clone(), name: mention.label.trim_start_matches('@').to_owned(), ..Default::default()
+        }).collect(),
+        reply_to: draft.reply.as_ref().map(|reply| reply.message_id.clone()),
+        reply_preview: draft.reply.clone(),
+        ..Default::default()
+    }
+}
 
 fn history_wheel_target(ctx: &egui::Context, viewport: egui::Rect, layer: egui::LayerId) -> bool {
     let Some(pointer) = ctx.input(|input| input.pointer.hover_pos()) else { return false; };
@@ -3671,10 +3818,7 @@ mod tests {
         assert!(painted_text(&output,"Captured first").top()<painted_text(&output,"Captured second").top());
         message.deleted=true;state.can_pin_messages=true;
         let menu=ctx.run(egui::RawInput::default(),|ctx|{egui::CentralPanel::default().show(ctx,|ui|app.message_menu(ui,&message,&state));});
-        let pin=painted_text(&menu,"Fijar mensaje").center();
-        for pressed in [true,false] {
-            let _=ctx.run(egui::RawInput{events:pointer(pin,pressed,egui::PointerButton::Primary),..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|app.message_menu(ui,&message,&state));});
-        }
+        assert!(maybe_painted_text(&menu,"Fijar mensaje").is_none(),"A deleted row's menu belongs to the local log");
         assert!(commands.try_recv().is_err());
     }
     #[test]
@@ -3708,7 +3852,11 @@ mod tests {
                 assert_eq!(app.drafts["200"].text, text);
             }
             assert!((measured[0].0-measured[1].0).abs()<1., "{measured:?}");
-            for (actual, expected) in measured { assert!((actual-expected).abs()<12., "width={width}, actual={actual} expected={expected}"); }
+            // The reservation always includes the strip's scrollbar, so the row
+            // keeps its height whether or not eight previews overflow.
+            let scroll=ctx.style().spacing.scroll;
+            let bar=scroll.bar_width+scroll.bar_inner_margin+scroll.bar_outer_margin;
+            for (actual, expected) in measured { assert!((actual-expected).abs()<12.+bar, "width={width}, actual={actual} expected={expected}"); }
         }
     }
     fn key_event(key: egui::Key, pressed: bool) -> egui::Event {
@@ -3834,7 +3982,7 @@ mod tests {
             Person { id: "102".into(), name: "Amy".into(), username: "amy".into(), ..Default::default() },
         ];
         chat_frame(&mut app, &ctx, &state, vec![]);
-        chat_frame(&mut app, &ctx, &state, vec![egui::Event::Text("@".into())]);
+        chat_frame(&mut app, &ctx, &state, vec![egui::Event::Text("@A".into())]);
         assert_eq!(app.mention_index, 0);
         chat_frame(&mut app, &ctx, &state, vec![key_event(egui::Key::Tab, true)]);
         assert_eq!(app.drafts["200"].text, "@Alice ");
@@ -3855,11 +4003,11 @@ mod tests {
                 Person { id: "102".into(), name: "Amy".into(), username: "amy".into(), ..Default::default() },
             ];
             chat_frame(&mut app, &ctx, &state, vec![]);
-            chat_frame(&mut app, &ctx, &state, vec![egui::Event::Text("@".into())]);
+            chat_frame(&mut app, &ctx, &state, vec![egui::Event::Text("@A".into())]);
             chat_frame(&mut app, &ctx, &state, vec![key_event(egui::Key::ArrowDown, true)]);
             assert_eq!(app.mention_index, 1);
             if change_query {
-                chat_frame(&mut app, &ctx, &state, vec![key_event(egui::Key::ArrowDown, false), egui::Event::Text("A".into())]);
+                chat_frame(&mut app, &ctx, &state, vec![key_event(egui::Key::ArrowDown, false), egui::Event::Text("l".into())]);
                 assert_eq!(app.mention_index, 0);
             }
             chat_frame(&mut app, &ctx, &state, vec![key_event(egui::Key::Tab, true)]);
@@ -3917,15 +4065,36 @@ mod tests {
         app.sent_drafts.insert("capture".into(), Draft { text: "captured".into(), revision: 7, ..Default::default() });
         app.drafts.insert("200".into(), Draft { text: "new work".into(), ..Default::default() });
         app.data_update("send-error", serde_json::json!({"submissionId":"capture","channelId":"200","revision":7}));
-        assert!(app.failed_submissions.contains("capture"));
+        assert!(app.failed_submissions.get("capture").is_some_and(|failure| failure.class == SendFailureClass::Unknown));
         let (_, state) = message_fixture();
-        app.send_captured_draft("capture", "200", &state);
+        app.send_captured_draft("capture", "200", &state, true);
         let action = commands.try_recv().unwrap();
         let extra: Value = serde_json::from_str(&action.extra).unwrap();
         assert_eq!(extra["submissionId"], "capture");
+        assert_eq!(extra["retry"], true);
         assert_eq!(action.text, "captured");
         assert_eq!(app.drafts["200"].text, "new work");
-        assert!(!app.failed_submissions.contains("capture"));
+        assert!(!app.failed_submissions.contains_key("capture"));
+    }
+    #[test]
+    fn local_rows_show_the_whole_send_and_cannot_address_a_remote_route() {
+        let (_, mut state) = message_fixture();
+        state.current_user = Some(Person { id: "42".into(), ..Default::default() });
+        let text = "x".repeat(2000);
+        let draft = Draft { text: text.clone(), mentions: vec![Mention { start: 0, end: 0, id: "9".into(), label: "@Ana".into() }], ..Default::default() };
+        let message = local_message("abc", &draft, &state);
+        assert_eq!(message.content.len(), text.len());
+        assert_eq!(message.mentions[0].name, "Ana");
+        assert!(!notdiscord_core::parsing::valid_id(&message.id));
+        assert_eq!(message.author.id, state.current_user.as_ref().unwrap().id);
+    }
+    #[test]
+    fn failure_classes_keep_their_wait_and_treat_unknown_input_as_unconfirmed() {
+        let wait = SendFailure::from_update(&serde_json::json!({"class":"wait","retryAfterMs":5000}));
+        assert!(wait.class == SendFailureClass::Waiting && wait.retry_at.is_some());
+        assert!(SendFailure::from_update(&serde_json::json!({})).class == SendFailureClass::Unknown);
+        assert!(SendFailure::from_update(&serde_json::json!({"class":"blocked"})).class == SendFailureClass::Blocked);
+        assert!(SendFailure::from_update(&serde_json::json!({"class":"unknown","checked":true})).checked);
     }
     #[test]
     fn autofocus_respects_other_inputs_modals_permissions_and_shortcuts() {
@@ -4123,7 +4292,8 @@ mod tests {
             chat_frame(&mut app, &ctx, &state, events);
             assert_eq!(app.drafts["200"].text, "Keep draft");
             assert!(commands.try_recv().is_err());
-            assert!(!ctx.wants_keyboard_input());
+            // Composition selects the composer; it must own the text it commits.
+            assert!(ctx.memory(|memory| memory.focused()).is_none_or(|focused| focused == egui::Id::new(("composer", "200"))));
         }
         chat_frame(&mut app, &ctx, &state, vec![key_event(egui::Key::Enter, false), key_event(egui::Key::Enter, true)]);
         assert_eq!(commands.try_recv().unwrap().text, "Keep draft");
@@ -5811,21 +5981,17 @@ mod tests {
             },
         )
     }
+    fn shape_text(shape: &egui::Shape, needle: &str) -> Option<egui::Rect> {
+        match shape {
+            egui::Shape::Text(text) => text.galley.job.text.contains(needle)
+                .then(|| egui::Rect::from_min_size(text.pos, text.galley.size())),
+            // Layouts group shapes: text inside a row is not at the top level.
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| shape_text(shape, needle)),
+            _ => None,
+        }
+    }
     fn maybe_painted_text(output: &egui::FullOutput, needle: &str) -> Option<egui::Rect> {
-        output
-            .shapes
-            .iter()
-            .find_map(|shape| {
-                if let egui::Shape::Text(text) = &shape.shape {
-                    text.galley
-                        .job
-                        .text
-                        .contains(needle)
-                        .then(|| egui::Rect::from_min_size(text.pos, text.galley.size()))
-                } else {
-                    None
-                }
-            })
+        output.shapes.iter().find_map(|shape| shape_text(&shape.shape, needle))
     }
     fn painted_text(output: &egui::FullOutput, needle: &str) -> egui::Rect {
         maybe_painted_text(output, needle).unwrap_or_else(|| panic!("Missing painted fixture text: {needle}"))

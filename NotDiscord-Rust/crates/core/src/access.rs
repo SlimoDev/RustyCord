@@ -337,16 +337,21 @@ mod tests {
         )
     }
     #[test]
-    fn public_member_list_uses_channel_everyone_grant_without_accepting_restricted_lists() {
+    fn only_a_guild_wide_everyone_view_without_denials_is_the_public_member_list() {
+        // The original client's check reads the @everyone role itself, so a
+        // grant that exists only as a channel overwrite still uses the hash.
         let a = GuildAccess::from_values(&base(0), &json!({}), "1");
         let mut channel = json!({"type":0,"permission_overwrites":[{"id":"10","type":0,"allow":"1024","deny":"0"}]});
         assert!(a.evaluate(&channel, None).can_view);
-        assert_eq!(a.confirmed_member_list_id(&channel), "everyone");
+        assert_eq!(a.confirmed_member_list_id(&channel), member_list_hash(b"allow:10").to_string());
         channel["permission_overwrites"]
             .as_array_mut()
             .unwrap()
             .push(json!({"id":"20","type":0,"allow":"0","deny":"1024"}));
-        assert_eq!(a.confirmed_member_list_id(&channel), "");
+        assert_eq!(a.confirmed_member_list_id(&channel), member_list_hash(b"allow:10,deny:20").to_string());
+        let public = GuildAccess::from_values(&base(1024), &json!({}), "1");
+        assert_eq!(public.confirmed_member_list_id(&json!({"type":0,"permission_overwrites":[{"id":"10","type":0,"allow":"1024","deny":"0"}]})), "everyone");
+        assert_ne!(public.confirmed_member_list_id(&channel), "everyone");
         assert_eq!(
             a.confirmed_member_list_id(&json!({"type":0,"permission_overwrites":{}})),
             ""

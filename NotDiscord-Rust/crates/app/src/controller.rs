@@ -5,7 +5,10 @@ mod deleted_logs;
 mod presence;
 mod profile_editor;
 mod reaction_users;
+mod attachments;
 mod channel_catalog;
+mod connection;
+mod outgoing;
 mod read_index;
 mod emoji_policy;
 mod notification_activation;
@@ -172,6 +175,8 @@ pub struct Controller {
     call_people: HashMap<String, CallParticipant>,
     pending_video: bool,
     gif_state: gifs::GifState,
+    recovery: connection::Recovery,
+    sends: outgoing::Sends,
     game_catalog: game_mentions::State,
     emoji_cache: HashMap<String, (Instant, Vec<CustomEmoji>)>,
     voice_lifecycle: voice::VoiceLifecycle,
@@ -247,7 +252,7 @@ pub async fn run(
         tokio::select! {
             action=actions.recv()=>match action{Some(action)=>{if action.kind=="shutdown"{break}if let Err(error)=c.act(action.clone()).await{c.action_error(&action,error)}},None=>break},
             done=replies.recv()=>if let Some(done)=done{if c.accepts(&done){if let Some(credential)=done.credential {c.login_pending=false;c.disconnect().await;c.connect_secret(credential.into_secret());}else{match done.result{Ok(value)=>if let Err(error)=c.complete(done.action.clone(),value).await{c.complete_failed(&done.action).await;c.completion_error(&done.action,error)},Err(error)=>{c.complete_failed(&done.action).await;c.completion_error(&done.action,error)}}}}},
-            event=async{match &mut c.gateway_rx{Some(rx)=>rx.recv().await,None=>std::future::pending().await}}=>match event{Some(GatewayEvent::Dispatch{kind,data})=>{if let Err(error)=c.dispatch(&kind,data).await{c.error(error)}},Some(GatewayEvent::Status(status))=>{c.state.connection=status;c.publish();},Some(GatewayEvent::Safety(state))=>{if let Some(api)=&c.api {api.safety().block(state);}},None=>{c.gateway_rx=None;}},
+            event=async{match &mut c.gateway_rx{Some(rx)=>rx.recv().await,None=>std::future::pending().await}}=>match event{Some(GatewayEvent::Dispatch{kind,data})=>{if let Err(error)=c.dispatch(&kind,data).await{c.error(error)}},Some(GatewayEvent::Status(status))=>{c.state.connection=status;c.publish();},Some(GatewayEvent::Connection(change))=>c.connection_changed(change),Some(GatewayEvent::Safety(state))=>{if let Some(api)=&c.api {api.safety().block(state);}},None=>{c.gateway_rx=None;c.gateway_ended();}},
             _=tokio::time::sleep_until(tokio::time::Instant::from_std(next_tick))=>{
                 c.tick().await;next_tick=Instant::now()+c.maintenance_delay();
             },
@@ -264,7 +269,8 @@ impl Controller {
         let fast=self.snapshot_dirty.load(Ordering::Relaxed) || self.state.busy || self.login_pending
             || self.pending_credential.is_some() || self.media.is_some() || !self.voice_channel.is_empty()
             || self.voice_lifecycle.needs_fast_maintenance() || self.game_detector.needs_fast_poll()
-            || self.sidebar_wait.is_some() || !self.typing.is_empty() || self.read_acks.pending();
+            || !self.typing.is_empty()
+            || !self.transport_suspended() && (self.sidebar_wait.is_some() || self.read_acks.pending());
         Duration::from_millis(if fast {20} else {100})
     }
     fn new(
@@ -357,6 +363,8 @@ impl Controller {
             call_people: HashMap::new(),
             pending_video: false,
             gif_state: gifs::GifState::default(),
+            recovery: Default::default(),
+            sends: Default::default(),
             game_catalog: game_mentions::State::default(),
             emoji_cache: HashMap::new(),
             voice_lifecycle: voice::VoiceLifecycle::default(),
@@ -464,10 +472,9 @@ impl Controller {
         if action.kind == "__relations" {
             self.friend_pending.remove(&action.extra);
         }
-        if action.kind == "__sent" {
-            let extra: Value = serde_json::from_str(&action.extra).unwrap_or_default();
-            self.data("send-error",json!({"channelId":action.channel_id,"submissionId":extra["submissionId"],"revision":extra["revision"]}));
-        }
+        if action.kind == "__sent" {self.send_task_failed(action);}
+        if action.kind == "__send-reconcile" {self.reconcile_failed(action);}
+        if action.kind == "__attachment-refresh" {self.attachment_refresh_failed(action);}
         if action.kind.starts_with("__voice-") {
             self.voice_failed(action).await;
         }
@@ -660,9 +667,9 @@ impl Controller {
             self.data(if action.kind=="profile-editor-load" {"profile-editor-loaded"} else {"profile-edit-result"},
                 json!({"owner":self.me(),"token":action.id,"kind":if action.kind=="profile-editor-load" {"load"} else if action.kind=="save-profile-bio" {"bio"} else {"status"},"error":error}));
         }
-        if matches!(action.kind.as_str(), "send" | "send-prepared") {
-            let extra: Value = serde_json::from_str(&action.extra).unwrap_or_default();
-            self.data("send-error", json!({"channelId":action.channel_id,"submissionId":extra["submissionId"],"revision":extra["revision"]}));
+        if action.kind == "send-prepared" {
+            self.send_rejected(action,&error);
+            return;
         }
         let completion_kind = match action.kind.as_str() {
             "forward" | "forward-message" | "forward-many" => Some("__forwarded"),
@@ -850,6 +857,9 @@ impl Controller {
         self.state.network_safety = state;
         self.state.network_safety_message = message.clone();
         self.state.connection = "Operaciones suspendidas".into();
+        // The terminal banner owns the action; the retry row would not clear it.
+        self.state.connection_phase = ConnectionPhase::Idle;
+        self.state.connection_retry_at = None;
         self.state.status = message;
         self.publish();
     }
@@ -883,6 +893,8 @@ impl Controller {
         self.api = None;
         self.reset_navigation();
         self.generation += 1;
+        self.recovery = Default::default();
+        self.sends.clear();
         self.reset_session_view();
         self.safety_credential_key = crate::network_safety::credential_key(&token);
         self.safety_identity = Arc::new(Mutex::new(
@@ -993,6 +1005,8 @@ impl Controller {
         self.session_cancel.cancel();
         self.reset_navigation();
         self.generation += 1;
+        self.recovery = Default::default();
+        self.sends.clear();
         self.stop_voice().await;
         if let Some(g) = self.gateway.take() {
             g.stop();
@@ -1259,6 +1273,13 @@ impl Controller {
             self.publish();
             return Ok(());
         }
+        if self.transport_suspended() {
+            // Show what is cached and load this page once when sync returns.
+            self.loading_channel.clear();
+            self.recovery.defer_view();
+            self.publish();
+            return Ok(());
+        }
         self.publish();
         let api = self.api()?;
         let id = id.to_owned();
@@ -1507,6 +1528,11 @@ impl Controller {
                 storage::forget_session(&self.data)?;
                 return Ok(());
             }
+            "connection-retry" => return self.retry_connection(),
+            "send-discard" => {
+                self.forget_send(&action);
+                return Ok(());
+            }
             "ui-settings" => {
                 let settings: Value = serde_json::from_str(&action.text).unwrap_or_default();
                 if let Some(enabled) = settings.get("SendTyping").and_then(Value::as_bool) {
@@ -1522,6 +1548,10 @@ impl Controller {
         }
         if !self.state.signed_in {
             return Err("Inicia sesión para continuar.".into());
+        }
+        if self.transport_suspended() {
+            if action.kind == "typing" { return Ok(()); }
+            if connection::deferred_while_offline(&action.kind) { return Err(connection::OFFLINE.into()); }
         }
         if action.kind=="edit" {self.validate_edit_scope(&action)?;}
         if is_network_mutation(&action.kind) {
@@ -1786,12 +1816,18 @@ impl Controller {
                 } else {
                     uuid::Uuid::new_v4().simple().to_string()[..24].to_owned()
                 };
+                if action.kind == "send-prepared" && !self.begin_send(&nonce,&extra,&channel)? {
+                    return Ok(());
+                }
                 action.kind = "__sent".into();
                 action.channel_id = channel.clone();
                 let mention_everyone = notdiscord_core::mentions::everyone_allowed(&self.state.selected_guild_id,&self.state.channel_access);
                 let upload_limit=self.upload_limit();
-                self.launch(action,None,async move{if paths.is_empty(){let mut body=json!({"content":text,"nonce":nonce,"enforce_nonce":true,"allowed_mentions":notdiscord_core::mentions::allowed_mentions(&text,mention_everyone)});if !reply.is_empty(){body["message_reference"]=json!({"message_id":reply,"channel_id":channel,"fail_if_not_exists":true})}api.request(Method::POST,&format!("channels/{channel}/messages"),Some(body)).await.map_err(|e|e.to_string())}else{api.upload_many_with_limits(&channel,&paths,&text,&reply,&nonce,mention_everyone,upload_limit).await.map_err(|e|e.to_string())}});
+                // The error stays typed up to the single conciliation owner.
+                self.launch(action,None,async move{let result=if paths.is_empty(){let mut body=json!({"content":text,"nonce":nonce,"enforce_nonce":true,"allowed_mentions":notdiscord_core::mentions::allowed_mentions(&text,mention_everyone)});if !reply.is_empty(){body["message_reference"]=json!({"message_id":reply,"channel_id":channel,"fail_if_not_exists":true})}api.request(Method::POST,&format!("channels/{channel}/messages"),Some(body)).await}else{api.upload_many_with_limits(&channel,&paths,&text,&reply,&nonce,mention_everyone,upload_limit).await};Ok(result.unwrap_or_else(|error|json!({"sendError":outgoing::failure(&error)})))});
             }
+            "send-reconcile" => self.reconcile_send(action)?,
+            "attachment-refresh" => self.refresh_attachment(action)?,
             "edit" | "delete" => {
                 self.require("send")?;
                 let channel = self.state.selected_channel_id.clone();
@@ -1852,6 +1888,9 @@ impl Controller {
                     for emoji in &mut list {emoji.usable=self.can_send_emoji(emoji);}
                     if id==self.state.selected_guild_id {self.state.emojis=list.clone();self.publish();}
                     self.data("guild-emojis", serde_json::to_value(list).unwrap());
+                } else if self.transport_suspended() {
+                    self.data("guild-emojis", json!([]));
+                    return Err(connection::OFFLINE.into());
                 } else {
                     let api = self.api()?;
                     action.kind = "__emojis".into();
@@ -1955,6 +1994,7 @@ impl Controller {
                 let (g, rx) = api.gateway(initial_status);
                 self.gateway = Some(g);
                 self.gateway_rx = Some(rx);
+                self.state.connection_phase = ConnectionPhase::Connecting;
                 self.sidebar_wait = Some(Instant::now() + Duration::from_secs(3));
                 self.publish();
             }
@@ -2204,23 +2244,9 @@ impl Controller {
                 self.data("pins-open", json!(true));
                 self.publish();
             }
-            "__sent" => {
-                let message = parsing::message(&value);
-                if !parsing::valid_id(&message.id) || message.channel_id != action.channel_id {
-                    return Err("No se pudo confirmar el envío. Conserva el borrador.".into());
-                }
-                self.observe_message_delivery(&message.channel_id, &message.id, true);
-                self.observe_message_preview(&message);
-                self.cache.upsert(message);
-                self.refresh_messages();
-                self.decorate_dms();
-                if !self.state.selected_guild_id.is_empty() {
-                    self.rebuild_channels();
-                }
-                let extra: Value = serde_json::from_str(&action.extra).unwrap_or_default();
-                self.data("send-ack",json!({"channelId":action.channel_id,"submissionId":extra["submissionId"],"revision":extra["revision"]}));
-                self.status("Mensaje enviado");
-            }
+            "__sent" => self.complete_send(&action,&value)?,
+            "__send-reconcile" => self.complete_reconcile(&action,&value),
+            "__attachment-refresh" => self.complete_attachment_refresh(&action,&value),
             "__mutation" => {
                 self.edit_result(&action,"");
                 self.status("Operación completada");
@@ -2339,6 +2365,7 @@ impl Controller {
             .api
             .clone()
             .filter(|api| api.safety().state() == SafetyState::Allowed)
+            .filter(|_| !self.transport_suspended())
         else {
             return;
         };
@@ -2359,6 +2386,7 @@ impl Controller {
         }
     }
     async fn tick(&mut self) {
+        self.tick_connection();
         self.tick_game_activity().await;
         self.expire_outgoing_ring();
         self.expire_private_calls_at(Instant::now()).await;
@@ -2367,7 +2395,7 @@ impl Controller {
         if self.gateway.as_ref().is_some_and(|g| g.is_ready()) {
             self.queue_member_subscription();
         }
-        if self.sidebar_wait.is_some_and(|at| Instant::now() >= at) {
+        if !self.transport_suspended() && self.sidebar_wait.is_some_and(|at| Instant::now() >= at) {
             self.sidebar();
         }
         self.flush_read_acks(Instant::now());

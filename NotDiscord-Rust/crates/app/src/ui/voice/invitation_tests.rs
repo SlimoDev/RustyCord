@@ -109,13 +109,15 @@ fn local_and_remote_sources_start_as_avatars_and_source_restarts_need_another_ex
         let failed=invitation_frame(&mut app,&ctx,&state,vec![],450.,850.);
         assert!(!has_video(&failed));voice_text_rect(&failed,"Cámara · Reintentar");voice_text_rect(&failed,"Synthetic playback failure");
         assert!(commands.try_recv().is_err(),"an error in the already chosen source remains reviewable without starting another source");
+        // Only a known announcement retires a source; absence is not a withdrawal.
+        state.call_participants[0].camera_announcement_known=true;
         state.call_videos[0].active=false;state.call_videos[0].status="paused".into();state.call_participants[0].self_video=false;
         let stopped=invitation_frame(&mut app,&ctx,&state,vec![],450.,850.);assert!(!has_video(&stopped));
-        let release=commands.try_recv().unwrap();assert_eq!(release.kind,"view-incoming-media");assert_eq!(release.text,"camera");
-        assert_eq!(serde_json::from_str::<Value>(&release.extra).unwrap()["visible"],false);
+        assert!(commands.try_recv().is_err(),"withdrawal resets the tile; only the actor tears reception down");
         state.call_videos[0].active=true;state.call_videos[0].status="playing".into();state.call_participants[0].self_video=true;
-        let restarted=invitation_frame(&mut app,&ctx,&state,vec![],450.,850.);assert!(!has_video(&restarted));
-        voice_text_rect(&restarted,"Cámara · Mostrar");
+        // An own confirmed source survives renegotiation; a remote one needs a new choice.
+        let restarted=invitation_frame(&mut app,&ctx,&state,vec![],450.,850.);assert_eq!(has_video(&restarted),local);
+        voice_text_rect(&restarted,if local {"Cámara · Dejar de ver"} else {"Cámara · Mostrar"});
         assert!(commands.try_recv().is_err());
     }
 }
@@ -145,17 +147,8 @@ fn requested_watch_survives_its_first_native_id_and_retry_rearms_source_identity
 
     state.call_videos[0].id=11;
     let restarted=invitation_frame(&mut app,&ctx,&state,vec![],450.,850.);
-    assert!(!has_video(&restarted),"a replacement after real playback still requires an explicit choice");
-    let release=commands.try_recv().unwrap();
-    assert_eq!((release.kind.as_str(),release.text.as_str()),("view-incoming-media","screen"));
-    assert_eq!(serde_json::from_str::<Value>(&release.extra).unwrap()["visible"],false);
-    assert!(commands.try_recv().is_err());
-
-    let show=voice_text_rect(&restarted,"Pantalla · Mostrar").center();
-    for pressed in [true,false] {invitation_frame(&mut app,&ctx,&state,voice_pointer(show,pressed,egui::PointerButton::Primary),450.,850.);}
-    let request=commands.try_recv().unwrap();
-    assert_eq!(serde_json::from_str::<Value>(&request.extra).unwrap()["visible"],true);
-    assert!(has_video(&invitation_frame(&mut app,&ctx,&state,vec![],450.,850.)));
+    assert!(has_video(&restarted),"a decoder replacement keeps the viewer's explicit choice");
+    assert!(commands.try_recv().is_err(),"a source transition requests nothing by itself");
     state.call_videos[0].active=false;state.call_videos[0].status="error".into();state.call_videos[0].error="Synthetic watch failure".into();
     let failed=invitation_frame(&mut app,&ctx,&state,vec![],450.,850.);
     let retry=voice_text_rect(&failed,"Pantalla · Reintentar").center();
@@ -199,10 +192,14 @@ fn selector_previews_only_change_tile_choice_while_published_sources_keep_sink_c
         assert!(has_video(&invitation_frame(&mut app,&ctx,&state,vec![],450.,850.)));
         click(&mut app,&state,"Dejar de ver");
         assert!(!has_video(&invitation_frame(&mut app,&ctx,&state,vec![],450.,850.)));
-        assert!(commands.try_recv().is_err(),"preview show/hide stays local to the tile and does not override its selector");
+        // Showing and hiding a preview recreates or frees it for this same source only.
+        let preview_commands=std::iter::from_fn(||commands.try_recv().ok()).collect::<Vec<_>>();
+        assert_eq!(preview_commands.len(),2);
+        assert!(preview_commands.iter().all(|action|action.kind=="view-incoming-media"&&action.text==kind));
 
         click(&mut app,&state,"Mostrar");
         invitation_frame(&mut app,&ctx,&state,vec![],450.,850.);
+        commands.try_recv().unwrap();
         let preview=state.call_videos.pop().unwrap();state.camera_preparing=false;state.screen_preparing=false;
         let removed=invitation_frame(&mut app,&ctx,&state,vec![],450.,850.);
         assert!(!has_video(&removed));
@@ -210,16 +207,12 @@ fn selector_previews_only_change_tile_choice_while_published_sources_keep_sink_c
         state.call_videos.push(preview);state.camera_preparing=kind=="camera";state.screen_preparing=kind=="screen";
         click(&mut app,&state,"Mostrar");
         invitation_frame(&mut app,&ctx,&state,vec![],450.,850.);
-        // Promotion can retain the native id, but publishing is a different
-        // lifecycle and needs a new opt-in even after viewing the preview.
+        commands.try_recv().unwrap();
+        // New sinks inherit the choice of the same kind: a promoted preview stays shown.
         state.call_videos[0].preview=false;state.camera_preparing=false;state.screen_preparing=false;
         state.call_participants[0].self_video=kind=="camera";state.call_participants[0].screen_sharing=kind=="screen";
         let published=invitation_frame(&mut app,&ctx,&state,vec![],450.,850.);
-        assert!(!has_video(&published));assert!(commands.try_recv().is_err());
-        click(&mut app,&state,"Mostrar");
-        assert!(has_video(&invitation_frame(&mut app,&ctx,&state,vec![],450.,850.)));
-        let show=commands.try_recv().unwrap();assert_eq!((show.kind.as_str(),show.text.as_str()),("view-incoming-media",kind));
-        assert_eq!(serde_json::from_str::<Value>(&show.extra).unwrap()["visible"],true);
+        assert!(has_video(&published));assert!(commands.try_recv().is_err());
         click(&mut app,&state,"Dejar de ver");
         let hide=commands.try_recv().unwrap();assert_eq!((hide.kind.as_str(),hide.text.as_str()),("view-incoming-media",kind));
         assert_eq!(serde_json::from_str::<Value>(&hide.extra).unwrap()["visible"],false);
@@ -284,13 +277,13 @@ fn one_call_row_fits_four_people_and_pending_tiles_without_a_gallery_scroll() {
 }
 
 #[test]
-fn call_rows_cap_at_four_and_use_fewer_columns_only_below_the_legible_tile_width() {
-    for (width,expected) in [(1600.,4),(370.,2)] {
+fn call_rows_cap_at_four_whatever_the_width_because_the_cell_adapts() {
+    for width in [1600.,370.] {
         let (mut app,ctx,mut commands,mut state)=invitation_fixture();
         state.call_pending_invitees=(0..7).map(|index|Person {id:(300+index).to_string(),name:format!("Pending {index}"),..Default::default()}).collect();
         for _ in 0..3 {invitation_frame(&mut app,&ctx,&state,vec![],350.,width);}
-        let (columns,count,scroll,_,_,_)=ctx.data(|data|data.get_temp::<(usize,usize,bool,egui::Rect,egui::Vec2,egui::Vec2)>(egui::Id::new("call-gallery-layout"))).unwrap();
-        assert_eq!((columns,count,scroll),(expected,8,true));
+        let (columns,count,_,_,_,_)=ctx.data(|data|data.get_temp::<(usize,usize,bool,egui::Rect,egui::Vec2,egui::Vec2)>(egui::Id::new("call-gallery-layout"))).unwrap();
+        assert_eq!((columns,count),(4,8));
         assert!(commands.try_recv().is_err());
     }
 }

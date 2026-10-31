@@ -21,9 +21,16 @@ pub struct Event {
     build: Option<&'static str>, component: Component, code: Code, phase: Phase,
     correlation: u64, severity: &'static str, repetitions: u32, dropped_before: u64,
 }
+impl Event {
+    /// Changes when the record gains a repetition, without comparing its fields.
+    pub fn revision(&self) -> (u64, u32) { (self.sequence, self.repetitions) }
+}
+/// An empty ring and an unreadable one are different answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapshotError { Busy, Unavailable }
 struct Recorder { sender: SyncSender<Event>, ring: Mutex<VecDeque<Event>>, start: Instant,
     version: String, sequence: AtomicU64, dropped: AtomicU64, closing: Arc<AtomicBool>,
-    emergency: Mutex<File>, panic_written: AtomicBool, disk_failed:AtomicBool, directory: PathBuf }
+    emergency: Mutex<File>, panic_written: AtomicBool, disk_failed:AtomicBool, session_log: PathBuf }
 static RECORDER: OnceLock<Arc<Recorder>> = OnceLock::new();
 const PREFIX: &str = "nddiag-";
 const FILE_LIMIT: u64 = 1024 * 1024;
@@ -136,14 +143,15 @@ pub fn initialise(data: &Path, version: &str) -> Option<Session> {
     let marker_path = directory.join(format!("{PREFIX}{id}.run"));
     let mut marker = create_private(&marker_path).ok()?;
     marker.write_all(OPEN_MARKER).ok()?;
-    let file = create_private(&directory.join(format!("{PREFIX}{id}.jsonl"))).ok()?;
+    let session_log = directory.join(format!("{PREFIX}{id}.jsonl"));
+    let file = create_private(&session_log).ok()?;
     let emergency = create_private(&directory.join(format!("{PREFIX}{id}.panic.jsonl"))).ok()?;
     let (sender, receiver) = mpsc::sync_channel(256);
     let closing = Arc::new(AtomicBool::new(false)); let closed = closing.clone();
     let (done_tx, done) = mpsc::sync_channel(1);
     let recorder = Arc::new(Recorder {sender, ring: Mutex::new(VecDeque::with_capacity(256)), start:Instant::now(),
         version:version.chars().filter(|ch|ch.is_ascii_alphanumeric() || matches!(ch,'.'|'-'|'+')).take(64).collect(),
-        sequence:AtomicU64::new(0),dropped:AtomicU64::new(0),closing,emergency:Mutex::new(emergency),panic_written:AtomicBool::new(false),disk_failed:AtomicBool::new(false),directory});
+        sequence:AtomicU64::new(0),dropped:AtomicU64::new(0),closing,emergency:Mutex::new(emergency),panic_written:AtomicBool::new(false),disk_failed:AtomicBool::new(false),session_log});
     if RECORDER.set(recorder).is_err() { return None; }
     std::thread::Builder::new().name("diagnostic-writer".into()).spawn(move || {
         let mut file=file; let mut bytes=0u64; let mut failed=false;
@@ -196,15 +204,54 @@ pub fn record(component: Component, code: Code, phase: Phase, correlation: u64) 
     }
     if recorder.sender.try_send(event).is_err() {recorder.dropped.fetch_add(1,Ordering::Relaxed);}
 }
-pub fn summary() -> Vec<Event> { RECORDER.get().and_then(|r|r.ring.try_lock().ok().map(|ring|ring.iter().cloned().collect())).unwrap_or_default() }
-pub fn directory() -> Option<PathBuf> { RECORDER.get().map(|r|r.directory.clone()) }
+/// Never blocks the caller: a held ring reports Busy instead of an empty list.
+pub fn snapshot() -> Result<Vec<Event>, SnapshotError> {
+    let recorder=RECORDER.get().ok_or(SnapshotError::Unavailable)?;
+    let ring=match recorder.ring.try_lock() {
+        Ok(ring)=>ring,
+        Err(std::sync::TryLockError::WouldBlock)=>return Err(SnapshotError::Busy),
+        Err(std::sync::TryLockError::Poisoned(ring))=>ring.into_inner(),
+    };
+    Ok(ring.iter().cloned().collect())
+}
+pub fn session_log() -> Option<PathBuf> { RECORDER.get().map(|r|r.session_log.clone()) }
 pub fn disk_failed()->bool {RECORDER.get().is_some_and(|r|r.disk_failed.load(Ordering::Relaxed))}
-/// Voluntary export serialises only the typed in-memory ring; never bundles
-/// arbitrary files placed in the diagnostics directory by another program.
-pub fn export(destination: &Path) -> Result<(), &'static str> {
+/// The typed in-memory ring only, oldest first. It shares this form with the
+/// export and never bundles other files found in the diagnostics directory.
+pub fn render(events: &[Event]) -> Result<String, &'static str> {
+    serde_json::to_string_pretty(events).map_err(|_|"No se pudo preparar el resumen de diagnóstico.")
+}
+fn write_durably(path: &Path, text: &str) -> std::io::Result<()> {
+    let mut file=create_private(path)?;
+    file.write_all(text.as_bytes())?;
+    file.flush()?;
+    file.sync_all()
+}
+/// A failed write leaves only its own temporary to remove: the final name
+/// appears complete or not at all, and an existing file is never overwritten.
+pub fn export(destination: &Path, text: &str) -> Result<(), &'static str> {
+    const NAME_TAKEN: &str = "No se pudo crear el archivo de diagnóstico; utiliza un nombre nuevo.";
     if !no_links(destination) { return Err("La salida de diagnóstico no admite enlaces."); }
-    let mut file=create_private(destination).map_err(|_|"No se pudo crear el archivo de diagnóstico; utiliza un nombre nuevo.")?;
-    serde_json::to_writer_pretty(&mut file,&summary()).map_err(|_|"No se pudo exportar el resumen de diagnóstico.")
+    if fs::symlink_metadata(destination).is_ok() { return Err(NAME_TAKEN); }
+    let name=destination.file_name().ok_or("La salida de diagnóstico no es válida.")?.to_string_lossy();
+    let temporary=destination.with_file_name(format!(".{name}.{:016x}.tmp",rand::random::<u64>()));
+    if write_durably(&temporary,text).is_err() {
+        let _=fs::remove_file(&temporary);
+        return Err("No se pudo escribir el resumen de diagnóstico.");
+    }
+    let published=match fs::hard_link(&temporary,destination) {
+        Ok(())=>Ok(()),
+        Err(error) if error.kind()==std::io::ErrorKind::AlreadyExists=>Err(NAME_TAKEN),
+        // Volumes without hard links: create_new still refuses to overwrite.
+        Err(_)=>write_durably(destination,text).map_err(|error| {
+            if error.kind()==std::io::ErrorKind::AlreadyExists {NAME_TAKEN} else {
+                let _=fs::remove_file(destination);
+                "No se pudo escribir el resumen de diagnóstico."
+            }
+        }),
+    };
+    let _=fs::remove_file(&temporary);
+    published
 }
 pub fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {

@@ -356,6 +356,9 @@ pub struct ChatMessage {
     #[serde(deserialize_with = "null_default")]
     pub mention_games: Vec<MentionGame>,
     pub reply_preview: Option<MessageReplyPreview>,
+    /// Client correlation of a send, kept as text so an integer keeps its
+    /// precision. Empty when Discord omits it; absence proves nothing.
+    pub nonce: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, rename_all = "PascalCase")]
@@ -501,9 +504,33 @@ pub struct CallVideo {
     pub error: String,
 }
 
+/// General transport state. It is independent from the chosen presence and
+/// from any isolated request; a terminal safety stop keeps its own banner.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum ConnectionPhase {
+    #[default]
+    Idle,
+    Connecting,
+    Synchronized,
+    /// The one automatic attempt, or the one requested explicitly.
+    Recovering,
+    /// Stopped. No attempt may start before the published deadline.
+    Cooldown,
+    /// Stopped until the user asks for a new attempt.
+    RetryAvailable,
+}
+impl ConnectionPhase {
+    /// Optional traffic and sends wait while the session is not synchronized.
+    pub fn suspended(self) -> bool { !matches!(self, Self::Idle | Self::Synchronized) }
+    /// A previously usable or requested transport is not available right now.
+    pub fn lost(self) -> bool { matches!(self, Self::Recovering | Self::Cooldown | Self::RetryAvailable) }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct AppSnapshot {
+    pub connection_phase: ConnectionPhase,
+    pub connection_retry_at: Option<Timestamp>,
     pub game_mentions_nsfw_allowed: bool,
     pub upload_limit: crate::uploads::UploadLimit,
     pub network_safety: crate::safety::SafetyState,

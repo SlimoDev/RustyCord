@@ -38,7 +38,7 @@ mod tests {
         controller.refresh_call();assert!(controller.state.call_pending_invitees.is_empty());assert!(!controller.state.outgoing_call_ringing);
         controller.complete_private_ring(&ack).unwrap();assert_eq!(controller.state.call_pending_invitees.len(),2);assert!(controller.state.outgoing_call_ringing);
         controller.media_event(json!({"event":"voiceState","state":"waiting-peer","transportReady":true,"encryptionReady":false})).await.unwrap();
-        assert!(controller.state.voice_connected&&controller.state.outgoing_call_ringing);assert_eq!(controller.state.call_status_label,"Conectado · Esperando participantes");
+        assert!(controller.state.voice_connected&&controller.state.outgoing_call_ringing);assert_eq!(controller.state.call_status_label,"Transporte conectado · esperando participantes");
         controller.voice_dispatch("VOICE_STATE_UPDATE",&json!({"user_id":"2","channel_id":"20"})).await.unwrap();
         assert_eq!(controller.state.call_pending_invitees.iter().map(|person|person.id.as_str()).collect::<Vec<_>>(),vec!["3"]);
         assert!(!controller.state.outgoing_call_ringing);assert!(controller.call_people.contains_key("2"));
@@ -46,7 +46,7 @@ mod tests {
         assert!(!controller.state.outgoing_call_ringing,"a departed first peer must not restart the old ring");
         let future=controller.voice_lifecycle.private_calls.outgoing.pending["3"].deadline+Duration::from_millis(1);
         controller.expire_private_calls_at(future).await;
-        assert!(controller.state.call_pending_invitees.is_empty());assert_eq!(controller.state.call_status_label,"Conectado");
+        assert!(controller.state.call_pending_invitees.is_empty());assert_eq!(controller.state.call_status_label,"Transporte conectado · esperando participantes");
         assert!(!controller.state.call_status_label.contains("micrófono"));assert_eq!(controller.voice_channel,"20");
         assert!(controller.api.is_none()&&controller.gateway.is_none()&&controller.media.is_none());
     }

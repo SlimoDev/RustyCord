@@ -103,7 +103,7 @@ pub(super) fn begin(app:&NotDiscordUi,ctx:&egui::Context,state:&AppSnapshot) {
     });
     let scope=egui::Id::new((state.notification_generation,state.current_user.as_ref().map(|user|user.id.as_str()),
         dialog,app.picker.as_ref().map(|picker|picker.open_id.as_str()),app.time_picker.as_ref().map(|picker|picker.open_id.as_str()),app.search_open,app.viewer.is_some(),
-        crate::diagnostics::is_open(ctx),state.view.as_str(),state.selected_channel_id.as_str()));
+        crate::diagnostics::is_open(ctx),(app.text_viewer.is_some(),app.color_editor.is_some()),state.view.as_str(),state.selected_channel_id.as_str()));
     let frame=ctx.cumulative_frame_nr();
     let overlay=app.background_blocked();
     let mut owner=ctx.data(|data|data.get_temp::<Owner>(key())).unwrap_or_default();
@@ -136,8 +136,10 @@ pub(super) fn begin(app:&NotDiscordUi,ctx:&egui::Context,state:&AppSnapshot) {
     }
     owner.frame=frame;
     owner.overlay=overlay;
-    owner.blocked=crate::diagnostics::is_open(ctx) || app.viewer.is_some();
-    owner.layer=if app.time_picker.is_some() {
+    owner.blocked=crate::diagnostics::is_open(ctx) || app.viewer.is_some() || app.text_viewer.is_some();
+    owner.layer=if app.color_editor.is_some() {
+        Some(egui::LayerId::new(egui::Order::Foreground,egui::Id::new("color-editor")))
+    }else if app.time_picker.is_some() {
         Some(egui::LayerId::new(egui::Order::Foreground,egui::Id::new("timestamp-picker")))
     }else if app.picker.is_some() {
         Some(egui::LayerId::new(egui::Order::Foreground,egui::Id::new("content-picker")))

@@ -290,6 +290,11 @@ impl Api {
     pub async fn get(&self, path: &str) -> Result<Value, ServiceError> {
         self.request(Method::GET, path, None).await
     }
+    /// One read for an explicit recovery check. Shared rate deadlines still
+    /// apply before it leaves, but a 429 is reported, never retried unseen.
+    pub async fn get_once(&self, path: &str) -> Result<Value, ServiceError> {
+        self.request_attempts(Method::GET, path, None, None, 1).await
+    }
     pub async fn send(
         &self,
         method: Method,
@@ -336,6 +341,16 @@ impl Api {
         body: Option<Value>,
         audit_reason: Option<HeaderValue>,
     ) -> Result<Value, ServiceError> {
+        self.request_attempts(method, path, body, audit_reason, 3).await
+    }
+    async fn request_attempts(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        audit_reason: Option<HeaderValue>,
+        attempts: u32,
+    ) -> Result<Value, ServiceError> {
         let endpoint = self.endpoint(path)?;
         let route = Route::new(&method, path);
         let safe_read = method == Method::GET || method == Method::HEAD;
@@ -349,7 +364,7 @@ impl Api {
             )?)
         };
         let _permits = self.begin().await?;
-        for attempt in 0..3 {
+        for attempt in 0..attempts {
             self.wait_route(&route).await?;
             let mut request = self.client.request(method.clone(), endpoint.clone());
             if let Some(reason) = &audit_reason {
@@ -372,7 +387,7 @@ impl Api {
             // Only a definite 429 on a read can retry automatically. The exact
             // deadline stays shared even when this call returns (e.g. 300s).
             if safe_read
-                && attempt < 2
+                && attempt + 1 < attempts
                 && result.as_ref().err().is_some_and(|e| {
                     e.kind == ErrorKind::RateLimited
                         && e.retry_after

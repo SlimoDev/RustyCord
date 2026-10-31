@@ -120,15 +120,15 @@ fn older_page_clicks_wait_for_the_matching_completion_and_cancel_on_navigation()
         ..template.clone() }).collect();
     for _ in 0..3 { chat_frame(&mut app, &ctx, &state, vec![]); }
     let output = chat_frame(&mut app, &ctx, &state, vec![]);
-    let older = painted_text(&output, "↑ Mensajes anteriores").center();
-    for pressed in [true, false] { chat_frame(&mut app, &ctx, &state, pointer(older, pressed, egui::PointerButton::Primary)); }
-    assert!(commands.try_recv().is_err(), "bottom is not the loaded older boundary");
+    assert!(maybe_painted_text(&output, "↑ Mensajes anteriores").is_none(), "bottom is not the loaded older boundary");
     // An actual wheel gesture reaches the top, then quiet frames retain it.
     let viewport = ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new("history-viewport"))).unwrap();
     chat_frame(&mut app, &ctx, &state, vec![egui::Event::PointerMoved(viewport.center()),
         egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0., 100000.), modifiers: egui::Modifiers::NONE }]);
     for _ in 0..5 { chat_frame(&mut app, &ctx, &state, vec![]); }
     assert!(app.positions["200"].offset <= 1.);
+    let output = chat_frame(&mut app, &ctx, &state, vec![]);
+    let older = painted_text(&output, "↑ Mensajes anteriores").center();
     for _ in 0..4 {
         for pressed in [true, false] { chat_frame(&mut app, &ctx, &state, pointer(older, pressed, egui::PointerButton::Primary)); }
     }
@@ -177,13 +177,13 @@ fn reaction_people_wait_for_stationary_hover_reuse_ttl_and_ignore_cancelled_or_f
     let output = reaction_test_frame(&mut app, &ctx, &state, 0.05, vec![]);
     let position = painted_text(&output, "7").center();
     reaction_test_frame(&mut app, &ctx, &state, 0.1, vec![egui::Event::PointerMoved(position)]);
-    reaction_test_frame(&mut app, &ctx, &state, 1., vec![]);
+    reaction_test_frame(&mut app, &ctx, &state, 0.4, vec![]);
     assert!(commands.try_recv().is_err(), "moving over reactions does not fetch their readers");
     // Four points of travel restart the dwell; the threshold is measured from
     // its origin, so a sequence of tiny movements cannot bypass it.
     let position = position + egui::vec2(4., 0.);
-    reaction_test_frame(&mut app, &ctx, &state, 1.1, vec![egui::Event::PointerMoved(position)]);
-    reaction_test_frame(&mut app, &ctx, &state, 1.5, vec![]);
+    reaction_test_frame(&mut app, &ctx, &state, 0.5, vec![egui::Event::PointerMoved(position)]);
+    reaction_test_frame(&mut app, &ctx, &state, 0.9, vec![]);
     assert!(commands.try_recv().is_err());
     reaction_test_frame(&mut app, &ctx, &state, 2.4, vec![]);
     let action = commands.try_recv().unwrap();
@@ -217,9 +217,11 @@ fn reaction_people_wait_for_stationary_hover_reuse_ttl_and_ignore_cancelled_or_f
     painted_text(&failed, "Consulta no disponible");
     state.notification_generation += 1;
     reaction_test_frame(&mut app, &ctx, &state, 34.7, vec![]);
-    let pending = reaction_test_frame(&mut app, &ctx, &state, 36., vec![]);
+    reaction_test_frame(&mut app, &ctx, &state, 36., vec![]);
     let renewed = commands.try_recv().unwrap();
     assert_ne!(renewed.extra, retried.extra);
+    // A new generation is a new panel, with its own invisible sizing pass.
+    let pending = reaction_test_frame(&mut app, &ctx, &state, 36.1, vec![]);
     painted_text(&pending, "Cargando usuarios");
     assert!(commands.try_recv().is_err());
 }
@@ -291,7 +293,10 @@ fn sent_gifs_hide_the_raw_link_but_the_card_can_copy_its_original_url() {
         }
         assert!(copied, "Right click must copy the original GIF link");
         assert!(message.content.contains(url), "The original text remains available for editing and copying");
-        assert!(commands.try_recv().is_err());
+        // Opening the menu may resolve the favorite state once; it never writes.
+        let mut demand = Vec::new();
+        while let Ok(action) = commands.try_recv() { demand.push(action.kind); }
+        assert_eq!(demand, ["picker-history", "gif-catalog"], "One read per session, whatever the repaints");
         assert!(app.viewer.is_none());
     }
 }

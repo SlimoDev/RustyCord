@@ -95,6 +95,7 @@ impl Controller {
         if action.extra.len()>8192 {return Err("Consulta de juegos demasiado grande.".into());}
         let stamp:Value=serde_json::from_str(&action.extra).map_err(|_|"Consulta de juegos sin correlación.")?;
         if !self.game_scope(&stamp) {return Ok(());}
+        if self.transport_suspended() {return Ok(());}
         let editor=s(&stamp,"editor");let opening=s(&stamp,"opening");
         if editor.is_empty()||editor.len()>160||editor.chars().any(char::is_control)
             || uuid::Uuid::parse_str(&opening).is_err()||uuid::Uuid::parse_str(&s(&stamp,"request")).is_err()

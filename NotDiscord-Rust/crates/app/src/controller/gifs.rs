@@ -116,6 +116,10 @@ impl Controller {
             return Err("Consulta GIF inválida".into());
         }
         let endpoint = pickers::endpoint(&request.mode, &request.query, request.limit)?;
+        if self.transport_suspended() && self.gif_state.cached(&request).is_none() {
+            self.gif_reply(&request, None, super::connection::OFFLINE);
+            return Ok(());
+        }
         if request.mode == "favorites" && !self.gif_state.removals.is_empty() {
             self.gif_reply(
                 &request,
@@ -180,10 +184,12 @@ impl Controller {
         );
         action.kind = "__gifs".into();
         action.id = endpoint.clone();
+        // The favorites read also serves the explicit status check: one request.
+        let once = request.mode == "favorites";
         action.extra =
             json!({"job":id,"stamp":request,"favoriteEpoch":self.gif_state.favorite_epoch})
                 .to_string();
-        self.launch(action,None,async move{tokio::select!{_=cancel.cancelled()=>Ok(json!({"cancelled":true})),value=api.get(&endpoint)=>value.map_err(|error|error.to_string())}});
+        self.launch(action,None,async move{tokio::select!{_=cancel.cancelled()=>Ok(json!({"cancelled":true})),value=async{if once {api.get_once(&endpoint).await} else {api.get(&endpoint).await}}=>value.map_err(|error|error.to_string())}});
         Ok(())
     }
     pub(super) fn cancel_gif_catalog(&mut self, extra: &str) {
@@ -354,6 +360,9 @@ impl Controller {
         if !self.gif_state.removals.is_empty() {
             return Err("Espera a que termine la conciliación del favorito anterior".into());
         }
+        if self.transport_suspended() {
+            return Err(super::connection::OFFLINE.into());
+        }
         let api = self.api()?;
         self.picker
             .as_mut()
@@ -366,18 +375,19 @@ impl Controller {
         self.launch(action,None,async move{
             let before=api.get("users/@me/settings-proto/2").await.map_err(|error|error.to_string())?;
             let patch=pickers::favorites_wire::remove(&s(&before,"settings"),&url)?;
-            let mut out_of_date=false;let mut write_error=false;
+            let mut out_of_date=false;
             if patch.changed {
                 match api.request(Method::PATCH,"users/@me/settings-proto/2",Some(json!({"settings":patch.encoded,"required_data_version":patch.data_version}))).await{
-                    Ok(value)=>out_of_date=value["out_of_date"].as_bool().unwrap_or(false),Err(_)=>write_error=true,
+                    Ok(value)=>out_of_date=value["out_of_date"].as_bool().unwrap_or(false),
+                    // Stop here: the journal survives, and only an explicit
+                    // check may read again. A PATCH is never repeated.
+                    Err(_)=>return Ok(json!({"uncertain":true})),
                 }
             }
-            // Never repeat PATCH after timeout/conflict. A fresh canonical read
-            // decides whether cleanup is allowed, even after an uncertain write.
             let after=api.get("users/@me/settings-proto/2").await.map_err(|error|error.to_string())?;
             let encoded=after.get("settings").and_then(Value::as_str).ok_or("Discord no entregó un estado canónico de guardados")?;
             let confirmed=!pickers::favorites_wire::contains(encoded,&url)?;
-            Ok(json!({"canonical":after,"confirmed":confirmed,"conflict":out_of_date,"uncertain":write_error}))
+            Ok(json!({"canonical":after,"confirmed":confirmed,"conflict":out_of_date}))
         });
         Ok(())
     }
@@ -388,6 +398,10 @@ impl Controller {
     ) -> Result<(), String> {
         self.gif_state.removals.remove(&action.id);
         self.gif_state.invalidate_favorites();
+        if value["uncertain"].as_bool() == Some(true) {
+            self.data("gif-favorite-result",json!({"owner":self.me(),"generation":self.state.notification_generation,"url":action.id,"operation":serde_json::from_str::<Value>(&action.extra).unwrap_or_default()["operation"],"confirmed":false,"uncertain":true,"error":"No se pudo confirmar si Discord lo quitó. Usa «Comprobar estado» antes de volver a intentarlo."}));
+            return Ok(());
+        }
         let page = pickers::parse(&value["canonical"], "favorites", 96)?;
         self.reconcile_picker_favorites(&s(&value["canonical"], "settings"));
         self.data(

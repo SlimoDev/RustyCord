@@ -9,7 +9,134 @@ fn settings_transform(open_zoom: f32, current_zoom: f32) -> egui::emath::TSTrans
     egui::emath::TSTransform::from_scaling(scale)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ColorField { Background, Separator, Accent }
+impl ColorField {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Background => "Color base de toda la interfaz · #RRGGBB",
+            Self::Separator => "Color de líneas separadoras · #RRGGBB",
+            Self::Accent => "Color de acento · #RRGGBB",
+        }
+    }
+    fn value(self, prefs: &mut Preferences) -> &mut String {
+        match self {
+            Self::Background => &mut prefs.background,
+            Self::Separator => &mut prefs.separator,
+            Self::Accent => &mut prefs.accent_color,
+        }
+    }
+}
+fn hex_color([red, green, blue]: [u8; 3]) -> String { format!("#{red:02X}{green:02X}{blue:02X}") }
+/// Child of the settings transaction: it edits the parent's draft live and
+/// keeps only what it needs to give that field back when cancelled.
+pub(super) struct ColorEditor {
+    field: ColorField,
+    original: String,
+    applied: String,
+    hsva: egui::ecolor::Hsva,
+    rgb: [u8; 3],
+    hex: String,
+}
+impl ColorEditor {
+    fn new(field: ColorField, value: &str) -> Self {
+        let color = theme::parse_color(value).unwrap_or(Color32::GRAY);
+        let rgb = [color.r(), color.g(), color.b()];
+        Self { field, original: value.to_owned(), applied: value.to_owned(),
+            hsva: egui::ecolor::Hsva::from_srgb(rgb), rgb, hex: hex_color(rgb) }
+    }
+    /// Conversions run only from the control the user touched. Hue and
+    /// saturation survive grays and black, where sRGB cannot carry them.
+    fn set_rgb(&mut self, rgb: [u8; 3]) {
+        let mut next = egui::ecolor::Hsva::from_srgb(rgb);
+        if next.s == 0. || next.v == 0. { next.h = self.hsva.h; }
+        if next.v == 0. { next.s = self.hsva.s; }
+        self.hsva = next;
+        self.rgb = rgb;
+    }
+}
 impl NotDiscordUi {
+    fn color_row(&mut self, ui: &mut egui::Ui, field: ColorField) {
+        ui.label(field.label());
+        ui.horizontal(|ui| {
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(28., 22.), egui::Sense::click());
+            if let Some(color) = theme::parse_color(field.value(&mut self.prefs)) { ui.painter().rect_filled(rect, 4., color); }
+            ui.painter().rect_stroke(rect, 4., egui::Stroke::new(1_f32, self.theme.line), egui::StrokeKind::Inside);
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Cambiar color"));
+            if response.on_hover_text("Cambiar color").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                self.color_editor = Some(ColorEditor::new(field, field.value(&mut self.prefs)));
+            }
+            ui.add(bordered(egui::TextEdit::singleline(field.value(&mut self.prefs))).submit_action("appearance-save"));
+        });
+    }
+    /// Restores only the field being edited; the parent keeps its other changes.
+    pub(super) fn cancel_color_editor(&mut self) {
+        if let Some(editor) = self.color_editor.take() { *editor.field.value(&mut self.prefs) = editor.original; }
+    }
+    fn draw_color_editor(&mut self, ctx: &egui::Context, transform: egui::emath::TSTransform) {
+        let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("color-editor"));
+        let Some(mut editor) = self.color_editor.take() else {
+            ctx.set_transform_layer(layer, egui::emath::TSTransform::IDENTITY);
+            return;
+        };
+        // Reset and presets rewrite the draft: this opening no longer owns it.
+        if *editor.field.value(&mut self.prefs) != editor.applied {
+            ctx.set_transform_layer(layer, egui::emath::TSTransform::IDENTITY);
+            return;
+        }
+        ctx.set_transform_layer(layer, transform);
+        ctx.memory_mut(|memory| memory.set_modal_layer(layer));
+        let (mut open, mut accept, mut cancel, mut changed) = (true, false, false, false);
+        egui::Window::new("Cambiar color").id(egui::Id::new("color-editor")).order(egui::Order::Foreground)
+            .open(&mut open).collapsible(false).resizable(false)
+            .pivot(egui::Align2::CENTER_CENTER).default_pos(ctx.content_rect().center())
+            .show(ctx, |ui| {
+                ui.label(RichText::new(editor.field.label()).small().color(self.theme.muted));
+                if egui::color_picker::color_picker_hsva_2d(ui, &mut editor.hsva, egui::color_picker::Alpha::Opaque) {
+                    editor.rgb = editor.hsva.to_srgb();
+                    editor.hex = hex_color(editor.rgb);
+                    changed = true;
+                }
+                ui.add_space(4.);
+                ui.horizontal(|ui| {
+                    let mut rgb = editor.rgb;
+                    let mut touched = false;
+                    for (channel, prefix) in rgb.iter_mut().zip(["R ", "G ", "B "]) {
+                        touched |= ui.add(egui::DragValue::new(channel).range(0..=255).prefix(prefix)).changed();
+                    }
+                    if touched {
+                        editor.set_rgb(rgb);
+                        editor.hex = hex_color(rgb);
+                        changed = true;
+                    }
+                });
+                let hex = ui.add(bordered(egui::TextEdit::singleline(&mut editor.hex).desired_width(96.)).submit_action("color-apply"));
+                let valid = theme::parse_color(&editor.hex);
+                if hex.changed() && let Some(color) = valid {
+                    // Keep the typed buffer as is; only the draft takes the new color.
+                    editor.set_rgb([color.r(), color.g(), color.b()]);
+                    changed = true;
+                }
+                if valid.is_none() { ui.colored_label(ui.visuals().error_fg_color, "Usa el formato #RRGGBB."); }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let submitted = super::input_ownership::take_action(ctx, "color-apply");
+                    accept = (ui.add_enabled(valid.is_some(), egui::Button::new("Aplicar")).clicked() || submitted) && valid.is_some();
+                    cancel = ui.button("Cancelar").clicked();
+                });
+            });
+        if changed {
+            let value = hex_color(editor.rgb);
+            editor.applied = value.clone();
+            *editor.field.value(&mut self.prefs) = value;
+        }
+        if accept { ctx.set_transform_layer(layer, egui::emath::TSTransform::IDENTITY); return; }
+        self.color_editor = Some(editor);
+        if cancel || !open {
+            self.cancel_color_editor();
+            ctx.set_transform_layer(layer, egui::emath::TSTransform::IDENTITY);
+        }
+    }
     pub(super) fn media_error_link(&mut self, ui: &mut egui::Ui, error: &str) -> bool {
         if super::media_limit::is_limit_error(error) {
             let response = ui.link(error).on_hover_text("Cambiar el límite de descarga de imágenes y GIFs");
@@ -75,12 +202,7 @@ impl NotDiscordUi {
                     ui.label(RichText::new("Se respetan No molestar y las conversaciones silenciadas. Pulsar un aviso abre el chat sin responder llamadas.").small().color(self.theme.muted));
                     ui.separator();
                     ui.label(RichText::new("Colores y fondos").strong());
-                    ui.label("Color base de toda la interfaz · #RRGGBB");
-                    ui.add(bordered(egui::TextEdit::singleline(&mut self.prefs.background)).submit_action("appearance-save"));
-                    ui.label("Color de líneas separadoras · #RRGGBB");
-                    ui.add(bordered(egui::TextEdit::singleline(&mut self.prefs.separator)).submit_action("appearance-save"));
-                    ui.label("Color de acento · #RRGGBB");
-                    ui.add(bordered(egui::TextEdit::singleline(&mut self.prefs.accent_color)).submit_action("appearance-save"));
+                    for field in [ColorField::Background, ColorField::Separator, ColorField::Accent] { self.color_row(ui, field); }
                     ui.horizontal_wrapped(|ui| {
                         for (name, bg, line, accent) in [("Discord", "#313338", "#45474D", "#5865F2"), ("Noche azul", "#13263A", "#36516A", "#54BDFF"), ("Bosque", "#142B25", "#386652", "#60D49A"), ("Claro", "#F1F3F6", "#ABB4C1", "#4055CB")] {
                             if ui.button(name).clicked() { self.prefs.background = bg.into(); self.prefs.separator = line.into(); self.prefs.accent_color = accent.into(); }
@@ -126,6 +248,7 @@ impl NotDiscordUi {
                     }
                 });
             });
+        self.draw_color_editor(ctx, settings_transform(opening_zoom, current_zoom));
         if theme::parse_color(&self.prefs.background).is_some() {
             self.theme = Theme::from_preferences(&self.prefs);
             self.theme.apply(ctx, &self.prefs);
@@ -134,6 +257,8 @@ impl NotDiscordUi {
             self.dialog = None;
         }
         if close || !*open || !matches!(self.dialog, Some(Dialog::Settings)) {
+            self.cancel_color_editor();
+            ctx.set_transform_layer(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("color-editor")), egui::emath::TSTransform::IDENTITY);
             ctx.data_mut(|data| data.remove::<f32>(key));
             ctx.set_transform_layer(layer, egui::emath::TSTransform::IDENTITY);
         }
@@ -143,6 +268,31 @@ impl NotDiscordUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn color_editor_keeps_hue_through_gray_and_restores_only_its_own_field() {
+        let mut editor = ColorEditor::new(ColorField::Accent, "#FF0000");
+        let hue = editor.hsva.h;
+        editor.set_rgb([128, 128, 128]);
+        assert_eq!(editor.hsva.h, hue);
+        editor.set_rgb([0, 0, 0]);
+        assert_eq!(editor.hsva.h, hue);
+        assert_eq!(hex_color([0x12, 0xAB, 0x05]), "#12AB05");
+        let (mut app, _, _) = super::super::tests::harness();
+        app.prefs.separator = "#111111".into();
+        app.prefs.accent_color = "#222222".into();
+        app.color_editor = Some(ColorEditor::new(ColorField::Accent, "#222222"));
+        app.prefs.accent_color = "#333333".into();
+        app.cancel_color_editor();
+        assert_eq!((app.prefs.accent_color.as_str(), app.prefs.separator.as_str()), ("#222222", "#111111"));
+    }
+    #[test]
+    fn orderly_close_never_saves_an_unaccepted_preview_or_an_invalid_color() {
+        let (mut app, _, _) = super::super::tests::harness();
+        app.settings_backup = Some(app.prefs.clone());
+        app.prefs.background = "#12".into();
+        assert!(app.prepare_orderly_close().is_err());
+        assert!(app.settings_backup.is_some());
+    }
     #[test]
     fn size_warning_uses_link_cursor_and_opens_settings_scrolled_to_its_exact_control() {
         let (mut app,_,_)=super::super::tests::harness();
