@@ -327,6 +327,10 @@ Tras verificar el asset se incorpora su metadata a `version.json` de la rama `No
 
 NotDiscord+ conserva sus 38 archivos de distribución y la rama `d35c06ac7e824c17198791b3d9208f732bc8be81`; legacy permanece en `637d41f897a0e435c3d7e26d1c400afd6a640d0e`. Se contrastaron antes/después. No se modificaron instalaciones, datos ni accesos directos de uso del usuario.
 
+### Corrección posterior del arranque — 0.10.1
+
+El usuario detectó que 0.10.0 dejaba vacío el catálogo inicial aunque recibía mensajes. La protección final capturaba el trabajo de `READY_CATALOG` antes de `Synchronized`. La actualización Pequeña 0.10.1 difiere esa demanda y conserva las barreras de generación; causa, comprobaciones y publicación se registran en [startup-catalog-0.10.1.md](startup-catalog-0.10.1.md).
+
 ### Huellas de fuentes del corte de planificación
 
 Rutas relativas a `NotDiscord-Rust/`; hashes SHA-256. Las líneas citadas corresponden a la base indicada y deben revalidarse si avanza la rama.
