@@ -303,6 +303,30 @@ La revisión previa detectó dos brechas de C0 no cubiertas por la admisión ini
 
 Se actualizan los README y el contrato de distribución para 0.10.0. El runtime se prepara en un staging nuevo con inventario de 31 componentes x64, preservando vendor por hash y loaders del checkout. Se compilará la revisión definitiva con `NOTDISCORD_BUILD_ID` y manifiesto `release: null`; después se generará Setup y sólo se anunciará tras verificar su asset remoto. Las nuevas regresiones se añaden como fuentes; en esta publicación no se ejecutan pruebas, cliente, cuentas, dispositivos ni instalador. Los resultados históricos de la entrega de Claude no se convierten en resultados de esta revisión.
 
+### Instalador 0.10.0 publicado — 1 de noviembre de 2026
+
+Publicación autorizada por el usuario y verificada en GitHub: [NotDiscord 0.10.0](https://github.com/SlimoDev/RustyCord/releases/tag/NotDiscord-v0.10.0), pública, sin draft/prerelease, título exacto y un único asset. La etiqueta resuelve a **`aa5b31239b57be9a607bcd5c4085d87d06f67755`**, la revisión compilada y el build ID. Incluye el commit de Claude `9e1519a6` y el cierre de las dos brechas de C0 descritas arriba.
+
+Comprobaciones propias de esta publicación:
+
+- `cargo check --workspace --all-targets --release --locked --offline -j1`: correcto en **31,10 s**, sin ejecutar destinos.
+- `cargo build --workspace --release --locked --offline -j1`: correcto en **7 min 09 s**. Se conservaron advertencias existentes; no hay errores de compilación.
+- Las **429 fuentes/entradas de compilación** conservaron sus hashes durante check/build; manifiesto agregado SHA-256 `8c88b3edb0e3efa0f7f105913e2209ce44dd78f834de459c85e695c0e19cf80b`.
+- Runtime nuevo de 31 componentes x64 y payload de **41 archivos** verificados por inventario/hashes; EXE y addon del payload idénticos a los compilados. Inno Setup compiló sólo Setup, excluyendo datos, cachés y lanzador CMD.
+- Tamaño y digest del asset remoto coinciden con el instalador local; la etiqueta también fue resuelta y contrastada con la revisión compilada antes de anunciar el manifiesto.
+- Las nueve regresiones añadidas para la suspensión de HTTP/ACK se compilaron como parte de todos los destinos; **no se ejecutaron**. Tampoco se ejecutaron cliente, instalador, cuentas ni dispositivos. La apariencia y el funcionamiento real siguen pendientes del usuario.
+
+| Artefacto | Identidad verificada |
+|---|---|
+| Instalador | `NotDiscord-Setup-0.10.0.exe`, **118 867 311 bytes** |
+| SHA-256 Setup | `f0345ae8c3bfaf978a68796cfadc783da325d1749696a8b46b8485f9ac4877d9` |
+| SHA-256 EXE | `861aef50d274c7aaf49ee76c369a1395d01ead3acadb80f999ac09ca9e6c1d29` |
+| SHA-256 addon | `0ab369b57973d1837b68b34881f3168e1a68b2a94e7d3441c7a1607131cc75d5` |
+
+Tras verificar el asset se incorpora su metadata a `version.json` de la rama `NotDiscord`. El instalador contiene el manifiesto `release: null` de la compilación; no se reconstruye para introducir su propio hash. Logs, inventarios y recibos de publicación quedan en `.tools/temp/current/release-0100/`, fuera de Git y del instalador. `evidence/` sigue fuera del commit.
+
+NotDiscord+ conserva sus 38 archivos de distribución y la rama `d35c06ac7e824c17198791b3d9208f732bc8be81`; legacy permanece en `637d41f897a0e435c3d7e26d1c400afd6a640d0e`. Se contrastaron antes/después. No se modificaron instalaciones, datos ni accesos directos de uso del usuario.
+
 ### Huellas de fuentes del corte de planificación
 
 Rutas relativas a `NotDiscord-Rust/`; hashes SHA-256. Las líneas citadas corresponden a la base indicada y deben revalidarse si avanza la rama.
