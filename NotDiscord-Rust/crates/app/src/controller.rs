@@ -1040,6 +1040,13 @@ impl Controller {
         if self.sidebar_inflight {
             return;
         }
+        // READY_CATALOG precedes Synchronized. Retain its seed as demand,
+        // not as an HTTP job with a closed-generation ticket. The normal tick
+        // starts one fresh job after synchronization without replaying old work.
+        if self.transport_suspended() {
+            self.sidebar_wait = Some(Instant::now());
+            return;
+        }
         let Ok(api) = self.api() else { return };
         self.sidebar_wait = None;
         self.sidebar_inflight = true;

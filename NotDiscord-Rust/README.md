@@ -1,6 +1,8 @@
-# NotDiscord Rust 0.10.0
+# NotDiscord Rust 0.10.1
 
 Versión principal para Windows en Rust, rama `NotDiscord`. NotDiscord+ conserva su versión anterior en `codex/notdiscord-plus`; esta entrega no actualiza su rama ni su paquete.
+
+0.10.1 es una actualización Pequeña que corrige la carga inicial de servidores, conversaciones y amigos de 0.10.0. La [nota de corrección](docs/startup-catalog-0.10.1.md) documenta la causa, la espera hasta la sincronización y las verificaciones realizadas o pendientes.
 
 0.10.0 incorpora recuperación conservadora de conexión, conciliación de envíos por nonce, favoritos GIF desde el chat, lector de adjuntos de texto y ajustes de reacciones, diagnóstico y colores. El [plan y estado de la tanda](docs/plan-conexion-envios-adjuntos-ui-2026-10-31.md) distingue los cambios, las comprobaciones y los casos pendientes de confirmación funcional.
 
@@ -24,8 +26,9 @@ NotDiscord utiliza `%LOCALAPPDATA%/NotDiscord/shared/configuration.json` y una s
 
 Plus continúa usando sus archivos anteriores. La sincronización continua y la exclusión bidireccional con Plus quedan pendientes hasta que se autorice actualizar esa variante. NotDiscord puede solicitar el cierre ordenado de una instancia anterior de su instalación y muestra el motivo.
 
-El manifiesto `version.json` identifica versión y rama. El artefacto de distribución de esta versión es un único `dist/NotDiscord-Setup-0.10.0.exe`, con el runtime requerido; su disponibilidad y hashes se anuncian en el manifiesto al publicar. `release: null` indica que todavía no hay instalador anunciado para esa versión. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
+El manifiesto `version.json` identifica versión y rama. El artefacto de distribución de esta versión es un único `dist/NotDiscord-Setup-0.10.1.exe`, con el runtime requerido; su disponibilidad y hashes se anuncian en el manifiesto al publicar. `release: null` indica que todavía no hay instalador anunciado para esa versión. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
 
+- [Corrección de carga inicial de catálogos en 0.10.1](docs/startup-catalog-0.10.1.md)
 - [Plan y estado de conexión, envíos, adjuntos e interfaz de 0.10.0](docs/plan-conexion-envios-adjuntos-ui-2026-10-31.md)
 - [Plan de correcciones y estado de 0.7.0](docs/plan-correcciones-interaccion-llamadas-gifs-2026-10-27.md)
 - [Entrada y pegado](docs/input-0.7.0.md)

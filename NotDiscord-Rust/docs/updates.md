@@ -4,18 +4,23 @@ Esta entrega actualiza sólo **NotDiscord estándar**. NotDiscord+ conserva su r
 ejecutable y accesos directos anteriores; todavía no participa en el actualizador
 ni en la configuración y exclusión bidireccionales nuevas.
 
-El formato de distribución de 0.10.0 es exclusivamente el instalador
-**NotDiscord-Setup-0.10.0.exe**. No se publica una edición portable de esta versión.
+El formato de distribución de 0.10.1 es exclusivamente el instalador
+**NotDiscord-Setup-0.10.1.exe**. No se publica una edición portable de esta versión.
 La instalación permite elegir una carpeta y, por defecto, utiliza Programs del
 usuario para no requerir elevación. Una ruta protegida necesita el consentimiento
 normal de Windows; el actualizador no intenta eludir UAC.
 
-0.10.0 es una actualización Mediana desde 0.9.0. El
+0.10.1 es una actualización Pequeña desde 0.10.0. La
+[corrección de carga inicial](startup-catalog-0.10.1.md) documenta la regresión
+de catálogos vacíos, la espera hasta la sincronización y el estado de verificación.
+La disponibilidad remota del instalador y sus hashes se anuncian mediante
+`version.json` después de verificar la publicación; el nombre del artefacto no
+acredita por sí solo que ya esté disponible.
+
+0.10.0 fue una actualización Mediana desde 0.9.0. El
 [plan y estado de la tanda](plan-conexion-envios-adjuntos-ui-2026-10-31.md)
 documenta la recuperación conservadora de conexión, los envíos, adjuntos y
-ajustes de interfaz. La disponibilidad remota del instalador y sus hashes se
-anuncian mediante `version.json` después de verificar la publicación; el nombre
-del artefacto no acredita por sí solo que ya esté disponible.
+ajustes de interfaz de esa entrega.
 
 version.json utiliza schema 2, variant standard y branch NotDiscord. La aplicación
 consulta ese archivo en la rama NotDiscord de SlimoDev/RustyCord mediante la API
@@ -52,18 +57,18 @@ workflow de CI que produzca el instalador: la compilación de desarrollo y el
 payload temporal siguen siendo necesarios. Un futuro CI autorizado podría
 producir esos mismos artefactos y evitar repetir esa compilación local.
 
-El manifiesto con instalador tiene esta estructura ilustrativa para 0.10.0;
+El manifiesto con instalador tiene esta estructura ilustrativa para 0.10.1;
 los hashes y el tamaño de ejemplo no son datos de una publicación verificada:
 
     {
       "schema": 2,
       "variant": "standard",
       "branch": "NotDiscord",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "release": {
         "kind": "installer",
-        "tag": "NotDiscord-v0.10.0",
-        "url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.10.0/NotDiscord-Setup-0.10.0.exe",
+        "tag": "NotDiscord-v0.10.1",
+        "url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.10.1/NotDiscord-Setup-0.10.1.exe",
         "sha256": "<SHA-256 del Setup.exe>",
         "bytes": 123,
         "executable_sha256": "<SHA-256 del NotDiscord.exe que instala>"
@@ -103,18 +108,19 @@ de ejecución siguen idénticos. Los registros permanecen en la carpeta de prepa
 
 Para preparar la publicación, después de compilar el cliente y el instalador:
 
-    .\prepare-update-release.ps1 -Installer 'dist\NotDiscord-Setup-0.10.0.exe' -Executable 'ruta-del-payload\NotDiscord.exe' -Destination 'ruta-nueva\version.json'
+    .\prepare-update-release.ps1 -Installer 'dist\NotDiscord-Setup-0.10.1.exe' -Executable 'ruta-del-payload\NotDiscord.exe' -Destination 'ruta-nueva\version.json'
 
 El script únicamente lee los ejecutables compilados y escribe el manifiesto; no
 ejecuta, sube o publica nada, ni crea un ZIP. Se publica el Setup.exe como asset de
-NotDiscord-v0.10.0 y después el manifiesto generado en la rama NotDiscord. Primero
+NotDiscord-v0.10.1 y después el manifiesto generado en la rama NotDiscord. Primero
 se compila con release null, se empaqueta y se calculan los hashes; el manifiesto
 con el hash del instalador no se vuelve a incluir en ese mismo instalador, evitando
 un ciclo de hashes. Los hashes verifican integridad respecto de la publicación;
 no sustituyen la confianza en quienes pueden publicar en el repositorio.
 
 La preparación de la entrega no ejecuta el instalador ni el cliente. Las
-comprobaciones de la tanda figuran en su plan; compilación, revisión estática y
+comprobaciones de esta corrección figuran en su [nota](startup-catalog-0.10.1.md)
+y las de 0.10.0 en su plan; compilación, revisión estática y
 pruebas sintéticas no verifican instalación, UAC, cierre o reinicio reales.
 El comportamiento funcional con Discord real queda pendiente de confirmación
 del usuario.

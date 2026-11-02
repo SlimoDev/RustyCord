@@ -126,6 +126,89 @@ pub(super) fn deferred_while_offline(kind: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn initial_ready_catalog_waits_for_sync_without_pinning_an_offline_api() {
+        use notdiscord_core::api::ErrorKind;
+
+        let (mut c, _, mut replies) = Controller::test_fixture_with_replies();
+        // Model the prepared session immediately after __login, without opening
+        // a Gateway, account, loopback server or device.
+        c.api = Some(Api::new("synthetic-startup-credential-only".into()).unwrap());
+        c.state.signed_in = true;
+        c.state.current_user = Some(Person { id: "1".into(), ..Default::default() });
+        c.state.connection_phase = ConnectionPhase::Connecting;
+        c.sync_transport_gate();
+        let offline_work = c.api().unwrap();
+        let previous_epoch = c.sidebar_epoch;
+        let seed = json!({
+            "guilds": null,
+            "dms": [{"id":"20","type":1,"recipients":[{"id":"42","username":"Fixture peer"}]}],
+            "relationships": [{"id":"42","type":1,"user":{"id":"42","username":"Fixture peer"}}]
+        });
+
+        // The real delivery order is READY_CATALOG, then Synchronized. Do not
+        // yield between them: even a future first polled after sync must not
+        // inherit an API clone captured while Connecting.
+        c.dispatch("READY_CATALOG", seed.clone()).await.unwrap();
+        assert_eq!(c.sidebar_seed, seed);
+        assert_eq!(c.sidebar_epoch, previous_epoch.wrapping_add(1));
+        assert!(!c.sidebar_inflight);
+        assert!(c.sidebar_wait.is_some());
+        assert!(replies.try_recv().is_err());
+        c.connection_changed(ConnectionChange {
+            phase: ConnectionPhase::Synchronized, wait: Duration::ZERO, resumed: false,
+        });
+        tokio::task::yield_now().await;
+        assert!(replies.try_recv().is_err(), "Connecting must not have launched a failing sidebar task");
+        assert_eq!(c.sidebar_seed, seed);
+        assert!(c.sidebar_wait.is_some());
+
+        // An invalid route is rejected before any I/O, but only after checking
+        // the transport ticket. Thus admission can be checked without HTTP.
+        const NO_IO_ROUTE: &str = "../startup-admission-fixture";
+        assert_eq!(offline_work.clone().get_once(NO_IO_ROUTE).await.unwrap_err().kind,
+            ErrorKind::TransportUnavailable);
+        let fresh_work = c.api().unwrap();
+        assert_eq!(fresh_work.get_once(NO_IO_ROUTE).await.unwrap_err().kind, ErrorKind::Other);
+
+        // Exercise the missing-component read with the existing pure loader
+        // fixture, rather than sending an authenticated request in this test.
+        let reads = std::cell::RefCell::new(Vec::new());
+        let canonical = request_policy::load_sidebar(c.sidebar_seed.clone(), |path| {
+            reads.borrow_mut().push(path);
+            std::future::ready(Ok(json!([{"id":"10","name":"Fixture guild","permissions":"1024"}])))
+        }).await.unwrap();
+        assert_eq!(reads.into_inner(), ["users/@me/guilds?limit=200"]);
+
+        // The production scheduler can consume the now-complete fixture with
+        // no GETs. Repeated admission while it is in flight is coalesced.
+        c.sidebar_seed = canonical.clone();
+        c.sidebar();
+        c.sidebar();
+        assert!(c.sidebar_inflight && c.sidebar_wait.is_none());
+        let done = tokio::time::timeout(Duration::from_secs(1), replies.recv())
+            .await.unwrap().unwrap();
+        assert!(c.accepts(&done));
+        assert_eq!(done.action.kind, "__sidebar");
+        assert_eq!(done.result.as_ref().unwrap(), &canonical);
+        assert!(replies.try_recv().is_err());
+        let stale = Completed {
+            generation: c.generation, nav: None,
+            action: UiAction { kind: "__sidebar".into(), extra: previous_epoch.to_string(), ..Default::default() },
+            result: Ok(canonical), credential: None,
+        };
+        assert!(!c.accepts(&stale));
+        // Prevent navigation restoration from scheduling another page request.
+        c.state.selected_channel_id = "20".into();
+        c.complete(done.action, done.result.unwrap()).await.unwrap();
+        assert_eq!(c.state.guilds.len(), 1);
+        assert_eq!(c.state.direct_messages.len(), 1);
+        assert_eq!(c.state.relationships.len(), 1);
+        assert!(!c.sidebar_inflight && c.sidebar_wait.is_none());
+        assert!(replies.try_recv().is_err());
+    }
+
     #[tokio::test]
     async fn repeated_retries_coalesce_and_optional_traffic_waits_for_synchronization() {
         let (mut c, _) = Controller::test_fixture();
