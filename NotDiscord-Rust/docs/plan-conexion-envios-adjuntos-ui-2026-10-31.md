@@ -295,7 +295,15 @@ Límite de esta verificación: las pruebas de voz sólo comprueban la interfaz y
 
 Cubierto por pruebas que pasan: política de un intento y detención del Gateway, coalescencia de clics, conciliación por nonce en ambos órdenes, clasificación de fallos, decodificación y límites del visor, editor de color y cierre ordenado. También el panel de reacciones, el orden de filas locales y el control de micrófono propio. Sin confirmar: apariencia, DPI, Explorador, portapapeles, CDN real y comportamiento con Discord real. Los criterios de aceptación visuales y de servicio siguen pendientes del usuario.
 
-### Huellas de fuentes del corte
+### Preparación de publicación — 1 de noviembre de 2026
+
+El usuario autorizó integrar en `NotDiscord` y publicar instalador/manifiesto después del push de `9e1519a6a5889b67c122f961f913f8faee1802f2`. Se conserva la clasificación Mediana y la versión 0.10.0: aún no había una release de esta versión. La instalación y los accesos locales no se modifican.
+
+La revisión previa detectó dos brechas de C0 no cubiertas por la admisión inicial: futuros HTTP ya lanzados podían esperar el semáforo y emitir después de perder sincronización; y el lote de ACK podía entregar hasta dieciséis operaciones al recuperar conexión. Se detuvo el primer build antes de empaquetar para cerrar esas rutas. La corrección liga el trabajo HTTP a la generación del transporte, revalida antes de emitir e invalida las esperas anteriores sin reenviarlas; el backlog de ACK se retira al suspender y queda como máximo uno en vuelo. Una petición ya emitida conserva su confirmación o resultado desconocido y las barreras de operación/rate limit.
+
+Se actualizan los README y el contrato de distribución para 0.10.0. El runtime se prepara en un staging nuevo con inventario de 31 componentes x64, preservando vendor por hash y loaders del checkout. Se compilará la revisión definitiva con `NOTDISCORD_BUILD_ID` y manifiesto `release: null`; después se generará Setup y sólo se anunciará tras verificar su asset remoto. Las nuevas regresiones se añaden como fuentes; en esta publicación no se ejecutan pruebas, cliente, cuentas, dispositivos ni instalador. Los resultados históricos de la entrega de Claude no se convierten en resultados de esta revisión.
+
+### Huellas de fuentes del corte de planificación
 
 Rutas relativas a `NotDiscord-Rust/`; hashes SHA-256. Las líneas citadas corresponden a la base indicada y deben revalidarse si avanza la rama.
 

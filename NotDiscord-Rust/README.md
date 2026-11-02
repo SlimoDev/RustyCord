@@ -1,6 +1,8 @@
-# NotDiscord Rust 0.7.0
+# NotDiscord Rust 0.10.0
 
 Versión principal para Windows en Rust, rama `NotDiscord`. NotDiscord+ conserva su versión anterior en `codex/notdiscord-plus`; esta entrega no actualiza su rama ni su paquete.
+
+0.10.0 incorpora recuperación conservadora de conexión, conciliación de envíos por nonce, favoritos GIF desde el chat, lector de adjuntos de texto y ajustes de reacciones, diagnóstico y colores. El [plan y estado de la tanda](docs/plan-conexion-envios-adjuntos-ui-2026-10-31.md) distingue los cambios, las comprobaciones y los casos pendientes de confirmación funcional.
 
 ## Compilación e instalador
 
@@ -22,8 +24,9 @@ NotDiscord utiliza `%LOCALAPPDATA%/NotDiscord/shared/configuration.json` y una s
 
 Plus continúa usando sus archivos anteriores. La sincronización continua y la exclusión bidireccional con Plus quedan pendientes hasta que se autorice actualizar esa variante. NotDiscord puede solicitar el cierre ordenado de una instancia anterior de su instalación y muestra el motivo.
 
-El manifiesto `version.json` identifica versión y rama. La distribución es un único `dist/NotDiscord-Setup-0.7.0.exe`, con el runtime requerido. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
+El manifiesto `version.json` identifica versión y rama. El artefacto de distribución de esta versión es un único `dist/NotDiscord-Setup-0.10.0.exe`, con el runtime requerido; su disponibilidad y hashes se anuncian en el manifiesto al publicar. `release: null` indica que todavía no hay instalador anunciado para esa versión. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
 
+- [Plan y estado de conexión, envíos, adjuntos e interfaz de 0.10.0](docs/plan-conexion-envios-adjuntos-ui-2026-10-31.md)
 - [Plan de correcciones y estado de 0.7.0](docs/plan-correcciones-interaccion-llamadas-gifs-2026-10-27.md)
 - [Entrada y pegado](docs/input-0.7.0.md)
 - [Geometría de animaciones](docs/animation-0.7.0.md)
@@ -47,4 +50,4 @@ El manifiesto `version.json` identifica versión y rama. La distribución es un 
 - [Feedback de navegación y entrega de 0.4.1](docs/ui-0.4.1.md)
 - [Evidencia de Markdown obtenida con REA](docs/rea-markdown-0.4.0.md)
 
-La entrega se comprueba mediante revisión de código y compilación de producción y destinos auxiliares. No se ejecutan pruebas funcionales, dispositivos, llamadas ni cuentas. La confirmación del comportamiento corresponde al usuario.
+Las comprobaciones realizadas y pendientes figuran en el plan de la tanda. La revisión de código, compilación y pruebas sintéticas no sustituyen la confirmación visual y de servicio con Discord real, que corresponde al usuario. En esta publicación no se ejecutan pruebas, cliente, cuentas, dispositivos ni instalador.

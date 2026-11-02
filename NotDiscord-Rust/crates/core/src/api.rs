@@ -11,8 +11,8 @@ use reqwest::{
     redirect::Policy,
 };
 use serde_json::{Value, json};
-use std::{fmt, path::PathBuf, sync::Arc, time::Duration};
-use tokio::sync::{Semaphore, SemaphorePermit};
+use std::{fmt, future::Future, path::PathBuf, sync::Arc, task::Poll, time::Duration};
+use tokio::sync::{Semaphore, SemaphorePermit, watch};
 use tokio::io::AsyncReadExt;
 use url::Url;
 use zeroize::Zeroizing;
@@ -31,6 +31,7 @@ pub enum ErrorKind {
     QueueFull,
     OperationPending,
     OperationCompleted,
+    TransportUnavailable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -90,8 +91,27 @@ impl fmt::Display for ServiceError {
 }
 impl std::error::Error for ServiceError {}
 
+#[derive(Clone, Copy)]
+struct TransportState {
+    generation: u64,
+    available: bool,
+}
+impl TransportState {
+    fn check(self, current: Self) -> Result<(), ServiceError> {
+        if self.available && current.available && self.generation == current.generation {
+            Ok(())
+        } else {
+            Err(ServiceError::typed(
+                ErrorKind::TransportUnavailable,
+                "La conexión cambió antes de enviar esta operación. No se ha enviado; vuelve a intentarlo cuando esté sincronizada.",
+            ))
+        }
+    }
+}
+
 /// The only authenticated HTTP client. It cannot send credentials to media hosts.
-#[derive(Clone)]
+/// The original handle owns the session. Clones bind work to its current
+/// transport generation, including work whose future has not been polled yet.
 pub struct Api {
     client: reqwest::Client,
     _credential: Arc<Zeroizing<String>>,
@@ -100,11 +120,33 @@ pub struct Api {
     safety: SafetyGate,
     rates: Arc<RateLimits>,
     operations: Arc<Operations>,
+    transport: Arc<watch::Sender<TransportState>>,
+    transport_ticket: Option<TransportState>,
     base: Url,
     #[cfg(test)]
     test_endpoint: Option<Url>,
     #[cfg(test)]
     body_started: Option<Arc<tokio::sync::Notify>>,
+}
+impl Clone for Api {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            _credential: self._credential.clone(),
+            gate: self.gate.clone(),
+            pending: self.pending.clone(),
+            safety: self.safety.clone(),
+            rates: self.rates.clone(),
+            operations: self.operations.clone(),
+            transport: self.transport.clone(),
+            transport_ticket: Some(self.transport_ticket.unwrap_or_else(|| *self.transport.borrow())),
+            base: self.base.clone(),
+            #[cfg(test)]
+            test_endpoint: self.test_endpoint.clone(),
+            #[cfg(test)]
+            body_started: self.body_started.clone(),
+        }
+    }
 }
 impl Api {
     pub fn new(credential: String) -> Result<Self, ServiceError> {
@@ -141,6 +183,8 @@ impl Api {
             safety,
             rates: Arc::new(RateLimits::default()),
             operations: Arc::new(Operations::default()),
+            transport: Arc::new(watch::channel(TransportState { generation: 0, available: true }).0),
+            transport_ticket: None,
             base: Url::parse("https://discord.com/api/v9/").unwrap(),
             #[cfg(test)]
             test_endpoint: None,
@@ -164,6 +208,35 @@ impl Api {
     pub fn safety(&self) -> SafetyGate {
         self.safety.clone()
     }
+    /// Controlled by the session's connection owner, independently of terminal
+    /// safety stops. Reopening admits new work, never a previous generation.
+    /// Rate limits and pending/unknown operations survive every transition.
+    pub fn set_transport_available(&self, available: bool) {
+        self.transport.send_if_modified(|state| {
+            if state.available == available { return false; }
+            if !available { state.generation = state.generation.wrapping_add(1); }
+            state.available = available;
+            true
+        });
+    }
+    fn capture_transport(&self) -> Result<TransportState, ServiceError> {
+        self.safety.check()?;
+        let current = *self.transport.borrow();
+        let ticket = self.transport_ticket.unwrap_or(current);
+        ticket.check(current)?;
+        Ok(ticket)
+    }
+    fn check_transport(&self, ticket: TransportState) -> Result<(), ServiceError> {
+        ticket.check(*self.transport.borrow())
+    }
+    async fn transport_changed(&self, ticket: TransportState) {
+        let mut changes = self.transport.subscribe();
+        loop {
+            if ticket.check(*changes.borrow_and_update()).is_err() { return; }
+            // This Api retains the sender. A closed watcher must fail closed.
+            if changes.changed().await.is_err() { return; }
+        }
+    }
     fn endpoint(&self, path: &str) -> Result<Url, ServiceError> {
         let endpoint = validate_route(&self.base, path)?;
         #[cfg(test)]
@@ -174,8 +247,9 @@ impl Api {
         }
         Ok(endpoint)
     }
-    async fn begin(&self) -> Result<(SemaphorePermit<'_>, SemaphorePermit<'_>), ServiceError> {
+    async fn begin(&self, ticket: TransportState) -> Result<(SemaphorePermit<'_>, SemaphorePermit<'_>), ServiceError> {
         self.safety.check()?;
+        self.check_transport(ticket)?;
         let pending = self.pending.try_acquire().map_err(|_| {
             ServiceError::typed(
                 ErrorKind::QueueFull,
@@ -185,14 +259,17 @@ impl Api {
         let permit = tokio::select! {
             biased;
             state = self.safety.wait_blocked() => return Err(state.error().unwrap()),
+            _ = self.transport_changed(ticket) => return Err(ticket.check(*self.transport.borrow()).unwrap_err()),
             permit = self.gate.acquire() => permit.map_err(|_| ServiceError::network())?,
         };
         self.safety.check()?;
+        self.check_transport(ticket)?;
         Ok((pending, permit))
     }
-    async fn wait_route(&self, route: &Route) -> Result<(), ServiceError> {
+    async fn wait_route(&self, route: &Route, ticket: TransportState) -> Result<(), ServiceError> {
         loop {
             self.safety.check()?;
+            self.check_transport(ticket)?;
             match self.rates.wait(route) {
                 Wait::Ready => return Ok(()),
                 Wait::Indefinite => return Err(self.rate_error(route)),
@@ -205,9 +282,49 @@ impl Api {
                 Wait::Until(until) => tokio::select! {
                     biased;
                     state = self.safety.wait_blocked() => return Err(state.error().unwrap()),
+                    _ = self.transport_changed(ticket) => return Err(ticket.check(*self.transport.borrow()).unwrap_err()),
                     _ = tokio::time::sleep_until(until) => {},
                 },
             }
+        }
+    }
+    async fn emit(
+        &self,
+        ticket: TransportState,
+        request: reqwest::RequestBuilder,
+        mut operation: Option<&mut api_operations::Operation>,
+        safe_read: bool,
+    ) -> Result<reqwest::Response, ServiceError> {
+        // Defer RequestBuilder::send itself: constructing its future may hand
+        // the request to the HTTP client before that future is first polled.
+        let sending = async move { request.send().await };
+        tokio::pin!(sending);
+        let mut started = false;
+        let response = futures_util::future::poll_fn(|cx| {
+            if !started {
+                // Linearize the first send poll with a transport transition.
+                // The watch read lock lives only during this synchronous poll,
+                // never across an await. No stale waiter can begin after loss.
+                let current = self.transport.borrow();
+                if let Err(error) = ticket.check(*current).and_then(|_| self.safety.check()) {
+                    return Poll::Ready(Err(error));
+                }
+                if let Some(operation) = operation.as_deref_mut() { operation.sending(); }
+                started = true;
+                return sending.as_mut().poll(cx).map(|result| result.map_err(|_| {
+                    if safe_read { ServiceError::network() } else { ServiceError::outcome_unknown() }
+                }));
+            }
+            sending.as_mut().poll(cx).map(|result| result.map_err(|_| {
+                if safe_read { ServiceError::network() } else { ServiceError::outcome_unknown() }
+            }))
+        });
+        // Once emission has begun, a transient transport change does not abort
+        // the HTTP confirmation/body. Terminal safety stops still take priority.
+        tokio::select! {
+            biased;
+            state = self.safety.wait_blocked() => Err(if safe_read { state.error().unwrap() } else { ServiceError::outcome_unknown() }),
+            response = response => response,
         }
     }
     fn rate_error(&self, route: &Route) -> ServiceError {
@@ -351,6 +468,7 @@ impl Api {
         audit_reason: Option<HeaderValue>,
         attempts: u32,
     ) -> Result<Value, ServiceError> {
+        let ticket = self.capture_transport()?;
         let endpoint = self.endpoint(path)?;
         let route = Route::new(&method, path);
         let safe_read = method == Method::GET || method == Method::HEAD;
@@ -363,9 +481,9 @@ impl Api {
                 method.as_str(),
             )?)
         };
-        let _permits = self.begin().await?;
+        let _permits = self.begin(ticket).await?;
         for attempt in 0..attempts {
-            self.wait_route(&route).await?;
+            self.wait_route(&route, ticket).await?;
             let mut request = self.client.request(method.clone(), endpoint.clone());
             if let Some(reason) = &audit_reason {
                 request = request.header("X-Audit-Log-Reason", reason.clone());
@@ -373,14 +491,7 @@ impl Api {
             if let Some(body) = body.as_ref() {
                 request = request.json(body)
             }
-            if let Some(operation) = &mut operation {
-                operation.sending();
-            }
-            let response = tokio::select! {
-                biased;
-                state = self.safety.wait_blocked() => return Err(if safe_read {state.error().unwrap()} else {ServiceError::outcome_unknown()}),
-                response = request.send() => response.map_err(|_| if safe_read {ServiceError::network()} else {ServiceError::outcome_unknown()})?,
-            };
+            let response = self.emit(ticket, request, operation.as_mut(), safe_read).await?;
             let result = self
                 .receive(response, &route, 16 * 1024 * 1024, safe_read)
                 .await;
@@ -433,6 +544,7 @@ impl Api {
         &self, channel:&str,paths:&[PathBuf],content:&str,reply_id:&str,nonce:&str,
         mention_everyone:bool,limit:crate::uploads::UploadLimit,
     )->Result<Value,ServiceError> {
+        let ticket = self.capture_transport()?;
         if !crate::parsing::valid_id(channel)
             || paths.is_empty()
             || nonce.is_empty()
@@ -450,6 +562,7 @@ impl Api {
         let mut total = 0u64;
         let mut prepared=Vec::with_capacity(paths.len());
         for path in paths {
+            self.check_transport(ticket)?;
             let file=tokio::fs::File::open(path).await.map_err(|_|ServiceError::new("No se pudo abrir un adjunto. El borrador se conserva."))?;
             let metadata = file.metadata().await.map_err(|_| {
                 ServiceError::new(
@@ -476,8 +589,8 @@ impl Api {
             api_operations::key("POST", endpoint.as_str(), Some(&body)),
             "POST",
         )?;
-        let _permits = self.begin().await?;
-        self.wait_route(&route).await?;
+        let _permits = self.begin(ticket).await?;
+        self.wait_route(&route, ticket).await?;
         let mut form = Form::new().text("payload_json", body.to_string());
         for (index,(file,length,name)) in prepared.into_iter().enumerate() {
             // Keep the validated handle, and bound the actual stream even if
@@ -488,12 +601,7 @@ impl Api {
         }
         // Uploads are never retried: a lost acknowledgement must not duplicate a send.
         self.safety.check()?;
-        operation.sending();
-        let response = tokio::select! {
-            biased;
-            _ = self.safety.wait_blocked() => return Err(ServiceError::outcome_unknown()),
-            response = self.client.post(endpoint).multipart(form).send() => response.map_err(|_|ServiceError::outcome_unknown())?,
-        };
+        let response = self.emit(ticket, self.client.post(endpoint).multipart(form), Some(&mut operation), false).await?;
         let result = self
             .receive(response, &route, 1024 * 1024, false)
             .await
@@ -793,6 +901,143 @@ mod tests {
     fn service_errors_do_not_include_private_response() {
         assert!(!status_error(401).message.contains("Authorization"));
         assert_eq!(status_error(404).status, Some(404))
+    }
+    #[tokio::test]
+    async fn transport_loss_invalidates_unpolled_work_and_cloning_cannot_renew_it() {
+        let server = FixtureServer::new(vec![FixtureReply::new(200, "{}")]).await;
+        let api = server.api();
+        let before_loss = api.clone();
+        api.set_transport_available(false);
+        let while_offline = api.clone();
+        api.set_transport_available(true);
+        for old in [before_loss.clone(), while_offline.clone()] {
+            assert_eq!(old.get_once("users/@me").await.unwrap_err().kind, ErrorKind::TransportUnavailable);
+        }
+        assert_eq!(server.count.load(Ordering::SeqCst), 0);
+        // Only a new demand from the session owner can use the new generation.
+        api.clone().get_once("users/@me").await.unwrap();
+        assert_eq!(server.count.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn transport_loss_retires_queued_text_upload_and_reconciliation_even_after_recovery() {
+        let server = FixtureServer::new(vec![FixtureReply::new(200, r#"{"id":"456"}"#)]).await;
+        let api = server.api();
+        let path = std::env::temp_dir().join(format!(
+            "notdiscord-transport-fixture-{}-{}.txt", std::process::id(), rand::random::<u64>()
+        ));
+        std::fs::write(&path, b"synthetic transport fixture").unwrap();
+        let hold = api.gate.acquire().await.unwrap();
+        let text_api = api.clone();
+        let text = tokio::spawn(async move {
+            text_api.request(Method::POST, "channels/123/messages", Some(json!({
+                "content":"synthetic text", "nonce":"100", "enforce_nonce":true
+            }))).await
+        });
+        let read_api = api.clone();
+        let read = tokio::spawn(async move { read_api.get_once("channels/123/messages?limit=50").await });
+        let upload_api = api.clone();
+        let upload_path = path.clone();
+        let upload = tokio::spawn(async move {
+            upload_api.upload_many("123", &[upload_path], "synthetic upload", "", "101").await
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while api.pending.available_permits() != 29 { tokio::task::yield_now().await; }
+        }).await.unwrap();
+        // Both transitions may happen before a waiter is polled again.
+        api.set_transport_available(false);
+        api.set_transport_available(true);
+        drop(hold);
+        for task in [text, read, upload] {
+            let error = tokio::time::timeout(Duration::from_secs(3), task).await.unwrap().unwrap().unwrap_err();
+            assert_eq!(error.kind, ErrorKind::TransportUnavailable);
+        }
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(server.count.load(Ordering::SeqCst), 0);
+        assert_eq!(api.pending.available_permits(), 32);
+        // Unsent work releases only its own operation entry. An explicit new
+        // demand with the same identity can proceed; nothing was auto-drained.
+        api.clone().request(Method::POST, "channels/123/messages", Some(json!({
+            "content":"synthetic text", "nonce":"100", "enforce_nonce":true
+        }))).await.unwrap();
+        assert_eq!(server.count.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn transport_loss_interrupts_rate_waits_without_forgetting_server_deadlines() {
+        let server = FixtureServer::new(vec![]).await;
+        let api = server.api();
+        let route = Route::new(&Method::GET, "users/@me");
+        let mut headers = HeaderMap::new();
+        headers.insert("Retry-After", HeaderValue::from_static("10"));
+        api.rates.observe(&route, 429, &headers, None);
+        let waiting_api = api.clone();
+        let waiting = tokio::spawn(async move { waiting_api.get_once("users/@me").await });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while api.gate.available_permits() != 0 { tokio::task::yield_now().await; }
+        }).await.unwrap();
+        api.set_transport_available(false);
+        api.set_transport_available(true);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), waiting).await.unwrap().unwrap().unwrap_err().kind,
+            ErrorKind::TransportUnavailable
+        );
+        assert!(matches!(api.rates.wait(&route), Wait::Until(_)));
+        headers.insert("Retry-After", HeaderValue::from_static("300"));
+        api.rates.observe(&route, 429, &headers, None);
+        api.set_transport_available(false);
+        api.set_transport_available(true);
+        let error = api.clone().get_once("users/@me").await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::RateLimited);
+        assert!(error.retry_after.unwrap() > Duration::from_secs(299));
+        assert_eq!(server.count.load(Ordering::SeqCst), 0);
+    }
+    #[tokio::test]
+    async fn an_emitted_write_can_finish_its_body_after_transport_loss() {
+        let release = Arc::new(Notify::new());
+        let mut reply = FixtureReply::new(200, r#"{"id":"456"}"#);
+        reply.body_release = Some(release.clone());
+        let server = FixtureServer::new(vec![reply]).await;
+        let mut api = server.api();
+        let body_started = Arc::new(Notify::new());
+        api.body_started = Some(body_started.clone());
+        let sending_api = api.clone();
+        let sending = tokio::spawn(async move {
+            sending_api.request(Method::POST, "channels/123/messages", Some(json!({
+                "nonce":"100", "enforce_nonce":true
+            }))).await
+        });
+        tokio::time::timeout(Duration::from_secs(3), body_started.notified()).await.unwrap();
+        api.set_transport_available(false);
+        api.set_transport_available(true);
+        release.notify_one();
+        assert_eq!(sending.await.unwrap().unwrap()["id"], "456");
+        assert_eq!(api.clone().request(Method::POST, "channels/123/messages", Some(json!({
+            "nonce":"100", "enforce_nonce":true
+        }))).await.unwrap_err().kind, ErrorKind::OperationCompleted);
+        assert_eq!(server.count.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn transport_recovery_cannot_clear_an_emitted_writes_unknown_result() {
+        let release = Arc::new(Notify::new());
+        let mut reply = FixtureReply::new(200, "{}");
+        reply.release = Some(release.clone());
+        reply.disconnect = true;
+        let server = FixtureServer::new(vec![reply, FixtureReply::new(200, "{}")]).await;
+        let api = server.api();
+        let sending_api = api.clone();
+        let sending = tokio::spawn(async move {
+            sending_api.request(Method::POST, "channels/123/messages", Some(json!({
+                "nonce":"100", "enforce_nonce":true
+            }))).await
+        });
+        server.wait_seen(1).await;
+        api.set_transport_available(false);
+        api.set_transport_available(true);
+        release.notify_one();
+        assert_eq!(sending.await.unwrap().unwrap_err().kind, ErrorKind::OutcomeUnknown);
+        assert_eq!(api.clone().request(Method::POST, "channels/123/messages", Some(json!({
+            "nonce":"100", "enforce_nonce":true
+        }))).await.unwrap_err().kind, ErrorKind::OutcomeUnknown);
+        assert_eq!(server.count.load(Ordering::SeqCst), 1);
     }
     #[tokio::test]
     async fn challenge_stops_an_already_queued_clone_and_future_clicks_without_replay() {

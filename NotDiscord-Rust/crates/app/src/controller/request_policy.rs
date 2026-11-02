@@ -254,7 +254,7 @@ impl AckBatch {
                 !self.in_flight.contains(*channel)
                     && now.saturating_duration_since(*at) >= Duration::from_millis(750)
             })
-            .take(16usize.saturating_sub(self.in_flight.len()))
+            .take(1usize.saturating_sub(self.in_flight.len()))
             .map(|(channel, _)| channel.clone())
             .collect::<Vec<_>>();
         channels
@@ -268,6 +268,11 @@ impl AckBatch {
     }
     pub fn complete(&mut self, channel: &str) {
         self.in_flight.remove(channel);
+    }
+    /// Suspension drops deferred ACKs without claiming that an outstanding
+    /// request completed. Only its real completion releases the global slot.
+    pub(super) fn discard_pending(&mut self) {
+        self.pending.clear();
     }
     pub fn clear(&mut self) {
         self.pending.clear();
@@ -297,5 +302,68 @@ mod tests {
             batch.ready(now + Duration::from_secs(1)),
             vec![("20".into(), "103".into())]
         );
+    }
+
+    #[test]
+    fn automatic_acks_allow_only_one_global_in_flight() {
+        let mut batch = AckBatch::default();
+        let now = Instant::now();
+        for channel in ["20", "21", "22"] {
+            batch.advance(channel, "100", now);
+        }
+        let ready_at = now + Duration::from_secs(1);
+        let mut acknowledged = HashSet::new();
+        for _ in 0..3 {
+            let ready = batch.ready(ready_at);
+            assert_eq!(ready.len(), 1);
+            let (channel, last) = &ready[0];
+            assert_eq!(last, "100");
+            assert!(acknowledged.insert(channel.clone()));
+            assert!(batch.ready(ready_at + Duration::from_secs(1)).is_empty());
+            batch.complete("99");
+            assert!(batch.ready(ready_at + Duration::from_secs(1)).is_empty());
+            batch.complete(channel);
+        }
+        assert_eq!(acknowledged.len(), 3);
+        assert!(!batch.pending());
+    }
+
+    #[test]
+    fn discarding_pending_acks_preserves_the_in_flight_request() {
+        let mut batch = AckBatch::default();
+        let now = Instant::now();
+        batch.advance("20", "100", now);
+        assert_eq!(
+            batch.ready(now + Duration::from_secs(1)),
+            vec![("20".into(), "100".into())]
+        );
+        batch.advance("21", "101", now);
+        batch.discard_pending();
+        assert!(batch.pending());
+        batch.advance("22", "102", now);
+        assert!(batch.ready(now + Duration::from_secs(2)).is_empty());
+        batch.complete("20");
+        assert_eq!(
+            batch.ready(now + Duration::from_secs(2)),
+            vec![("22".into(), "102".into())]
+        );
+    }
+
+    #[test]
+    fn discarded_ack_backlog_does_not_drain_after_recovery() {
+        let mut batch = AckBatch::default();
+        let now = Instant::now();
+        for channel in ["20", "21", "22"] {
+            batch.advance(channel, "100", now);
+        }
+        let ready = batch.ready(now + Duration::from_secs(1));
+        assert_eq!(ready.len(), 1);
+        batch.advance(&ready[0].0, "101", now);
+        batch.discard_pending();
+        let recovered_at = now + Duration::from_secs(60);
+        assert!(batch.ready(recovered_at).is_empty());
+        batch.complete(&ready[0].0);
+        assert!(batch.ready(recovered_at).is_empty());
+        assert!(!batch.pending());
     }
 }

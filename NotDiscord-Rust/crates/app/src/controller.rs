@@ -945,7 +945,11 @@ impl Controller {
         gate.block(self.safety_store.initial_state(&self.safety_credential_key));
         match Api::new_with_secret(token, gate) {
             Ok(api) => {
-                self.api = Some(api.clone());
+                // Keep the original session owner. Work clones pin the current
+                // transport generation and must never become the session root.
+                let login_api = api.clone();
+                self.api = Some(api);
+                let api = login_api;
                 if api.safety().state() != SafetyState::Allowed {
                     self.state.network_safety = api.safety().state();
                     self.state.network_safety_message = self
@@ -1995,6 +1999,7 @@ impl Controller {
                 self.gateway = Some(g);
                 self.gateway_rx = Some(rx);
                 self.state.connection_phase = ConnectionPhase::Connecting;
+                self.sync_transport_gate();
                 self.sidebar_wait = Some(Instant::now() + Duration::from_secs(3));
                 self.publish();
             }
@@ -2361,11 +2366,14 @@ impl Controller {
         self.queue_member_subscription();
     }
     fn flush_read_acks(&mut self, now: Instant) {
+        if self.transport_suspended() {
+            self.read_acks.discard_pending();
+            return;
+        }
         let Some(api) = self
             .api
             .clone()
             .filter(|api| api.safety().state() == SafetyState::Allowed)
-            .filter(|_| !self.transport_suspended())
         else {
             return;
         };

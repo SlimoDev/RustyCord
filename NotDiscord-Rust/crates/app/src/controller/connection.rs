@@ -24,6 +24,11 @@ impl Controller {
     pub(super) fn transport_suspended(&self) -> bool {
         self.state.connection_phase.suspended()
     }
+    pub(super) fn sync_transport_gate(&mut self) {
+        let suspended = self.transport_suspended();
+        if let Some(api) = &self.api { api.set_transport_available(!suspended); }
+        if suspended { self.read_acks.discard_pending(); }
+    }
     pub(super) fn connection_changed(&mut self, change: ConnectionChange) {
         let previous = self.state.connection_phase;
         // A replacement task opens normally; the session is still recovering.
@@ -33,6 +38,10 @@ impl Controller {
             change.phase
         };
         self.state.connection_phase = phase;
+        // Visibility can advance while offline. Do not drain those watermarks
+        // when synchronization returns; later visible demand may queue an ACK.
+        if previous.suspended() { self.read_acks.discard_pending(); }
+        self.sync_transport_gate();
         self.state.connection_retry_at = (phase == ConnectionPhase::Cooldown).then(|| retry_stamp(change.wait));
         if phase.lost() && !previous.lost() {
             log::record(Component::Controller, Code::TransportClosed, Phase::Connect, 0);
@@ -70,6 +79,7 @@ impl Controller {
         if self.recovery.restart_at.is_some_and(|at| Instant::now() >= at) {
             self.recovery.restart_at = None;
             self.state.connection_phase = ConnectionPhase::RetryAvailable;
+            self.sync_transport_gate();
             self.state.connection_retry_at = None;
             self.publish();
         }
@@ -78,6 +88,7 @@ impl Controller {
     pub(super) fn retry_connection(&mut self) -> Result<(), String> {
         if self.state.connection_phase != ConnectionPhase::RetryAvailable { return Ok(()); }
         self.state.connection_phase = ConnectionPhase::Recovering;
+        self.sync_transport_gate();
         self.state.connection_retry_at = None;
         self.state.connection = "Conectando".into();
         self.publish();
@@ -134,5 +145,34 @@ mod tests {
         }
         assert!(!ConnectionPhase::Synchronized.suspended() && !ConnectionPhase::Idle.suspended());
         assert!(ConnectionPhase::Recovering.suspended() && ConnectionPhase::Cooldown.lost());
+    }
+    #[tokio::test]
+    async fn recovery_discards_old_and_offline_ack_demand_without_forgetting_in_flight() {
+        let (mut c, _) = Controller::test_fixture();
+        let now = Instant::now();
+        let visible = now - Duration::from_secs(1);
+        c.state.connection_phase = ConnectionPhase::Synchronized;
+        c.read_acks.advance("123", "111", visible);
+        c.read_acks.advance("456", "222", visible);
+        let sent = c.read_acks.ready(now);
+        assert_eq!(sent.len(), 1);
+        c.connection_changed(ConnectionChange { phase: ConnectionPhase::Cooldown, wait: RESTART_COOLDOWN, resumed: false });
+        c.read_acks.advance("789", "333", visible);
+        c.recovery.restart_at = Some(Instant::now());
+        c.tick_connection();
+        assert_eq!(c.state.connection_phase, ConnectionPhase::RetryAvailable);
+        c.retry_connection().unwrap();
+        assert_eq!(c.state.connection_phase, ConnectionPhase::Recovering);
+        c.read_acks.advance("789", "444", visible);
+        c.connection_changed(ConnectionChange { phase: ConnectionPhase::Synchronized, wait: Duration::ZERO, resumed: true });
+        // The real request remains in flight; a fresh visible watermark cannot
+        // overlap it, and no historical demand returns after its completion.
+        c.read_acks.advance("789", "555", visible);
+        assert!(c.read_acks.ready(now).is_empty());
+        c.read_acks.discard_pending();
+        c.read_acks.complete(&sent[0].0);
+        assert!(c.read_acks.ready(now).is_empty());
+        c.read_acks.advance("789", "666", visible);
+        assert_eq!(c.read_acks.ready(now), vec![("789".into(), "666".into())]);
     }
 }
