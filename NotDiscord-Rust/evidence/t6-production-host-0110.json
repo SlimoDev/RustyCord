@@ -1,0 +1,14 @@
+{
+  "Success": true,
+  "Checks": 7,
+  "NativeInitializationStages": 0,
+  "RealCalls": 0,
+  "MicrophoneActivated": false,
+  "CameraActivated": false,
+  "ScreenCaptureStarted": false,
+  "ExitCode": 0,
+  "Backend": "rust-napi-electron-main",
+  "CSharpDependency": false,
+  "OriginalOwnedHelperLoaded": false,
+  "AddonSha256": "509D4DF50592AF0EA36EF5F7C137B2E7B90D6ACD0FDFC4DB1B77FAF20630EAC2"
+}

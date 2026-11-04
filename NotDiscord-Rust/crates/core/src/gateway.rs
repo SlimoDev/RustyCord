@@ -66,6 +66,8 @@ impl RecoverySignal {
 pub enum GatewayCommand {
     #[cfg(test)]
     Raw(Value),
+    /// Observe a private call; this neither joins voice nor rings recipients.
+    CallConnect { channel_id: String },
     StreamCreate {
         guild_id: Option<String>,
         channel_id: String,
@@ -236,7 +238,26 @@ impl GatewayHandle {
     pub async fn send(&self, command: GatewayCommand) -> Result<(), ServiceError> {
         self.send_at_game_epoch(command,None).await
     }
+    /// Revoke the old activity epoch and flush exactly one clearing presence.
+    pub async fn send_clear_game_presence(&self, status: String) -> Result<(), ServiceError> {
+        self.inner.safety.check()?;
+        let command=GatewayCommand::RichPresence {status,activity:None};
+        command_payload(&command, "")?;
+        let epoch=self.inner.game_presence.withdraw();
+        self.send_at_game_epoch(command,Some(epoch)).await
+    }
     async fn send_at_game_epoch(&self, command: GatewayCommand, expected_epoch: Option<u64>) -> Result<(), ServiceError> {
+        self.send_owned(command, expected_epoch, false).await
+    }
+    /// Mandatory release steps retain their actual writer completion. A local
+    /// timeout must not start another release while an old write is still live.
+    pub async fn send_voice_release(&self, command: GatewayCommand) -> Result<(), ServiceError> {
+        if !matches!(&command, GatewayCommand::StreamDelete { .. } | GatewayCommand::VoiceState { channel_id: None, .. }) {
+            return Err(ServiceError::new("La orden no es un cierre de voz."));
+        }
+        self.send_owned(command, None, true).await
+    }
+    async fn send_owned(&self, command: GatewayCommand, expected_epoch: Option<u64>, wait_for_completion: bool) -> Result<(), ServiceError> {
         self.inner.safety.check()?;
         if !self.inner.ready.load(Ordering::Acquire) {
             return Err(ServiceError::new("La conexión aún no está preparada."));
@@ -249,7 +270,9 @@ impl GatewayHandle {
             tokio::select! {biased;_=self.inner.cancel.cancelled()=>return Err(ServiceError::network()),_=self.inner.safety.wait_blocked()=>return self.inner.safety.check(),r=self.inner.commands.send(Envelope{command,done:Some(tx),game_epoch})=>r.map_err(|_|ServiceError::network())?}
             tokio::select! {biased;_=self.inner.cancel.cancelled()=>Err(ServiceError::network()),_=self.inner.safety.wait_blocked()=>self.inner.safety.check(),r=rx=>r.unwrap_or_else(|_|Err(ServiceError::network()))}
         };
-        tokio::time::timeout(Duration::from_secs(10),wait).await.unwrap_or_else(|_|Err(ServiceError::typed(crate::api::ErrorKind::OutcomeUnknown,"No se pudo confirmar el envío de la orden a Discord. Comprueba el estado antes de repetirla.")))
+        if wait_for_completion { wait.await } else {
+            tokio::time::timeout(Duration::from_secs(10),wait).await.unwrap_or_else(|_|Err(ServiceError::typed(crate::api::ErrorKind::OutcomeUnknown,"No se pudo confirmar el envío de la orden a Discord. Comprueba el estado antes de repetirla.")))
+        }
     }
     pub fn stop(&self) {
         self.inner.cancel.cancel()
@@ -408,6 +431,12 @@ pub fn command_payload(
     Ok(match command {
         #[cfg(test)]
         GatewayCommand::Raw(value) => value.clone(),
+        GatewayCommand::CallConnect { channel_id } => {
+            if !crate::parsing::valid_id(channel_id) {
+                return Err(ServiceError::new("Conversación de llamada no válida."));
+            }
+            json!({"op":13,"d":{"channel_id":channel_id}})
+        }
         GatewayCommand::StreamCreate {
             guild_id,
             channel_id,
@@ -656,6 +685,14 @@ pub fn ready_metadata(data: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn private_call_discovery_is_a_validated_single_observation_without_voice_or_ring() {
+        let payload=command_payload(&GatewayCommand::CallConnect {channel_id:"20".into()}, "").unwrap();
+        assert_eq!(payload,json!({"op":13,"d":{"channel_id":"20"}}));
+        for invalid in ["", "../20", "20/voice", "not-a-channel"] {
+            assert!(command_payload(&GatewayCommand::CallConnect {channel_id:invalid.into()}, "").is_err());
+        }
+    }
     #[test]
     fn thread_catalog_and_membership_events_reach_the_controller_without_expanding_unrelated_events() {
         for kind in ["THREAD_CREATE","THREAD_UPDATE","THREAD_DELETE","THREAD_LIST_SYNC","THREAD_MEMBER_UPDATE","THREAD_MEMBERS_UPDATE"] {

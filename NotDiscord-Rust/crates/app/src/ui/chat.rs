@@ -116,11 +116,12 @@ impl NotDiscordUi {
         true
     }
     pub(super) fn draw_chat(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
+        let returning_selection=session_log_return(ui.ctx(),state);
         let chat = state.view == "chat";
         let history_pending = history_page_pending(ui.ctx(), state);
         reaction_tooltip::begin_frame(ui.ctx(), state);
         if matches!(state.view.as_str(), "pins" | "search" | "history") {
-            self.draw_chat_return_header(ui, if state.view == "pins" { "pins" } else { "return-chat" });
+            self.draw_chat_return_header_for(ui, if state.view == "pins" { "pins" } else { "return-chat" },state);
         }
         let latest_window = latest_window(ui.ctx(), state);
         let at_latest = latest_window && self.positions.get(&state.selected_channel_id)
@@ -190,14 +191,17 @@ impl NotDiscordUi {
                 let menu = ui.menu_button(RichText::new("···").size(12.), |ui| {
                     if ui
                         .add_enabled(
-                            state.signed_in && !state.selected_channel_id.is_empty(),
+                            state.signed_in && !state.selected_channel_id.is_empty()
+                                && state.channel_access.can_view && state.channel_access.can_read_history,
                             egui::Button::new("Ver registro de esta sesión (RAM)"),
                         )
                         .on_hover_text("Ediciones y borrados observados en este canal; no se guardan en disco.")
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
-                        self.send("view", "history", "", "", &state.selected_channel_id);
+                        if self.command.send(chat_navigation_action("history",state)).is_ok() {
+                            remember_session_log_selection(ui.ctx(),state,true);
+                        } else {self.error="El servicio de la aplicación se cerró.".into();}
                         ui.close();
                     }
                     if ui
@@ -216,6 +220,12 @@ impl NotDiscordUi {
                         ui.close();
                     }
                 });
+                // Keep the chat selection before the menu's opening click can
+                // transfer pointer ownership away from its text surface.
+                let opening_press=ui.input(|input|input.pointer.primary_pressed()
+                    && input.pointer.interact_pos().is_some_and(|position|menu.response.rect.contains(position)));
+                let keyboard_open=menu.response.clicked() && !ui.input(|input|input.pointer.primary_released());
+                if opening_press || keyboard_open {remember_session_log_selection(ui.ctx(),state,false);}
                 menu.response.on_hover_cursor(egui::CursorIcon::PointingHand);
                 if !state.new_message_notice.is_empty() {
                     ui.add(
@@ -253,6 +263,9 @@ impl NotDiscordUi {
         }
         let scroll_salt = egui::Id::new(("message-scroll", &state.selected_channel_id, &state.view));
         interaction::begin(ui.ctx(), scroll_salt, state);
+        if let Some(selection)=returning_selection {
+            ui.ctx().data_mut(|data|data.insert_temp(egui::Id::new("history-selection"),selection));
+        }
         let cancel_history_gesture = interaction::cancelling(ui.ctx());
         let manual_history = !self.background_blocked() && ui.is_enabled()
             && history_manual_input(ui.ctx(), scroll_salt, ui.layer_id());
@@ -571,8 +584,14 @@ impl NotDiscordUi {
     /// A view's back navigation lives outside its scrolled content, including
     /// while a call panel occupies part of the available height.
     pub(super) fn draw_chat_return_header(&mut self, ui: &mut egui::Ui, action: &str) {
+        self.draw_chat_return_header_for(ui,action,&self.state.clone());
+    }
+    fn draw_chat_return_header_for(&mut self, ui:&mut egui::Ui, action:&str, state:&AppSnapshot) {
         ui.horizontal(|ui| {
-            if ui.button("← Volver al chat").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() { self.simple(action); }
+            if ui.button("← Volver al chat").on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+                && self.command.send(chat_navigation_action(action,state)).is_err() {
+                self.error="El servicio de la aplicación se cerró.".into();
+            }
         });
     }
     fn draw_message(
@@ -2859,6 +2878,62 @@ pub(super) fn finish_history_page_request(ctx: &egui::Context, value: &Value) {
 
 #[derive(Clone, Copy, PartialEq)]
 struct HistoryCursor { id: egui::Id, character: usize }
+fn chat_navigation_action(kind:&str,state:&AppSnapshot)->UiAction {
+    UiAction {kind:kind.into(),channel_id:state.selected_channel_id.clone(),
+        extra:serde_json::json!({"navigationContext":{
+            "account":state.current_user.as_ref().map(|user|user.id.as_str()).unwrap_or(""),
+            "generation":state.notification_generation,"guild":state.selected_guild_id,"view":state.view,
+        }}).to_string(),..Default::default()}
+}
+#[derive(Clone)]
+struct SessionLogReturn {
+    owner:egui::Id,
+    requested:bool,
+    opened:bool,
+    selection:Option<HistorySelection>,
+}
+fn session_log_owner(state:&AppSnapshot)->egui::Id {
+    egui::Id::new(("session-log-return",state.notification_generation,
+        state.current_user.as_ref().map(|user|user.id.as_str()),&state.selected_guild_id,&state.selected_channel_id))
+}
+fn remember_session_log_selection(ctx:&egui::Context,state:&AppSnapshot,requested:bool) {
+    if state.view!="chat" {return;}
+    let owner=session_log_owner(state);
+    let chat_scope=egui::Id::new(("message-scroll",&state.selected_channel_id,"chat"));
+    ctx.data_mut(|data| {
+        let key=egui::Id::new("session-log-return");
+        let previous=data.get_temp::<SessionLogReturn>(key).filter(|saved|saved.owner==owner);
+        let mut selection=if requested {
+            previous.and_then(|saved|saved.selection)
+                .or_else(||data.get_temp::<HistorySelection>(egui::Id::new("history-selection")))
+        } else {data.get_temp::<HistorySelection>(egui::Id::new("history-selection"))};
+        selection=selection.filter(|selection|selection.scope==Some(chat_scope));
+        if let Some(selection)=&mut selection {
+            selection.dragging=false;selection.drag_origin=None;selection.edges_armed=false;
+        }
+        // One context only: opening the local log does not duplicate retained
+        // messages, drafts, attachments or their leases.
+        data.insert_temp(key,SessionLogReturn {owner,requested,opened:false,selection});
+    });
+}
+fn session_log_return(ctx:&egui::Context,state:&AppSnapshot)->Option<HistorySelection> {
+    let owner=session_log_owner(state);
+    ctx.data_mut(|data| {
+        let key=egui::Id::new("session-log-return");
+        let mut saved=data.get_temp::<SessionLogReturn>(key)?;
+        if saved.owner!=owner || !state.signed_in {
+            data.remove::<SessionLogReturn>(key);return None;
+        }
+        if state.view=="history" && saved.requested {
+            saved.opened=true;data.insert_temp(key,saved);return None;
+        }
+        if state.view=="chat" && saved.opened {
+            data.remove::<SessionLogReturn>(key);return saved.selection;
+        }
+        if !matches!(state.view.as_str(),"chat"|"history"|"profile") {data.remove::<SessionLogReturn>(key);}
+        None
+    })
+}
 #[derive(Clone, Default)]
 struct HistorySelection {
     scope: Option<egui::Id>,

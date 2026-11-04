@@ -1,0 +1,50 @@
+{
+  "Schema": 1,
+  "Date": "2026-11-04",
+  "Version": "0.11.0",
+  "DiagnosticFeatures": [
+    "native-probe"
+  ],
+  "SourceCutSha256": "5b6286f2043eab9772d2ddd68352bf044f4d4d3ee296f4647b52b684ffba766c",
+  "DiagnosticAddon": {
+    "Path": ".tools/temp/current/t2-native-0110-full/NotDiscord.MediaProbe-final.node",
+    "SHA256": "c05077172564c3410b390d511fd702524287b2adac4cea96d5b5fa966e992924"
+  },
+  "AccountsUsed": false,
+  "PhysicalDevicesActivated": false,
+  "ScreenCapture": false,
+  "MlsLoopbackOnly": true,
+  "RemoteAudibilityVerified": false,
+  "MlsResult": "native capture and outbound audio counters increased across five transport/OwnStream phases",
+  "VideoResult": "FAKE_VIDEO_CALLBACK_TIMEOUT; no native video frame; fixture identity and Strobe/Y4M limitations documented",
+  "Records": [
+    {
+      "Path": "evidence/t2-native-mls-0110-final.json",
+      "SHA256": "36d8f6a5e7eca234ba61c387a781acb2a1980b3528620441d105a8b9bf2b92dd"
+    },
+    {
+      "Path": "evidence/t2-native-video-0110-final.json",
+      "SHA256": "e33e1ed1a982dbdc6c92c337378fe567f8de15882f4402002e6572b731ee87a2"
+    },
+    {
+      "Path": "crates/media-addon/src/probe.rs",
+      "SHA256": "12f68764029d58c0f2a6d9386063a149352194b9870b51d6e6e974943a3369ea"
+    },
+    {
+      "Path": "crates/media-addon/Test-NativeMls.ps1",
+      "SHA256": "df9e35a0173eff57c0e5840af2796951f4b24d7429a7ca89f2f3d92ddf30bd33"
+    },
+    {
+      "Path": "crates/media-addon/Test-NativeVideo.ps1",
+      "SHA256": "29160a0983af88c85e1e912f1404987a9a07cd5db30ada2e652e463d70017ef6"
+    },
+    {
+      "Path": "media-host/runtime/resources/standalone_modules/discord_voice/discord_voice.node",
+      "SHA256": "7c41c446a2ef29fa04d8f62a00193416cebebb562caa8a4d4626839729833607"
+    },
+    {
+      "Path": "target/prepared-runtime-0.11.0-20261104-full/runtime-inventory.json",
+      "SHA256": "c219ef6734c35d88e92050b3ab0ba7db19b43a671fe2ef0fbaa20e8c19a8e7d1"
+    }
+  ]
+}

@@ -15,11 +15,63 @@ use tokio::{
         BufReader,
     },
     net::windows::named_pipe::ServerOptions,
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
 };
 static NEXT_VIDEO_NAMESPACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static CAPTURE_GATE: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
 const MAX_RESPONSE: usize = 262144;
 const MAX_REQUEST: usize = 1024 * 1024;
+fn capture_gate()->Arc<tokio::sync::Semaphore> {
+    CAPTURE_GATE.get_or_init(||Arc::new(tokio::sync::Semaphore::new(1))).clone()
+}
+/// A cancelled cleanup must not release the capture slot without an exit.
+struct ExitLease {
+    permit:Option<tokio::sync::OwnedSemaphorePermit>,
+    gate:Arc<tokio::sync::Semaphore>,
+    confirmed:bool,
+}
+impl Drop for ExitLease {
+    fn drop(&mut self) {
+        if self.permit.is_some() && !self.confirmed {self.gate.close();}
+    }
+}
+/// The native process owns the capture permit, including throughout startup.
+/// Constructor cancellation and abandoned OpenSlots retire this owner too.
+struct ProcessOwner {
+    child:Option<tokio::process::Child>,
+    permit:Option<tokio::sync::OwnedSemaphorePermit>,
+    gate:Arc<tokio::sync::Semaphore>,
+}
+impl std::ops::Deref for ProcessOwner {
+    type Target=tokio::process::Child;
+    fn deref(&self)->&Self::Target {self.child.as_ref().expect("owned media process")}
+}
+impl std::ops::DerefMut for ProcessOwner {
+    fn deref_mut(&mut self)->&mut Self::Target {self.child.as_mut().expect("owned media process")}
+}
+impl Drop for ProcessOwner {
+    fn drop(&mut self) {
+        let Some(mut child)=self.child.take() else {return;};
+        let mut lease=ExitLease {permit:self.permit.take(),gate:self.gate.clone(),confirmed:false};
+        if matches!(child.try_wait(),Ok(Some(_))) {
+            lease.confirmed=true;
+            return;
+        }
+        // Request termination synchronously so cancellation cannot leave a
+        // native owner waiting for the cleanup task's first poll.
+        let _=child.start_kill();
+        if let Ok(runtime)=tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                lease.confirmed=child.wait().await.is_ok();
+                // If this future is dropped, ExitLease closes the gate before
+                // its permit can become available to a replacement runtime.
+                drop(lease);
+            });
+        }
+        // Without a runtime the lease fails closed; Child's kill-on-drop
+        // remains a last termination request, never an exit confirmation.
+    }
+}
 struct Request {
     kind: String,
     args: Value,
@@ -51,6 +103,7 @@ fn early_host_exit(status:std::io::Result<std::process::ExitStatus>)->String {
 pub struct MediaBridge {
     commands: Arc<mpsc::Sender<Request>>,
     close: tokio_util::sync::CancellationToken,
+    process_closed: watch::Receiver<Option<Result<(),String>>>,
     video_frames: SharedVideoFrames,
     video_namespace: u64,
 }
@@ -78,6 +131,20 @@ impl MediaBridge {
     pub fn close(&self) {
         self.close.cancel();
         clear_video_namespace(&self.video_frames,self.video_namespace);
+    }
+    /// Cancellation requests shutdown; only the process owner can confirm it.
+    /// An absent owner or an unconfirmed exit leaves the caller's barrier shut.
+    pub async fn await_closed(&self)->Result<(),String> {
+        let mut closed=self.process_closed.clone();
+        loop {
+            let result=closed.borrow_and_update().clone();
+            if let Some(result)=result {return result;}
+            closed.changed().await.map_err(|_|"No se pudo confirmar el cierre del host multimedia.".to_owned())?;
+        }
+    }
+    pub async fn close_and_wait(&self)->Result<(),String> {
+        self.close();
+        self.await_closed().await
     }
     pub fn video_frames(&self) -> SharedVideoFrames {
         self.video_frames.clone()
@@ -131,8 +198,13 @@ impl MediaBridge {
         let server = private_pipe(&name)?;
         let video_name = format!("{name}.Frames");
         let video_server = private_pipe(&video_name)?;
+        let is_capture_owner=scope.is_none();
         let (video_namespace,video_frames)=scope.unwrap_or_else(||(0,Arc::new(std::sync::Mutex::new(LatestFrames::default()))));
-        let mut process = tokio::process::Command::new(&executable)
+        let gate=capture_gate();
+        let capture_permit=if is_capture_owner {
+            Some(gate.clone().acquire_owned().await.map_err(|_|"El cierre del motor de audio anterior no se pudo confirmar. Reinicia la aplicación antes de abrir otro micrófono.")?)
+        } else {None};
+        let child = tokio::process::Command::new(&executable)
             .env_remove("ELECTRON_RUN_AS_NODE")
             .env_remove("NODE_OPTIONS")
             .env_remove("NOTDISCORD_MEDIA_PROBE")
@@ -150,6 +222,7 @@ impl MediaBridge {
             .kill_on_drop(true)
             .spawn()
             .map_err(|_| "No se pudo abrir el host multimedia.")?;
+        let mut process=ProcessOwner {child:Some(child),permit:capture_permit,gate};
         let expected = process.id().ok_or("El host multimedia terminó.")?;
         let job = ProcessJob::attach(expected)?;
         tokio::select! {
@@ -177,6 +250,7 @@ impl MediaBridge {
         let _ = events.send(ready);
         let (tx, rx) = mpsc::channel::<Request>(16);
         let close = tokio_util::sync::CancellationToken::new();
+        let (process_done,process_closed)=watch::channel(None);
         let video_close = close.clone();
         let frames = video_frames.clone();
         let video_events = events.clone();
@@ -201,10 +275,18 @@ impl MediaBridge {
             let mut forced=false;
             let status=match tokio::time::timeout(Duration::from_secs(3),process.wait()).await {
                 Ok(Ok(status))=>Some(status),
-                Ok(Err(_))=>None,
-                Err(_)=>{forced=true;let _=process.kill().await;None},
+                // A failed wait is not an exit. The forced path must also
+                // observe termination before allowing another capture host.
+                Ok(Err(_))|Err(_)=>{
+                    forced=true;
+                    let _=process.kill().await;
+                    process.try_wait().ok().flatten()
+                },
             };
             drop(job);
+            process_done.send_replace(Some(if status.is_some() {Ok(())}else{
+                Err("No se pudo confirmar el cierre del host multimedia; la llamada anterior sigue bloqueando una captura nueva.".into())
+            }));
             if !reason.intentional {
                 let exit_code=status.and_then(|status|status.code());
                 let code=if exit_code.is_some_and(|code|code!=0) {"HOST_PROCESS_EXIT"}else{reason.code};
@@ -225,6 +307,7 @@ impl MediaBridge {
         Ok(Self {
             commands: Arc::new(tx),
             close,
+            process_closed,
             video_frames,
             video_namespace,
         })
@@ -273,6 +356,7 @@ impl MediaBridge {
             Self {
                 commands: Arc::new(tx),
                 close: tokio_util::sync::CancellationToken::new(),
+                process_closed: watch::channel(Some(Ok(()))).1,
                 video_frames: Arc::new(std::sync::Mutex::new(LatestFrames::default())),
                 video_namespace:0,
             },
@@ -714,6 +798,65 @@ impl ProcessJob {
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn a_confirmed_native_exit_releases_the_capture_lease_for_the_next_host() {
+        let gate=Arc::new(tokio::sync::Semaphore::new(1));
+        let permit=gate.clone().acquire_owned().await.unwrap();
+        let mut lease=ExitLease {permit:Some(permit),gate:gate.clone(),confirmed:false};
+        assert_eq!(gate.available_permits(),0);
+        lease.confirmed=true;drop(lease);
+        assert!(!gate.is_closed());
+        assert!(gate.clone().try_acquire_owned().is_ok());
+    }
+    #[tokio::test]
+    async fn an_unconfirmed_or_aborted_native_cleanup_cannot_reopen_the_capture_gate() {
+        for abort_cleanup in [false,true] {
+            let gate=Arc::new(tokio::sync::Semaphore::new(1));
+            let permit=gate.clone().acquire_owned().await.unwrap();
+            let lease=ExitLease {permit:Some(permit),gate:gate.clone(),confirmed:false};
+            if abort_cleanup {
+                let cleanup=tokio::spawn(async move {
+                    let _lease=lease;
+                    std::future::pending::<()>().await;
+                });
+                cleanup.abort();let _=cleanup.await;
+            } else {drop(lease);}
+            assert!(gate.is_closed());
+            assert!(gate.clone().try_acquire_owned().is_err());
+        }
+    }
+    #[tokio::test]
+    async fn requested_shutdown_does_not_confirm_exit_until_the_process_owner_reports_it() {
+        let (mut bridge,_)=MediaBridge::fake(|_,_|Ok(json!({})));
+        let (done,closed)=watch::channel(None);
+        bridge.process_closed=closed;
+        let clone=bridge.clone();
+        bridge.close();
+        assert!(bridge.close.is_cancelled());
+        assert!(tokio::time::timeout(Duration::from_millis(10),clone.await_closed()).await.is_err(),
+            "the cancellation request cannot release the local capture barrier");
+        done.send_replace(Some(Ok(())));
+        assert_eq!(bridge.await_closed().await,Ok(()));
+        assert_eq!(clone.await_closed().await,Ok(()));
+    }
+    #[tokio::test]
+    async fn unconfirmed_exit_and_disappearing_owner_remain_errors_for_every_waiter() {
+        let (mut bridge,_)=MediaBridge::fake(|_,_|Ok(json!({})));
+        let (done,closed)=watch::channel(None);
+        bridge.process_closed=closed;
+        done.send_replace(Some(Err("Synthetic unconfirmed exit".into())));
+        assert_eq!(bridge.close_and_wait().await,Err("Synthetic unconfirmed exit".into()));
+        assert_eq!(bridge.clone().await_closed().await,Err("Synthetic unconfirmed exit".into()));
+        let (done,closed)=watch::channel(None);bridge.process_closed=closed;drop(done);
+        assert!(bridge.await_closed().await.is_err(),"losing the exit observer is not a confirmed stop");
+    }
+    #[tokio::test]
+    async fn a_fake_without_a_native_process_has_a_deterministic_shutdown_receipt() {
+        let (bridge,_)=MediaBridge::fake(|_,_|Ok(json!({})));
+        assert_eq!(bridge.close_and_wait().await,Ok(()));
+        assert_eq!(bridge.clone().close_and_wait().await,Ok(()));
+        assert!(bridge.command("stats",json!({})).await.is_err());
+    }
+    #[tokio::test]
     async fn receiver_shutdown_and_wrong_scope_metadata_never_remove_main_call_frames() {
         let (main,_)=MediaBridge::fake(|_,_|Ok(json!({})));
         let frames=main.video_frames();let (receiver,_)=MediaBridge::fake_receiver(|_,_|Ok(json!({})),frames.clone());
@@ -868,6 +1011,7 @@ mod tests {
         let bridge = MediaBridge {
             commands: Arc::new(tx),
             close: tokio_util::sync::CancellationToken::new(),
+            process_closed: watch::channel(Some(Ok(()))).1,
             video_frames: Default::default(),
             video_namespace:0,
         };
@@ -896,6 +1040,7 @@ mod tests {
         let bridge = MediaBridge {
             commands: Arc::new(tx),
             close: tokio_util::sync::CancellationToken::new(),
+            process_closed: watch::channel(Some(Ok(()))).1,
             video_frames: Default::default(),
             video_namespace:0,
         };
@@ -964,6 +1109,7 @@ mod tests {
         let bridge = MediaBridge {
             commands: Arc::new(tx),
             close: tokio_util::sync::CancellationToken::new(),
+            process_closed: watch::channel(Some(Ok(()))).1,
             video_frames: Default::default(),
             video_namespace:0,
         };

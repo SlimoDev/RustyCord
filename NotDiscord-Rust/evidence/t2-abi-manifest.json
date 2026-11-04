@@ -1,0 +1,221 @@
+{
+  "Schema": 1,
+  "Date": "2026-11-04",
+  "TargetExecution": false,
+  "EngineLoaded": false,
+  "DevicesUsed": false,
+  "AccountsUsed": false,
+  "NativeProviderAvailable": false,
+  "Method": "REA availability observation; existing MSVC dumpbin static disassembly; Python stdlib PE mapping",
+  "Target": [
+    {
+      "Path": "media-host/runtime/resources/standalone_modules/discord_voice/discord_voice.node",
+      "Bytes": 22312376,
+      "SHA256": "7c41c446a2ef29fa04d8f62a00193416cebebb562caa8a4d4626839729833607"
+    },
+    {
+      "Path": "media-host/runtime/resources/standalone_modules/discord_voice/index.js",
+      "Bytes": 22447,
+      "SHA256": "1c12139ccbf818a992fb813b4954a68b1d64b4e96b0f6a97e12862ca5eef764a"
+    }
+  ],
+  "Finding": "Native streamParameters updates entries by media type and video RID; native initialize consumes fake capture flags and selects generated-source backend paths.",
+  "Coverage": "Focused static transport and fake capture selection routes, not whole-engine audit or runtime verification",
+  "Artifacts": [
+    {
+      "Path": "evidence/t2-abi-adm-backend-selector.asm",
+      "Bytes": 33735,
+      "SHA256": "27ab14633b7ba6496b5c14a0d59caef7972e961d3e2e695d8754ee297db8b5f1"
+    },
+    {
+      "Path": "evidence/t2-abi-adm-create-tail.asm",
+      "Bytes": 5942,
+      "SHA256": "861f0e31c56e9a256e00e2c8e81cd999ef105ab62c3dc4ccc6e59c2eeb9b58c6"
+    },
+    {
+      "Path": "evidence/t2-abi-adm-factory.asm",
+      "Bytes": 9208,
+      "SHA256": "fdd04cc0d7287c0b54b9b2c6b19181c4dae28c76e6a7d97c50602524c5c85e69"
+    },
+    {
+      "Path": "evidence/t2-abi-adm-init.asm",
+      "Bytes": 27919,
+      "SHA256": "9d6b7e11ece4b4de066d7eb8afb432f6a6d69388e07a38c1d4d6e68dea320a07"
+    },
+    {
+      "Path": "evidence/t2-abi-adm-offload-function.asm",
+      "Bytes": 668,
+      "SHA256": "b85ae006974d7884c12bac2e9cd3df856bc88afaf48b7b6038724f4e0cff8330"
+    },
+    {
+      "Path": "evidence/t2-abi-adm-offload-task.asm",
+      "Bytes": 3205,
+      "SHA256": "d1ab962091ef80953b2efdafc32477347a2d204cbb7302529a43dda19c2c70b2"
+    },
+    {
+      "Path": "evidence/t2-abi-apply-transport.asm",
+      "Bytes": 45049,
+      "SHA256": "cfe93b20611d3ea897a0098a0cec2ea4a7b9c1e3d7c880d41306d1084ebd924c"
+    },
+    {
+      "Path": "evidence/t2-abi-applysettings-impl.asm",
+      "Bytes": 26298,
+      "SHA256": "6e4b7e10207f86628092ea68faf99ffad7ad61e10912b3f07d4c4ca882e84992"
+    },
+    {
+      "Path": "evidence/t2-abi-applysettings-task.asm",
+      "Bytes": 4136,
+      "SHA256": "471d5968d3de3eaf98ac495cfc36492f2514e16ecca007527f30e1d07aed78c7"
+    },
+    {
+      "Path": "evidence/t2-abi-audio-backend-choice.asm",
+      "Bytes": 5603,
+      "SHA256": "0474d9acdc49b2a9a46f48b88b0cd5bb414c11fd17787312e38478c6870834e7"
+    },
+    {
+      "Path": "evidence/t2-abi-audio-factory-offload.asm",
+      "Bytes": 14186,
+      "SHA256": "ad0bc1bbc289819400d65f56acda40212d2817dc2e3fa8189ef652bb1b2378f4"
+    },
+    {
+      "Path": "evidence/t2-abi-audio-factory.asm",
+      "Bytes": 21008,
+      "SHA256": "c8f8565a7a35fb464082b527d1df7604c081be1c796888a8ca7f1534bcf6794c"
+    },
+    {
+      "Path": "evidence/t2-abi-binding-registration.asm",
+      "Bytes": 88077,
+      "SHA256": "5d4a62c3dcb0aa88633b7e8e0ffe62320670049cd53d95820cc2e8d65ff5eae3"
+    },
+    {
+      "Path": "evidence/t2-abi-config-copy.asm",
+      "Bytes": 8492,
+      "SHA256": "d480c40b9d6a7722b4b1b16c0af85065ad8b539d73d37a80b6e3241682b4d162"
+    },
+    {
+      "Path": "evidence/t2-abi-connection-update.asm",
+      "Bytes": 31107,
+      "SHA256": "7bfcbed2a25697dc41d4b8d61f517bc7250bb92b6da4577077cf279debd93e0d"
+    },
+    {
+      "Path": "evidence/t2-abi-engine-ctor.asm",
+      "Bytes": 26437,
+      "SHA256": "a96a51bf35f978549108f19e46a2317fd4ce99180da020a5c68e4066a36240ab"
+    },
+    {
+      "Path": "evidence/t2-abi-engine-init-consumer.asm",
+      "Bytes": 12764,
+      "SHA256": "a8cad19e26cadc8f17a89ec354be62f48d141b8f58d2e82585299e92d9fc5679"
+    },
+    {
+      "Path": "evidence/t2-abi-fakeadm-factory.asm",
+      "Bytes": 8870,
+      "SHA256": "eae7f32f6d5a0439a49f487498e21d08902ceb9f2deee56aaf8506e7228e8d30"
+    },
+    {
+      "Path": "evidence/t2-abi-fakeaudio-generator.asm",
+      "Bytes": 4046,
+      "SHA256": "31ad7835fa92f14cd0c1efce70d7580f5edc256683cf72cd05e14fce8cb5a41c"
+    },
+    {
+      "Path": "evidence/t2-abi-fakevideo-ctor.asm",
+      "Bytes": 4118,
+      "SHA256": "f888eddd882bc9d08b051994712c294ad47a57287a3bd024dbfb018b5b758f35"
+    },
+    {
+      "Path": "evidence/t2-abi-findings.md",
+      "Bytes": 10955,
+      "SHA256": "55b9803241b0d02ca82c5a428dfd9ce06556a6ea67313e91f42b9384c75e25ff"
+    },
+    {
+      "Path": "evidence/t2-abi-initialize-bool-reader.asm",
+      "Bytes": 4178,
+      "SHA256": "375bda2fdb053d52d83772df3fa997c01ab71a2839b2f9b1260a8ed9ec23a833"
+    },
+    {
+      "Path": "evidence/t2-abi-initialize-flags.asm",
+      "Bytes": 20676,
+      "SHA256": "a99072e37fb25e5c7e5abc57352bbdebd5561fb442f2bb31b91bdde81ad2f150"
+    },
+    {
+      "Path": "evidence/t2-abi-initialize-registration.asm",
+      "Bytes": 805,
+      "SHA256": "71d68c8aaab68d94b6cc8cf8322f6ad86fb8363186645f03efc63b8bbef86ccf"
+    },
+    {
+      "Path": "evidence/t2-abi-initialize-task.asm",
+      "Bytes": 1438,
+      "SHA256": "19af1493b72fd442838ba9f2e20469d7584d171a201d29d63f774d7b40617449"
+    },
+    {
+      "Path": "evidence/t2-abi-js-settransport.asm",
+      "Bytes": 25513,
+      "SHA256": "19cb7e8e1c97f18a09196b888c10ed00253fae96c0286de9c2560662287b50fa"
+    },
+    {
+      "Path": "evidence/t2-abi-media-engine-init.asm",
+      "Bytes": 99248,
+      "SHA256": "fbab33efa8cd78766122ee14c58cfaaa79f06b900d918c3b2c87b7fd64a30cd2"
+    },
+    {
+      "Path": "evidence/t2-abi-mediaengine-ctor.asm",
+      "Bytes": 7599,
+      "SHA256": "ec1f797e290279dcdccd80dcccb5693a5f119b4469cc155ca393bb4034987195"
+    },
+    {
+      "Path": "evidence/t2-abi-option-update.asm",
+      "Bytes": 10018,
+      "SHA256": "44792ee89c9f9badcf726a2697a06cb1312ca312eb2ffe8009f202fa2824fb82"
+    },
+    {
+      "Path": "evidence/t2-abi-scan.py",
+      "Bytes": 4984,
+      "SHA256": "c06f7550ee6f71bedc9e7854e4b32d857462d16933a1046e5b73a8736af9562c"
+    },
+    {
+      "Path": "evidence/t2-abi-settransport-body.asm",
+      "Bytes": 150242,
+      "SHA256": "7bb572043adc34b2fa20bc19d0a403e768920d0d38806709bffb9f076a09ad56"
+    },
+    {
+      "Path": "evidence/t2-abi-stream-item-parser.asm",
+      "Bytes": 25001,
+      "SHA256": "1994dfdaea4982c79c4c006c1cb0f46471309779931d58c945e11a3012fcb360"
+    },
+    {
+      "Path": "evidence/t2-abi-stream-vector-parser.asm",
+      "Bytes": 11171,
+      "SHA256": "7e737bdd1d1f70830672159c4b0bfb97978bbffb74e33cae177892db7e97fd35"
+    },
+    {
+      "Path": "evidence/t2-abi-string-index.json",
+      "Bytes": 8702,
+      "SHA256": "df8d21a66fb38e0a586128e3f14c898f40812d47183057acb2e5e7243f337226"
+    },
+    {
+      "Path": "evidence/t2-abi-transport-options-deserializer.asm",
+      "Bytes": 18813,
+      "SHA256": "2a0233bcae3db32e9ec356fa5cfee5870ffd97a6b39aac7452752b5ea07adc93"
+    },
+    {
+      "Path": "evidence/t2-abi-transport-options-move.asm",
+      "Bytes": 5235,
+      "SHA256": "10f50c86346c7d122dc292181a05d9430d6f997ddf2a9aa38eebccab63c7d68b"
+    },
+    {
+      "Path": "evidence/t2-abi-transport-parser.asm",
+      "Bytes": 26612,
+      "SHA256": "e2143fe07a959d64c2fe62956a072ac97c503ddef09a3a487e680386108d3e16"
+    },
+    {
+      "Path": "evidence/t2-abi-video-backend-choice.asm",
+      "Bytes": 4802,
+      "SHA256": "caae49953e9ec58176b04afc52c689f77eb970383536f757d504bccca5502906"
+    },
+    {
+      "Path": "evidence/t2-abi-video-factory.asm",
+      "Bytes": 6149,
+      "SHA256": "d77f15e454140298ec56c9cc3ed976e627e4ea160c918a0ac4544a6b4aad9e18"
+    }
+  ]
+}

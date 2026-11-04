@@ -1,0 +1,16 @@
+# Preserve exact bytes of the selected release evidence and its SHA-256 records.
+delivery-0.11.0-local.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+source-cut-0.11.0-delivery.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t1-call-discovery-source.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t2-abi-findings.md -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t2-abi-manifest.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t2-media-continuity-result.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t2-media-continuity.cjs -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t2-native-execution-0110.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t2-native-mls-0110-final.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t2-native-video-0110-final.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t6-package-0110.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t6-production-exports-0110.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t6-production-host-0110.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+t6-source-cut-0.11.0.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+source-git-map-0.11.0.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

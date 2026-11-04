@@ -2048,7 +2048,8 @@ impl NotDiscordUi {
                             ui.spacing_mut().item_spacing.x = 1.;
                             ui.spacing_mut().button_padding = egui::vec2(1., 0.);
                             let user = state.current_user.clone().unwrap_or_default();
-                            let avatar = self.avatar(ui, &user, &state.self_presence, 40.);
+                            let display_presence = self.visual_presence(state);
+                            let avatar = self.avatar(ui, &user, &display_presence, 40.);
                             if avatar.secondary_clicked() {super::menus::requested(ui.ctx(),egui::Popup::default_response_id(&avatar));}
                             avatar.context_menu(|ui| self.account_menu(ui, state));
                             egui::Popup::menu(&avatar)
@@ -2122,6 +2123,7 @@ impl NotDiscordUi {
                                 self.dialog = Some(Dialog::Settings);
                             }
                         });
+                        self.presence_note(ui, state);
                         if !state.signed_in && ui.button("Iniciar sesión").clicked() {
                             self.simple("login");
                         }
@@ -2183,7 +2185,7 @@ impl NotDiscordUi {
             ("invisible", "○ Invisible"),
         ] {
             if ui.button(label).clicked() {
-                self.send("status", "", value, "", "");
+                self.choose_presence(state, value);
                 ui.close();
             }
         }

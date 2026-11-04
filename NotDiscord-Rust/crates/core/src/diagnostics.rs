@@ -12,7 +12,7 @@ pub enum Code { Started, CleanShutdown, PreviousUnclean, Recoverable, TaskFailed
     VisibilityChanged, FocusChanged, ToastQueued, ToastActivated, SoundQueued, Panic,
     TransportHttp, TransportTls, TransportIo, TransportCapacity, TransportProtocol,
     TransportClosed, TransportAlreadyClosed, TransportUtf8, TransportEndpoint, TransportFormat,
-    ControlReadFailed, ControlWriteFailed, ControlTimeout, VideoPipeFailed, AppStartFailed, HostForcedStop, CallSourcesState }
+    ControlReadFailed, ControlWriteFailed, ControlTimeout, VideoPipeFailed, AppStartFailed, HostForcedStop, CallSourcesState, VoiceInputState }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum Phase { Start, Stop, Connect, Read, Write, Enqueue, Heartbeat, Dispatch, Present, Persist, Unknown }
 #[derive(Clone, Debug, Serialize)]

@@ -37,7 +37,36 @@ fn media_selector_footer(ui:&mut egui::Ui,label:&str,enabled:bool)->(bool,bool) 
     });
     (confirm,cancel)
 }
+pub(super) fn call_discovery_update(ctx:&egui::Context,state:&AppSnapshot,value:Value) {
+    if !state.signed_in || value["account"].as_str()!=state.current_user.as_ref().map(|user|user.id.as_str())
+        || value["generation"].as_u64()!=Some(state.notification_generation) {return;}
+    ctx.data_mut(|data|data.insert_temp(egui::Id::new("call-discovery"),value));
+    ctx.request_repaint();
+}
 impl NotDiscordUi {
+    fn draw_call_discovery_refresh(&mut self,ui:&mut egui::Ui,state:&AppSnapshot) {
+        if !matches!(state.selected_channel_kind.as_str(),"dm"|"group") || !state.selected_guild_id.is_empty() || !state.signed_in
+            || state.call_channel_id==state.selected_channel_id && (state.voice_connected||state.voice_connecting) {return;}
+        let status=ui.ctx().data(|data|data.get_temp::<Value>(egui::Id::new("call-discovery")))
+            .filter(|value|value["account"].as_str()==state.current_user.as_ref().map(|user|user.id.as_str())
+                && value["generation"].as_u64()==Some(state.notification_generation)
+                && value["channelId"].as_str()==Some(state.selected_channel_id.as_str()));
+        let pending=status.as_ref().is_some_and(|value|value["pending"]==true);
+        ui.horizontal_wrapped(|ui| {
+            if ui.add_enabled(!pending && !state.connection_phase.suspended(),egui::Button::new("Actualizar llamada"))
+                .on_hover_text("Consultar una vez la llamada de esta conversación, sin conectarte al audio").clicked() {
+                self.send("call-refresh",&state.selected_channel_id,"",json!({"navigationContext":{
+                    "account":state.current_user.as_ref().map(|user|user.id.as_str()).unwrap_or(""),
+                    "generation":state.notification_generation,"guild":state.selected_guild_id,"view":state.view}}).to_string(),&state.selected_channel_id);
+            }
+            if pending {ui.small("Actualizando llamada…");}
+            else if let Some(value)=&status {
+                if let Some(error)=value["error"].as_str().filter(|error|!error.is_empty()) {
+                    ui.add(egui::Label::new(RichText::new(error).small().color(self.theme.muted)).truncate()).on_hover_text(error);
+                } else if value["uncertain"]==true {ui.small("Información de llamada sin confirmar.");}
+            }
+        });
+    }
     pub(super) fn draw_call(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
         self.draw_call_in_height(ui, state, (ui.available_height() * 0.52).max(112.));
     }
@@ -62,12 +91,16 @@ impl NotDiscordUi {
             let width=ui.available_width();
             let gap=ui.spacing().item_spacing.y;
             let control_height=call_controls_height(ui,width);
+            let expanded=ui.ctx().data(|data|data.get_temp::<CallExpansion>(egui::Id::new("call-expanded-video")))
+                .filter(|expanded|state.call_videos.iter().any(|video|expanded.matches(state,video))
+                    && self.video_textures.contains_key(&expanded.id))
+                .map(|expanded|expanded.id);
             let chat_scope=call_chat_scope(state);
             let title_height=(if compact {ui.fonts_mut(|fonts|fonts.row_height(&egui::FontId::proportional(14.)))}
                 else {ui.text_style_height(&egui::TextStyle::Heading)}).max(if chat_scope.is_some(){26.}else{0.});
             let mut header_height=title_height+gap;
             if !compact {header_height+=ui.text_style_height(&egui::TextStyle::Body)+gap;}
-            if state.call_guild_id.is_empty()&&!state.call_invite_candidates.is_empty() {
+            if expanded.is_none() && state.call_guild_id.is_empty()&&!state.call_invite_candidates.is_empty() {
                 header_height+=call_tile_button_height(ui,width,"Miembros de la conversación")+gap;
             }
             let testing_notice="Prueba local de micrófono · la llamada está ensordecida y no recibe tu audio de prueba.";
@@ -114,7 +147,7 @@ impl NotDiscordUi {
                     }
                 });
                 if !compact {ui.add(egui::Label::new(RichText::new(format!("{}{duration}",state.call_status_label)).color(ink)).truncate());}
-                self.draw_call_invite_menu(ui, state);
+                if expanded.is_none() { self.draw_call_invite_menu(ui, state); }
                 if testing {ui.add(egui::Label::new(RichText::new(testing_notice).color(ink)).wrap());}
                 if preparing {ui.add(egui::Label::new(RichText::new(preparing_notice).color(ink)).wrap());}
                 let body_height=ui.available_height().max(0.);
@@ -122,9 +155,6 @@ impl NotDiscordUi {
                 let rows=tile_count.div_ceil(columns);
                 let account=state.current_user.as_ref().map(|user|user.id.as_str()).unwrap_or("");
                 let gallery_salt=("call-gallery",account,state.call_channel_id.as_str(),state.call_instance_id);
-                let expanded=ui.ctx().data(|data|data.get_temp::<CallExpansion>(egui::Id::new("call-expanded-video")))
-                    .filter(|expanded|state.call_videos.iter().any(|video|expanded.matches(state,video)))
-                    .map(|expanded|expanded.id);
                 let layout_scope=egui::Id::new((gallery_salt,columns,rows,expanded));
                 let reset_scroll=ui.ctx().data_mut(|data| {
                     let key=egui::Id::new("call-gallery-layout-scope");
@@ -172,17 +202,33 @@ impl NotDiscordUi {
         };
         let mut leave = false;
         let mut fit = false;
-        ui.horizontal_wrapped(|ui| {
-            leave = ui.button("Volver a participantes").clicked();
-            fit = ui.button("Ajustar").clicked();
-            ui.add(egui::Label::new(RichText::new(format!("{} · {}",video.label,if video.kind=="screen" {"Pantalla"} else {"Cámara"})).color(ink)).truncate());
-        });
-        if leave || ui.is_enabled() && !egui::Popup::is_any_open(ui.ctx()) && ui.input(|input|input.key_pressed(egui::Key::Escape)) {
+        let toolbar_popup_was_open=egui::Popup::is_any_open(ui.ctx());
+        let toolbar_top=ui.cursor().top();
+        let toolbar_width=ui.available_width();
+        // Keep these related controls in one row. At small widths/text zoom
+        // the bar scrolls horizontally; the source name yields space first.
+        egui::ScrollArea::horizontal()
+            .id_salt(("expanded-call-toolbar",&state.call_channel_id,state.call_instance_id))
+            .auto_shrink([false,true]).show(ui,|ui| {
+                ui.horizontal(|ui| {
+                    let left=ui.cursor().left();
+                    self.draw_call_invite_icon(ui,state);
+                    leave = ui.button("Volver a participantes").on_hover_text("Volver a la galería de participantes").clicked();
+                    fit = ui.button("Ajustar").on_hover_text("Restablecer ampliación y desplazamiento").clicked();
+                    let name_width=(toolbar_width-(ui.cursor().left()-left)).max(0.);
+                    if name_width>=24. {
+                        ui.add_sized([name_width,call_button_height(ui)],egui::Label::new(RichText::new(format!("{} · {}",video.label,if video.kind=="screen" {"Pantalla"} else {"Cámara"})).color(ink)).truncate())
+                            .on_hover_text(&video.label);
+                    }
+                });
+            });
+        let toolbar_height=(ui.cursor().top()-toolbar_top).max(0.);
+        if leave || ui.is_enabled() && !toolbar_popup_was_open && !egui::Popup::is_any_open(ui.ctx()) && ui.input(|input|input.key_pressed(egui::Key::Escape)) {
             ui.ctx().data_mut(|data|data.remove::<CallExpansion>(key));
             self.send("video-quality",video.id.to_string(),"false","","");
             return false;
         }
-        let extent = egui::vec2(ui.available_width().max(1.), (height-call_button_height(ui)-ui.spacing().item_spacing.y).max(20.));
+        let extent = egui::vec2(ui.available_width().max(1.), (height-toolbar_height).max(1.));
         let (canvas,response) = ui.allocate_exact_size(extent,egui::Sense::click_and_drag());
         let painter = ui.painter().with_clip_rect(canvas.intersect(ui.clip_rect()));
         painter.rect_filled(canvas,4.,call_background(self.theme.base));
@@ -813,9 +859,7 @@ impl NotDiscordUi {
             .iter()
             .filter(|call| {
                 call.channel_id == state.selected_channel_id
-                    && (call.ringing
-                        || !call.call_participants.is_empty()
-                        || !call.participants.is_empty())
+                    && call.is_active()
                     && !(state.call_channel_id == call.channel_id
                         && (state.voice_connected || state.voice_connecting))
             })
@@ -837,6 +881,7 @@ impl NotDiscordUi {
                     data.remove::<(String, Instant)>(key);
                 }
             });
+            self.draw_call_discovery_refresh(ui,state);
             return false;
         }
         let style = ctx.style();
@@ -972,13 +1017,13 @@ impl NotDiscordUi {
                                         ui.spacing_mut().button_padding.x = 2.;
                                     }
                                     for (label, action) in
-                                        [("Aceptar", "join-call"), ("Rechazar", "reject-call")]
+                                        [(if call.ringing {"Aceptar"}else{"Unirse"}, "join-call"), ("Rechazar", "reject-call")]
                                     {
                                         if action == "reject-call" && !call.ringing {
                                             continue;
                                         }
                                         let response = ui.add_enabled(
-                                            !pending,
+                                            !pending && (action != "join-call" || !call.observation_stale),
                                             egui::Button::new(label).min_size(egui::vec2(
                                                 action_width[usize::from(label == "Rechazar")]
                                                     .min(width),
@@ -1030,7 +1075,9 @@ impl NotDiscordUi {
                                             ui.spacing_mut().item_spacing.y = 1.;
                                             ui.add(
                                                 egui::Label::new(
-                                                    RichText::new("Llamada entrante").strong(),
+                                                    RichText::new(if call.ringing {"Llamada entrante"}
+                                                        else if call.observation_stale {"Llamada sin actualizar"}
+                                                        else {"Llamada en curso"}).strong(),
                                                 )
                                                 .truncate(),
                                             );
@@ -1090,7 +1137,7 @@ impl NotDiscordUi {
                                 } else {
                                     call.call_participants.clone()
                                 };
-                                ui.small(format!("Participantes: {}", participants.len()));
+                                ui.small(format!("{}: {}",if call.roster_complete {"Participantes"}else{"Participantes conocidos"},participants.len()));
                                 self.draw_media_participant_tiles(
                                     ui,
                                     &format!(
@@ -1125,6 +1172,7 @@ impl NotDiscordUi {
                         }
                     });
             });
+        self.draw_call_discovery_refresh(ui,state);
         true
     }
     #[cfg(test)]
@@ -1555,6 +1603,21 @@ impl NotDiscordUi {
         ui.menu_button("Miembros de la conversación", |ui| {
             for person in &state.call_invite_candidates {
                 ui.menu_button(&person.name, |ui| self.draw_add_to_call(ui, person, state));
+            }
+        });
+    }
+    fn draw_call_invite_icon(&mut self, ui:&mut egui::Ui, state:&AppSnapshot) {
+        if !state.call_guild_id.is_empty() || state.call_invite_candidates.is_empty() { return; }
+        let popup_id=egui::Id::new(("expanded-call-members",state.notification_generation,
+            state.current_user.as_ref().map(|user|user.id.as_str()),&state.call_channel_id,state.call_instance_id));
+        let button=super::shell::icon_button(ui,super::shell::Icon::Members,call_button_height(ui),false,false)
+            .on_hover_text("Miembros de la conversación");
+        button.widget_info(||egui::WidgetInfo::labeled(egui::WidgetType::Button,true,"Miembros de la conversación"));
+        #[cfg(test)] ui.ctx().data_mut(|data|data.insert_temp(egui::Id::new("expanded-call-members-button"),button.rect));
+        if button.clicked() {super::menus::requested(ui.ctx(),popup_id);}
+        egui::Popup::menu(&button).id(popup_id).show(|ui| {
+            for person in &state.call_invite_candidates {
+                ui.menu_button(&person.name,|ui| self.draw_add_to_call(ui,person,state));
             }
         });
     }

@@ -2,7 +2,8 @@
 mod incoming;
 use incoming::snowflake_greater;
 mod deleted_logs;
-mod presence;
+pub(crate) mod presence;
+mod observed_calls;
 mod profile_editor;
 mod reaction_users;
 mod attachments;
@@ -142,6 +143,7 @@ pub struct Controller {
     picker: Option<PickerHistory>,
     premium: i32,
     selected_before_profile: String,
+    ram_history_reload: Option<String>,
     muted: HashMap<String, bool>,
     latest: HashMap<String, String>,
     // Incoming unread watermark is independent of our own latest delivery.
@@ -180,6 +182,7 @@ pub struct Controller {
     game_catalog: game_mentions::State,
     emoji_cache: HashMap<String, (Instant, Vec<CustomEmoji>)>,
     voice_lifecycle: voice::VoiceLifecycle,
+    observed_calls: observed_calls::Observations,
     latest_snapshot: Arc<Mutex<Option<AppSnapshot>>>,
     snapshot_dirty: AtomicBool,
     snapshot_at: Mutex<Instant>,
@@ -368,6 +371,8 @@ impl Controller {
             game_catalog: game_mentions::State::default(),
             emoji_cache: HashMap::new(),
             voice_lifecycle: voice::VoiceLifecycle::default(),
+            observed_calls: Default::default(),
+            ram_history_reload: None,
             latest_snapshot: Arc::new(Mutex::new(None)),
             snapshot_dirty: AtomicBool::new(false),
             snapshot_at: Mutex::new(Instant::now() - Duration::from_secs(1)),
@@ -782,6 +787,8 @@ impl Controller {
         }
     }
     fn reset_session_view(&mut self) {
+        self.ram_history_reload = None;
+        self.observed_calls = Default::default();
         self.last_private_channel.clear();
         self.game_detector.reset();
         self.clear_private_call_state();
@@ -1012,6 +1019,7 @@ impl Controller {
         self.recovery = Default::default();
         self.sends.clear();
         self.stop_voice().await;
+        self.retire_session_voice().await;
         if let Some(g) = self.gateway.take() {
             g.stop();
         }
@@ -1081,6 +1089,7 @@ impl Controller {
             .collect()
     }
     fn reset_navigation(&mut self) {
+        self.ram_history_reload = None;
         self.resolved_notification_channel = None;
         self.restore_channel.clear();
         self.member_demand = None;
@@ -1276,6 +1285,9 @@ impl Controller {
                 .unwrap_or_default()
         };
         self.state.can_pin_messages = nav.as_ref().is_some_and(|n| n.can_pin) || is_dm;
+        if is_dm {
+            if let Err(error)=self.demand_private_call(id,false) {self.status(&error);}
+        }
         self.state.has_older_messages = true;
         self.loading_channel = id.into();
         if !self.state.channel_access.can_read_history {
@@ -1509,6 +1521,13 @@ impl Controller {
         }
         .to_owned();
         match action.kind.as_str() {
+            "status" | "presence-check" => return self.presence_action(action),
+            "call-refresh" => {
+                if !self.current_navigation_action(&action) { return Ok(()); }
+                if action.channel_id != self.state.selected_channel_id { return Ok(()); }
+                self.demand_private_call(&action.channel_id, true)?;
+                return Ok(());
+            }
             "dismiss-voice-error" => {
                 self.state.voice_error.clear();
                 self.publish();
@@ -1677,7 +1696,8 @@ impl Controller {
                 self.publish();
             }
             "return-chat" => {
-                self.cancel_view_requests();
+                if !self.current_navigation_action(&action) { return Ok(()); }
+                let from_history = self.state.view == "history";
                 let previous = if self.state.view == "profile"
                     && matches!(
                         self.selected_before_profile.as_str(),
@@ -1687,6 +1707,8 @@ impl Controller {
                 } else {
                     "chat".into()
                 };
+                if previous == "chat" { self.require("history")?; }
+                self.cancel_view_requests();
                 self.state.view = previous;
                 self.state.profile_user = None;
                 self.state.profile_details = None;
@@ -1694,6 +1716,11 @@ impl Controller {
                     self.state.messages = self.state.pinned_messages.clone().into();
                 } else if self.state.view == "chat" {
                     self.refresh_messages();
+                    if self.ram_history_reload.take().is_some_and(|channel|channel == self.state.selected_channel_id)
+                        || from_history && !self.cache.contains_channel(&self.state.selected_channel_id) {
+                        let channel = self.state.selected_channel_id.clone();
+                        self.select_channel(&channel)?;
+                    } else { self.reload_deferred_view(); }
                 }
                 self.publish();
             }
@@ -1924,7 +1951,15 @@ impl Controller {
                 if let Err(error)=self.remove_remote_gif(action){self.data("gif-favorite-result",json!({"owner":self.me(),"generation":self.state.notification_generation,"url":target,"operation":operation,"confirmed":false,"error":error}));return Err(error);}
             },
             "history" => {
+                if !self.current_navigation_action(&action) { return Ok(()); }
+                if !matches!(self.state.view.as_str(), "chat" | "pins" | "search" | "history") {
+                    return Err("Abre una conversación para consultar su registro RAM.".into());
+                }
+                Self::valid(&self.state.selected_channel_id)?;
                 self.require("history")?;
+                if self.state.view != "history" && self.loading_channel == self.state.selected_channel_id {
+                    self.ram_history_reload = Some(self.state.selected_channel_id.clone());
+                }
                 self.cancel_view_requests();
                 self.state.messages = self
                     .features
@@ -1948,6 +1983,8 @@ impl Controller {
         // stops the session. Invalidate voice/capture attempts before resuming it.
         self.sync_network_safety().await;
         match action.kind.as_str() {
+            "__call-discovered" => self.complete_call_discovery(&action, &value),
+            "__voice-leave" => self.complete_voice_leave(&action, &value)?,
             "__presence-reconciled"=>{self.finish_presence_reconcile(&action,Some(&value))?;}
             "__private-ring" => {self.complete_private_ring(&action)?;}
             "__private-ring-stop" => {self.complete_private_ring_stop(&action);}
@@ -2402,6 +2439,7 @@ impl Controller {
     }
     async fn tick(&mut self) {
         self.tick_connection();
+        self.poll_call_discovery();
         self.tick_game_activity().await;
         self.expire_outgoing_ring();
         self.expire_private_calls_at(Instant::now()).await;

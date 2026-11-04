@@ -1,6 +1,8 @@
-# NotDiscord Rust 0.10.1
+# NotDiscord Rust 0.11.0
 
 Versión principal para Windows en Rust, rama `NotDiscord`. NotDiscord+ conserva su versión anterior en `codex/notdiscord-plus`; esta entrega no actualiza su rama ni su paquete.
+
+0.11.0 es una actualización Mediana con entrega local: observación y salida de llamadas privadas, presencia visual inmediata, cabecera de vídeo ampliado y retorno del registro RAM. La [nota de implementación](docs/llamadas-presencia-navegacion-0.11.0.md) detalla las comprobaciones y los límites. El micrófono cuenta con diagnóstico y pruebas sintéticas; su incidente físico sigue pendiente de reproducción. El [Setup local](dist/NotDiscord-Setup-0.11.0.exe) está generado y sus hashes figuran en la [nota de entrega](docs/entrega-local-0.11.0.md). No se ha publicado ni instalado; `release: null`.
 
 0.10.1 es una actualización Pequeña que corrige la carga inicial de servidores, conversaciones y amigos de 0.10.0. La [nota de corrección](docs/startup-catalog-0.10.1.md) documenta la causa, la espera hasta la sincronización y las verificaciones realizadas o pendientes.
 
@@ -26,8 +28,9 @@ NotDiscord utiliza `%LOCALAPPDATA%/NotDiscord/shared/configuration.json` y una s
 
 Plus continúa usando sus archivos anteriores. La sincronización continua y la exclusión bidireccional con Plus quedan pendientes hasta que se autorice actualizar esa variante. NotDiscord puede solicitar el cierre ordenado de una instancia anterior de su instalación y muestra el motivo.
 
-El manifiesto `version.json` identifica versión y rama. El artefacto de distribución de esta versión es un único `dist/NotDiscord-Setup-0.10.1.exe`, con el runtime requerido; su disponibilidad y hashes se anuncian en el manifiesto al publicar. `release: null` indica que todavía no hay instalador anunciado para esa versión. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
+El manifiesto `version.json` identifica versión y rama. La última distribución publicada es `NotDiscord-Setup-0.10.1.exe`; el Setup 0.11.0 es local y no se anuncia al actualizador (`release: null`). Su manifiesto preparado `dist/version-0.11.0.pending.json` es un borrador: su URL remota aún no se ha publicado ni verificado. Las entregas publicadas usan un único Setup con el runtime requerido, tamaño y hashes verificados. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
 
+- [Reglas de desarrollo conservador](docs/desarrollo-conservador.md)
 - [Corrección de carga inicial de catálogos en 0.10.1](docs/startup-catalog-0.10.1.md)
 - [Plan y estado de conexión, envíos, adjuntos e interfaz de 0.10.0](docs/plan-conexion-envios-adjuntos-ui-2026-10-31.md)
 - [Plan de correcciones y estado de 0.7.0](docs/plan-correcciones-interaccion-llamadas-gifs-2026-10-27.md)
@@ -53,4 +56,4 @@ El manifiesto `version.json` identifica versión y rama. El artefacto de distrib
 - [Feedback de navegación y entrega de 0.4.1](docs/ui-0.4.1.md)
 - [Evidencia de Markdown obtenida con REA](docs/rea-markdown-0.4.0.md)
 
-Las comprobaciones realizadas y pendientes figuran en el plan de la tanda. La revisión de código, compilación y pruebas sintéticas no sustituyen la confirmación visual y de servicio con Discord real, que corresponde al usuario. En esta publicación no se ejecutan pruebas, cliente, cuentas, dispositivos ni instalador.
+Las comprobaciones realizadas y pendientes figuran en el plan de la tanda. En 0.11.0 pasaron las 939 pruebas de librerías del workspace, la compilación de producción, la comprobación de todos los destinos y el IPC local del paquete. Se ejecutaron probes con entradas sintéticas; no sustituyen confirmación visual ni de servicio con Discord real. No se realizaron pruebas con cuentas ni dispositivos físicos, ni se ejecutó el instalador.

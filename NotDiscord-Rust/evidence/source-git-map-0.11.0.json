@@ -1,0 +1,236 @@
+{
+  "Schema": 1,
+  "Version": "0.11.0",
+  "BaseRevision": "865b2f11069fadcd40f40bc634e7162ea7694f3e",
+  "BuildId": "5b6286f2043eab9772d2ddd68352bf044f4d4d3ee296f4647b52b684ffba766c",
+  "SourceCut": "source-cut-0.11.0-delivery.json",
+  "SourceCutBytesPreserved": true,
+  "GitCoreAutoCrlf": "true",
+  "Explanation": "The build input SHA-256 values describe the Windows working files, including mixed CRLF/LF. Git text normalization is retained for product sources and Cargo files. Each Git blob was checked against git hash-object --path for the unchanged build input; the source commit is recorded in publication-0.11.0.json after release verification.",
+  "Sources": [
+    {
+      "Path": "Cargo.lock",
+      "BuildInputSHA256": "6fd80e9e7d9a5ce8cd6bc38a64c56b57e766b9d949dd7315118d2e13a6390b33",
+      "GitBlobId": "703314af2d377b14d1c0034d650efd4897b38dc8",
+      "GitBlobSHA256": "6fd80e9e7d9a5ce8cd6bc38a64c56b57e766b9d949dd7315118d2e13a6390b33",
+      "GitTextNormalizationApplied": false
+    },
+    {
+      "Path": "Cargo.toml",
+      "BuildInputSHA256": "a74c01b99547b307577034323724dbf301be3d271c59c9333b4ebf7a064c50a6",
+      "GitBlobId": "2b58b9337bd90683a24dac8a6020109062899421",
+      "GitBlobSHA256": "a74c01b99547b307577034323724dbf301be3d271c59c9333b4ebf7a064c50a6",
+      "GitTextNormalizationApplied": false
+    },
+    {
+      "Path": "crates/app/Cargo.toml",
+      "BuildInputSHA256": "403ff930dcc45a8434a037c9bb9b0437f47a58efbfd87319b9eca49dd8a5100f",
+      "GitBlobId": "67bb84f4f8e78508e67dfeab7dc6a4be4393eecb",
+      "GitBlobSHA256": "350d203d7de2f1a21f90a6f7ff0f12342565f69cdf461fbe21db5f4d01a2108d",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/controller.rs",
+      "BuildInputSHA256": "2a4fc08f2296332318baa62d493ceaff9e6d0dc1874ed692b6d3fbf1e2588b64",
+      "GitBlobId": "f61a6da59c8e8c928e6f466e179386f8ae35c316",
+      "GitBlobSHA256": "a05aa38c2f9c30714e1dac7bfcf9a8743994ef9b5da0ff1a863aa8d04f82ce4d",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/controller/connection.rs",
+      "BuildInputSHA256": "0acec9507163ff995273be2bdbfe2be4a77055362d13ac63c5cc2015ed5f54d1",
+      "GitBlobId": "ae9495805ccb19c9e1654efb14cb0cd46bea78da",
+      "GitBlobSHA256": "a72051387f2ea04c0608cbdfd3402d1ef030b8271c06b630bef67058650d095d",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/controller/incoming.rs",
+      "BuildInputSHA256": "cc2666eecad1ffa41da25092ade186357abc655861e738611ee009c8b2d4ccb4",
+      "GitBlobId": "a64b8c5c76a7ed888bb4394adff6d2f1701fbdb8",
+      "GitBlobSHA256": "f2b44f9505fa070533152e318f42069b4a9248c26c53ccad88ee2bbbc7f73b13",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/controller/observed_calls.rs",
+      "BuildInputSHA256": "46875b49a71a854cd795c3c2fced631d722a2e5f813183b41c5d1f5020df254d",
+      "GitBlobId": "323f9aa61f5a4d7ee8d6aee27ac6923aee1fb75a",
+      "GitBlobSHA256": "46875b49a71a854cd795c3c2fced631d722a2e5f813183b41c5d1f5020df254d",
+      "GitTextNormalizationApplied": false
+    },
+    {
+      "Path": "crates/app/src/controller/presence.rs",
+      "BuildInputSHA256": "342d13ea569f743309bc0b20f05d136cf48316f1b15a80462e6bd6cb597c7193",
+      "GitBlobId": "53d5f0f0f8574a9f98e87c319e62fc77d7a3eeb6",
+      "GitBlobSHA256": "35bea28ebe35676d5b4cd128efe3baa88c4810cc545fa56de78b4d7629aa3143",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/controller/voice.rs",
+      "BuildInputSHA256": "a8f7e42b30c1c9b7aa054d562f722234525315cef843a27dd181e09772ca3154",
+      "GitBlobId": "742962ed0ccaf3f171868b41432b48ae5608130c",
+      "GitBlobSHA256": "0e06aea740068c9b719e68e0c15fcb437639e4c7318480a9e720e3c5f4f16d56",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/diagnostics.rs",
+      "BuildInputSHA256": "e38427acbbdbe80a9e649c4f34861ea318583cafcff2c88c19670da9e3fbb8aa",
+      "GitBlobId": "25754aaa67ea4cb1c3c7d181f7d8ebf6af0d6c98",
+      "GitBlobSHA256": "046169628a554b96ffaa53b65e3f69e58d781de28e7c022b48cd80a7a8ce12ff",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/media.rs",
+      "BuildInputSHA256": "5b5bffce37836c927a1682f437deb54e68efadbc7bcaa84b32bc3c04f0519997",
+      "GitBlobId": "acda540ab0a17e82eabbc39b71aa8e37b9c6b445",
+      "GitBlobSHA256": "5b5bffce37836c927a1682f437deb54e68efadbc7bcaa84b32bc3c04f0519997",
+      "GitTextNormalizationApplied": false
+    },
+    {
+      "Path": "crates/app/src/message_cache.rs",
+      "BuildInputSHA256": "459fa845867c5990c23c90edd341d9f6ffc71d8c73357b8da9dfb32378665c31",
+      "GitBlobId": "c1990c28577dd5c9ac33cfde3c1e9f21842493e0",
+      "GitBlobSHA256": "b07d8787552b2bccc485ed7c1965616bc8961919a7565513956a6e8b9a50c577",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/ui/chat.rs",
+      "BuildInputSHA256": "b446ba9621662d81a4f9f73798217882b8fdab9a812cf41bfbc1e9a64b7f77f1",
+      "GitBlobId": "e900f36ff010d0ebeddfa05453b7d300d61ac2be",
+      "GitBlobSHA256": "036b986df3740876ad664f8066aee2b52ca636a596be8be7f46bb61deff6b2d0",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/ui/chat/interaction_tests.rs",
+      "BuildInputSHA256": "88630ddc7d00bfa889346a0504f7b5236c124320c23d5661591a539848ee33a3",
+      "GitBlobId": "55312b4309e22e895d2d6ac6f7ab473e64870af7",
+      "GitBlobSHA256": "7b5dcc653c3b9549d6eafd4968650d7085e971c23073acfb15c64bac1213c893",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/ui/mod.rs",
+      "BuildInputSHA256": "7ef304003d3584e4cd3b743fc1148375e2b05e75e7972e7f2413d47917d3ee2c",
+      "GitBlobId": "e9604d53b8ce7b739356a4167af7eb5ca39240ad",
+      "GitBlobSHA256": "f3f40da21c93a75d797ef03255ba274851b30078533c5ef0ab9b7a21cc153bac",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/ui/self_presence.rs",
+      "BuildInputSHA256": "fc8577d2b0e243c258723b97ca2509c27a1fd794565f316315bbcffde7a06379",
+      "GitBlobId": "fe9e9c60adecdd06ba42821af63a5a43c4705b66",
+      "GitBlobSHA256": "1476f4572ab5ce32f86bea1774526f6f873e7fb4eed9986717cc87971dcba346",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/ui/shell.rs",
+      "BuildInputSHA256": "b23906203f1c6d057fe3a0cd9bc6d95b6ab6f926f7d2d40e9e674dda767872d0",
+      "GitBlobId": "fb578878f909274aae3bff3a45af6bdeee376fec",
+      "GitBlobSHA256": "b645e2184bb54ee41208625968e903ae796e79cbda2a29d290eabae6cc0493a6",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/ui/voice.rs",
+      "BuildInputSHA256": "9663c0ca09610019e42472dcf071ef6fd8f3981a168e0b2e39fb22849c443055",
+      "GitBlobId": "f097724855e67bee9f5284c7707b5ba52f5c47df",
+      "GitBlobSHA256": "223b8cda04995ff1941aed983b1e07cc03edefd64362f1d49d2e28b12a0d40b6",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/app/src/ui/voice/invitation_tests.rs",
+      "BuildInputSHA256": "86f07436e3dc625bdb62219df02069c22298790993e29e020a74d7d74b9a2f15",
+      "GitBlobId": "e2bb9f63a33d1d0e78c9a2d5557befa4b949f502",
+      "GitBlobSHA256": "0138224f2598a88988339641eb8ebb230dc4fb14a38cae96775fc933ff76b94c",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/core/Cargo.toml",
+      "BuildInputSHA256": "1afbb638098c4ca5545725e70c670ca17238cd168495009b4b388d286cfa7864",
+      "GitBlobId": "42198ceeea5d67bd0efcbdabd0d492fe880c52e1",
+      "GitBlobSHA256": "4b678d5701c7c452aa1c35f2061c1a256468524c48d8340e17650d679f6df004",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/core/src/diagnostics.rs",
+      "BuildInputSHA256": "585f86ba1b07ec9449ff54998e50679d66218eee60da5a211e32136babd73bfb",
+      "GitBlobId": "b5558601d27fcfb41b5651589b1b3332ded17c1f",
+      "GitBlobSHA256": "12238a2febe0a8c2e0ed659d538b725ec6b2d6a8c5cdf7844d7c31c8b4eaafae",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/core/src/gateway.rs",
+      "BuildInputSHA256": "4ecc77b928312686884653f8e4a11b77bfc3fb5d883669f29dbd12137b9eaee2",
+      "GitBlobId": "4d836507f414310c6ce68f1b4512c3434ef9e505",
+      "GitBlobSHA256": "a9a2d31f484c93b5bd33e17f12adfebd4bd1313c2cdc38db80be73e2b46f6100",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/core/src/models.rs",
+      "BuildInputSHA256": "b2568d245566fcfcf622e0cd4c7654da26572b35a18a1c7a31da2c3048bed7c6",
+      "GitBlobId": "98c4c39c78860dcc773c18d76db1d38e3f7bd591",
+      "GitBlobSHA256": "dfd96ce67c5d61cb55562a21f74e35640ed0fea84ce1f9841142fc994eab43ab",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/media-addon/Cargo.toml",
+      "BuildInputSHA256": "cbbdf98e52ea5d3fd3f33dfdbad85fd5acaa72d42b79d8c304a35af144df8b09",
+      "GitBlobId": "30e6293bcc6ef39601a40fa1c63124f59b01c450",
+      "GitBlobSHA256": "cbbdf98e52ea5d3fd3f33dfdbad85fd5acaa72d42b79d8c304a35af144df8b09",
+      "GitTextNormalizationApplied": false
+    },
+    {
+      "Path": "crates/media-addon/src/host.rs",
+      "BuildInputSHA256": "1f9060590b8e3b5599448e68f45209d7bea6719aa1585885eb3ece623f2771bd",
+      "GitBlobId": "7dfbcb7231c052fe151612f5cb0a245957cb5d27",
+      "GitBlobSHA256": "2a60b119dbd922611857a12e4f9cf6716805066fe8449added7290b0840ad7a7",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/media-addon/src/host/voice_socket.rs",
+      "BuildInputSHA256": "4300cf99d0f4657f662c3826e8ff129cc67e5e095c0d7c15eac87f2b5de239ab",
+      "GitBlobId": "e735ef0e771f0149c34ed6b341fb1924a3e1951d",
+      "GitBlobSHA256": "4300cf99d0f4657f662c3826e8ff129cc67e5e095c0d7c15eac87f2b5de239ab",
+      "GitTextNormalizationApplied": false
+    },
+    {
+      "Path": "crates/media-addon/src/probe.rs",
+      "BuildInputSHA256": "12f68764029d58c0f2a6d9386063a149352194b9870b51d6e6e974943a3369ea",
+      "GitBlobId": "0a4a61a9b28294778de466d7054173852f6f95b9",
+      "GitBlobSHA256": "12f68764029d58c0f2a6d9386063a149352194b9870b51d6e6e974943a3369ea",
+      "GitTextNormalizationApplied": false
+    },
+    {
+      "Path": "crates/media-addon/src/receive_probe.rs",
+      "BuildInputSHA256": "df9ea5fd890ca0f4e994d3be228a9b7b3390953aebd97be6aaca56f6f4dec8a6",
+      "GitBlobId": "565a023f75946bd8137f8cec0e1aa1b9c621c0c1",
+      "GitBlobSHA256": "890e05ef183828286cecdf8651438081dbca59f463da0e2390558adca61e1a82",
+      "GitTextNormalizationApplied": true
+    },
+    {
+      "Path": "crates/media-addon/src/session.rs",
+      "BuildInputSHA256": "b301f618464e5448e351617963f97720558acaea94bc1c8bf76e754a4c67ee5c",
+      "GitBlobId": "d53d3730159945f3ab59d0e3d99f7a1bbccc8e57",
+      "GitBlobSHA256": "b301f618464e5448e351617963f97720558acaea94bc1c8bf76e754a4c67ee5c",
+      "GitTextNormalizationApplied": false
+    },
+    {
+      "Path": "crates/media-addon/Test-NativeMls.ps1",
+      "BuildInputSHA256": "df9e35a0173eff57c0e5840af2796951f4b24d7429a7ca89f2f3d92ddf30bd33",
+      "GitBlobId": "f78f725ad52f108dc4352484bcae91703d8810bb",
+      "GitBlobSHA256": "df9e35a0173eff57c0e5840af2796951f4b24d7429a7ca89f2f3d92ddf30bd33",
+      "GitTextNormalizationApplied": false
+    },
+    {
+      "Path": "crates/media-addon/Test-NativeVideo.ps1",
+      "BuildInputSHA256": "29160a0983af88c85e1e912f1404987a9a07cd5db30ada2e652e463d70017ef6",
+      "GitBlobId": "d48095f2b7b88be99c461f668931fe07714f6180",
+      "GitBlobSHA256": "29160a0983af88c85e1e912f1404987a9a07cd5db30ada2e652e463d70017ef6",
+      "GitTextNormalizationApplied": false
+    },
+    {
+      "Path": "version.json",
+      "BuildInputSHA256": "c5d313bcf078f00eb4231d8296e881dbc4a6c010afa986be4acd9f9733b96388",
+      "GitBlobId": "6e8bb183f0fd0fa13e9934d3e73e465ba9f644df",
+      "GitBlobSHA256": "c795fd7c8e912a23609d8b9b0f3c1f841913531c72d9f593fa1cc417265ea015",
+      "GitTextNormalizationApplied": true
+    }
+  ]
+}

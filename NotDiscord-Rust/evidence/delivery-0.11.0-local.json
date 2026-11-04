@@ -1,0 +1,60 @@
+{
+  "Schema": 1,
+  "Date": "2026-11-04",
+  "Variant": "standard",
+  "Version": "0.11.0",
+  "Branch": "NotDiscord",
+  "BaseRevision": "865b2f11069fadcd40f40bc634e7162ea7694f3e",
+  "Uncommitted": true,
+  "BuildId": "5b6286f2043eab9772d2ddd68352bf044f4d4d3ee296f4647b52b684ffba766c",
+  "SourceFilesUnchanged": 32,
+  "ProductionFeatures": [],
+  "ProductionBuildPassed": true,
+  "AllTargetsReleaseCheckPassed": true,
+  "PackageVerified": true,
+  "ProductionIpcChecks": 7,
+  "WorkspaceLibraryTests": {
+    "AppPassed": 731,
+    "AppIgnored": 5,
+    "CorePassed": 169,
+    "MediaPassed": 39,
+    "Failed": 0
+  },
+  "DiagnosticFeatureTestsPassed": 41,
+  "DiagnosticTestsOverlapMedia": true,
+  "PhysicalMicrophoneFixVerified": false,
+  "NativeSyntheticAudioContinuityVerified": true,
+  "NativeSyntheticVideoFramesVerified": false,
+  "RemoteAudibilityVerified": false,
+  "InstallerExecuted": false,
+  "Published": false,
+  "RootReleaseAnnounced": false,
+  "PendingManifestRemoteUrlVerified": false,
+  "Artifacts": [
+    {
+      "Path": "dist/NotDiscord-Setup-0.11.0.exe",
+      "Bytes": 118951901,
+      "SHA256": "23024f01534d4a886ec4a26453cd046832f272348f77352c2fae4093e7012fee"
+    },
+    {
+      "Path": "dist/version-0.11.0.pending.json",
+      "Bytes": 497,
+      "SHA256": "5494fd9d12d76c0fe350dcdbf8424d32e62970f270d082f33968318df6c50075"
+    },
+    {
+      "Path": "target/installer-payload-0.11.0-20261104-full/NotDiscord.exe",
+      "Bytes": 28061184,
+      "SHA256": "6973d523f65f255505c56d1e7d6ae1670471e8d6fd50082143d6bc8df38ade54"
+    },
+    {
+      "Path": "target/installer-payload-0.11.0-20261104-full/NotDiscord.Media.node",
+      "Bytes": 4341760,
+      "SHA256": "509d4df50592af0ea36ef5f7c137b2e7b90d6acd0fdfc4db1b77faf20630eac2"
+    },
+    {
+      "Path": "target/installer-payload-0.11.0-20261104-full/media-runtime/runtime-inventory.json",
+      "Bytes": 7539,
+      "SHA256": "267e6d6be60bb4b0b0e28a3fe8fe2c12dd4003cac872b9d3da25b56b7472578f"
+    }
+  ]
+}

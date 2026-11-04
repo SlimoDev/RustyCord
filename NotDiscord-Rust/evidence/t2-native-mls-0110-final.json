@@ -1,0 +1,341 @@
+{
+  "DiscordConnections": 0,
+  "DiscoveryPackets": 4,
+  "DriverVerifiedFakeBackend": true,
+  "EncryptionModes": 7,
+  "FakeAudioCapture": true,
+  "FakeVideoCapture": true,
+  "InputCatalogEntries": 1,
+  "InputDevice": "hash-verified-FakeADM-logical-default",
+  "KeyMaterialPersisted": false,
+  "Limitations": [
+    "No DAVE peer transition or remote audibility is established by this private loopback fixture.",
+    "PTT setter acceptance is not a getter of the native transmit gate."
+  ],
+  "LoopbackOnly": true,
+  "MlsKeyPackageBytes": 393,
+  "NativeAudioContinuityVerified": true,
+  "NativeAudioEncoderConfigured": true,
+  "NativeAudioTransportConfigured": true,
+  "NativeCallback": true,
+  "NativeCaptureContinuityVerified": true,
+  "NativeConnectionAbi": "user-options-callback",
+  "NativeConnectionEntry": "raw-constructor",
+  "NativeEngineLoaded": true,
+  "NativeInitialized": true,
+  "NativeInputModeConfigured": true,
+  "NativeMlsProbeVerified": true,
+  "NativeMutationSequenceCompleted": true,
+  "NativeReferenceReleased": true,
+  "NativeTransmitGateClosed": true,
+  "NativeTransportFieldsValid": true,
+  "OutputDevice": "disabled",
+  "OutputVolume": 0,
+  "OwnStreamConnected": true,
+  "OwnStreamDestroyAccepted": true,
+  "OwnStreamReferenceReleased": true,
+  "RealAccount": false,
+  "RealCamera": false,
+  "RealMicrophone": false,
+  "RemoteAudibilityVerified": false,
+  "Samples": [
+    {
+      "InputCallbacks": 4,
+      "NativeStatsMethod": "getFilteredStats",
+      "NativeStatsObject": true,
+      "Phase": "baseline",
+      "Stats": {
+        "available": true,
+        "encryption": {
+          "nativeDaveEnabled": null,
+          "nativeDaveProtocolVersion": null,
+          "negotiatedByHelper": false
+        },
+        "inbound": {
+          "audio": [],
+          "video": []
+        },
+        "interval": {
+          "durationMs": null,
+          "receivedBitrateBps": null,
+          "receivedPacketsPerSecond": null,
+          "sentBitrateBps": null,
+          "sentPacketsPerSecond": null
+        },
+        "outbound": {
+          "audio": {
+            "audioDetected": null,
+            "bitrateBps": 7333.0,
+            "bytes": 297.0,
+            "codec": "opus",
+            "crypto": {
+              "failure": 0.0,
+              "missingKey": 0.0,
+              "passthrough": 0.0,
+              "success": 0.0
+            },
+            "framesCaptured": 24.0,
+            "framesRendered": 24.0,
+            "packets": 11.0,
+            "packetsLost": null,
+            "sampleRateHz": 48000.0
+          },
+          "video": []
+        },
+        "sanitized": true,
+        "state": "negotiating",
+        "transport": {
+          "bytesReceived": 0.0,
+          "bytesSent": 517.0,
+          "decryptionFailures": 0.0,
+          "inboundEstimateBps": 0.0,
+          "outboundEstimateBps": 600000.0,
+          "packetsReceived": 0.0,
+          "packetsSent": 11.0,
+          "rttMs": 0.0,
+          "sendBandwidthBps": 600000.0
+        }
+      }
+    },
+    {
+      "InputCallbacks": 7,
+      "NativeStatsMethod": "getFilteredStats",
+      "NativeStatsObject": true,
+      "Phase": "video-delta",
+      "Stats": {
+        "available": true,
+        "encryption": {
+          "nativeDaveEnabled": null,
+          "nativeDaveProtocolVersion": null,
+          "negotiatedByHelper": false
+        },
+        "inbound": {
+          "audio": [],
+          "video": []
+        },
+        "interval": {
+          "durationMs": null,
+          "receivedBitrateBps": null,
+          "receivedPacketsPerSecond": null,
+          "sentBitrateBps": null,
+          "sentPacketsPerSecond": null
+        },
+        "outbound": {
+          "audio": {
+            "audioDetected": null,
+            "bitrateBps": 6947.0,
+            "bytes": 594.0,
+            "codec": "opus",
+            "crypto": {
+              "failure": 0.0,
+              "missingKey": 0.0,
+              "passthrough": 0.0,
+              "success": 0.0
+            },
+            "framesCaptured": 47.0,
+            "framesRendered": 47.0,
+            "packets": 22.0,
+            "packetsLost": null,
+            "sampleRateHz": 48000.0
+          },
+          "video": []
+        },
+        "sanitized": true,
+        "state": "negotiating",
+        "transport": {
+          "bytesReceived": 0.0,
+          "bytesSent": 1034.0,
+          "decryptionFailures": 0.0,
+          "inboundEstimateBps": 0.0,
+          "outboundEstimateBps": 600000.0,
+          "packetsReceived": 0.0,
+          "packetsSent": 22.0,
+          "rttMs": 0.0,
+          "sendBandwidthBps": 600000.0
+        }
+      }
+    },
+    {
+      "InputCallbacks": 10,
+      "NativeStatsMethod": "getFilteredStats",
+      "NativeStatsObject": true,
+      "Phase": "own-stream-created",
+      "Stats": {
+        "available": true,
+        "encryption": {
+          "nativeDaveEnabled": null,
+          "nativeDaveProtocolVersion": null,
+          "negotiatedByHelper": false
+        },
+        "inbound": {
+          "audio": [],
+          "video": []
+        },
+        "interval": {
+          "durationMs": null,
+          "receivedBitrateBps": null,
+          "receivedPacketsPerSecond": null,
+          "sentBitrateBps": null,
+          "sentPacketsPerSecond": null
+        },
+        "outbound": {
+          "audio": {
+            "audioDetected": null,
+            "bitrateBps": 7104.0,
+            "bytes": 945.0,
+            "codec": "opus",
+            "crypto": {
+              "failure": 0.0,
+              "missingKey": 0.0,
+              "passthrough": 0.0,
+              "success": 0.0
+            },
+            "framesCaptured": 71.0,
+            "framesRendered": 71.0,
+            "packets": 35.0,
+            "packetsLost": null,
+            "sampleRateHz": 48000.0
+          },
+          "video": []
+        },
+        "sanitized": true,
+        "state": "negotiating",
+        "transport": {
+          "bytesReceived": 0.0,
+          "bytesSent": 1645.0,
+          "decryptionFailures": 0.0,
+          "inboundEstimateBps": 0.0,
+          "outboundEstimateBps": 600000.0,
+          "packetsReceived": 0.0,
+          "packetsSent": 35.0,
+          "rttMs": 0.0,
+          "sendBandwidthBps": 600000.0
+        }
+      }
+    },
+    {
+      "InputCallbacks": 14,
+      "NativeStatsMethod": "getFilteredStats",
+      "NativeStatsObject": true,
+      "Phase": "own-stream-destroyed",
+      "Stats": {
+        "available": true,
+        "encryption": {
+          "nativeDaveEnabled": null,
+          "nativeDaveProtocolVersion": null,
+          "negotiatedByHelper": false
+        },
+        "inbound": {
+          "audio": [],
+          "video": []
+        },
+        "interval": {
+          "durationMs": null,
+          "receivedBitrateBps": null,
+          "receivedPacketsPerSecond": null,
+          "sentBitrateBps": null,
+          "sentPacketsPerSecond": null
+        },
+        "outbound": {
+          "audio": {
+            "audioDetected": null,
+            "bitrateBps": 7040.0,
+            "bytes": 1242.0,
+            "codec": "opus",
+            "crypto": {
+              "failure": 0.0,
+              "missingKey": 0.0,
+              "passthrough": 0.0,
+              "success": 0.0
+            },
+            "framesCaptured": 94.0,
+            "framesRendered": 94.0,
+            "packets": 46.0,
+            "packetsLost": null,
+            "sampleRateHz": 48000.0
+          },
+          "video": []
+        },
+        "sanitized": true,
+        "state": "negotiating",
+        "transport": {
+          "bytesReceived": 0.0,
+          "bytesSent": 2162.0,
+          "decryptionFailures": 0.0,
+          "inboundEstimateBps": 0.0,
+          "outboundEstimateBps": 600000.0,
+          "packetsReceived": 0.0,
+          "packetsSent": 46.0,
+          "rttMs": 0.0,
+          "sendBandwidthBps": 600000.0
+        }
+      }
+    },
+    {
+      "InputCallbacks": 17,
+      "NativeStatsMethod": "getFilteredStats",
+      "NativeStatsObject": true,
+      "Phase": "full-descriptor-restored",
+      "Stats": {
+        "available": true,
+        "encryption": {
+          "nativeDaveEnabled": null,
+          "nativeDaveProtocolVersion": null,
+          "negotiatedByHelper": false
+        },
+        "inbound": {
+          "audio": [],
+          "video": []
+        },
+        "interval": {
+          "durationMs": null,
+          "receivedBitrateBps": null,
+          "receivedPacketsPerSecond": null,
+          "sentBitrateBps": null,
+          "sentPacketsPerSecond": null
+        },
+        "outbound": {
+          "audio": {
+            "audioDetected": null,
+            "bitrateBps": 6904.0,
+            "bytes": 1539.0,
+            "codec": "opus",
+            "crypto": {
+              "failure": 0.0,
+              "missingKey": 0.0,
+              "passthrough": 0.0,
+              "success": 0.0
+            },
+            "framesCaptured": 117.0,
+            "framesRendered": 117.0,
+            "packets": 57.0,
+            "packetsLost": null,
+            "sampleRateHz": 48000.0
+          },
+          "video": []
+        },
+        "sanitized": true,
+        "state": "negotiating",
+        "transport": {
+          "bytesReceived": 0.0,
+          "bytesSent": 2679.0,
+          "decryptionFailures": 0.0,
+          "inboundEstimateBps": 0.0,
+          "outboundEstimateBps": 600000.0,
+          "packetsReceived": 0.0,
+          "packetsSent": 57.0,
+          "rttMs": 0.0,
+          "sendBandwidthBps": 600000.0
+        }
+      }
+    }
+  ],
+  "ScreenCapture": false,
+  "Stage": "complete",
+  "StatsQueries": 5,
+  "Success": true,
+  "SyntheticInputActivated": true,
+  "SyntheticInputAvailable": true,
+  "TransportEncryptionConfigured": true,
+  "WebSocketConnections": 0
+}

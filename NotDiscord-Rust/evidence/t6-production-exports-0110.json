@@ -1,0 +1,11 @@
+{
+  "ProductionAddon": true,
+  "ProtocolVersion": 1,
+  "Exports": [
+    "protocolVersion",
+    "run",
+    "sanitizeStats",
+    "validateEndpoint"
+  ],
+  "NativeEngineLoaded": false
+}

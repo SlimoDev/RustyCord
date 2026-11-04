@@ -97,6 +97,7 @@ pub struct Session {
     pub ptt_active: bool,
     pub transmit_gate: bool,
     pub input_observed_at: Option<Instant>,
+    pub input_callbacks: u64,
     pub manual_release_at: Option<Instant>,
     pub local_vad: bool,
     pub share_selection: Option<ShareSelection>,
@@ -152,6 +153,7 @@ impl Session {
             ptt_active: false,
             transmit_gate: false,
             input_observed_at: None,
+            input_callbacks: 0,
             manual_release_at: None,
             local_vad: false,
             share_selection: None,
@@ -237,6 +239,7 @@ impl Session {
         self.transmit_gate=false;self.input_observed_at=None;self.manual_release_at=None;
     }
     pub fn input_activity(&mut self,now:Instant,above:bool,has_signal:bool,eligible:bool)->bool {
+        self.input_callbacks=self.input_callbacks.saturating_add(1);
         self.input_observed_at=Some(now);
         if !eligible {self.manual_release_at=None;return false;}
         if self.settings.ptt {self.manual_release_at=None;return self.ptt_active&&has_signal;}
@@ -248,6 +251,22 @@ impl Session {
         // shutdown latency to approximately half a second without new samples.
         self.input_observed_at.is_none_or(|at|now.saturating_duration_since(at)>=Duration::from_millis(400))
             || !self.settings.ptt&&self.manual_release_at.is_none_or(|at|now>=at)
+    }
+    /// Local telemetry only. A native gate or a level callback does not prove
+    /// that encoded packets reached the remote participant.
+    pub fn input_diagnostics(&self, now: Instant, mic_test: bool, input_volume: f64) -> Value {
+        let eligible = !self.stream() && self.local_ready && !self.closed
+            && !self.credentials.self_mute && !self.credentials.self_deaf
+            && !mic_test && input_volume > 0.;
+        json!({"callbacks":self.input_callbacks,
+            "lastCallbackAgeMs":self.input_observed_at.map(|at|now.saturating_duration_since(at).as_millis().min(u64::MAX as u128) as u64),
+            "sampleStale":self.input_observed_at.is_none_or(|at|now.saturating_duration_since(at)>=Duration::from_millis(400)),
+            "inputGateEligible":eligible,"mode":if self.settings.ptt{"ptt"}else{"manual-vad"},
+            "pttHeld":self.ptt_active,"nativeGateOpen":self.transmit_gate,
+            "transportReady":self.local_ready,"encryptionReady":self.connected&&self.dave_ready,
+            "networkTransmitEligible":eligible&&self.connected&&self.dave_ready,
+            "muted":self.credentials.self_mute,"deaf":self.credentials.self_deaf,
+            "localTestActive":mic_test,"inputGainZero":input_volume==0.,"remoteAudibilityVerified":false})
     }
     pub fn update_wait(&mut self, now: Instant) {
         if self.closed || !self.local_ready || self.connected {
@@ -382,6 +401,26 @@ mod tests {
         assert!(!s.input_activity(now+Duration::from_millis(301),true,true,false));
         assert!(!s.input_activity(now+Duration::from_millis(302),false,true,true));
         s.reset_input_activity();assert!(s.input_expired(now+Duration::from_millis(303)));
+    }
+    #[test]
+    fn microphone_diagnostics_separate_input_gate_encryption_and_remote_delivery() {
+        let mut s=session();let now=Instant::now();
+        s.local_ready=true;s.connected=true;s.dave_ready=true;
+        s.settings.input="private-device-name".into();s.credentials.voice_token="private-token".into();
+        assert!(s.input_activity(now,true,true,true));s.transmit_gate=true;
+        let ready=s.input_diagnostics(now,false,100.);
+        assert_eq!(ready["callbacks"],1);assert_eq!(ready["sampleStale"],false);
+        assert_eq!(ready["networkTransmitEligible"],true);assert_eq!(ready["nativeGateOpen"],true);
+        assert_eq!(ready["remoteAudibilityVerified"],false);
+        assert!(!ready.to_string().contains("private"));
+        let stale=s.input_diagnostics(now+Duration::from_millis(400),false,100.);
+        assert_eq!(stale["sampleStale"],true);assert_eq!(stale["lastCallbackAgeMs"],400);
+        s.begin_epoch();
+        let rekey=s.input_diagnostics(now,false,100.);
+        assert_eq!(rekey["callbacks"],1);assert_eq!(rekey["encryptionReady"],false);
+        assert_eq!(rekey["nativeGateOpen"],false);assert_eq!(rekey["networkTransmitEligible"],false);
+        assert_eq!(s.input_diagnostics(now,true,100.)["inputGateEligible"],false);
+        assert_eq!(s.input_diagnostics(now,false,0.)["inputGateEligible"],false);
     }
     #[test]
     fn ptt_ignores_manual_threshold_and_stale_input_expires_in_half_a_second() {

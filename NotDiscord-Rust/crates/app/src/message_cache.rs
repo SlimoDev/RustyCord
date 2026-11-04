@@ -53,6 +53,18 @@ impl MessageCache {
         for message in messages.into_iter().filter(|m| m.channel_id == id) {
             cache_upsert(&mut state, message)
         }
+        // A confirmed empty page is a valid cache window too. Navigation back
+        // from the RAM log must distinguish it from an evicted/missing page.
+        state.clock = state.clock.wrapping_add(1);
+        let touch = state.clock;
+        state.channels.entry(id.into()).or_default().touch = touch;
+        while state.channels.len() > 3 {
+            let old = state.channels.iter().min_by_key(|(_, window)|window.touch).map(|(id,_)|id.clone()).unwrap();
+            state.channels.remove(&old);
+        }
+    }
+    pub fn contains_channel(&self, id: &str) -> bool {
+        self.state.lock().unwrap_or_else(|error|error.into_inner()).channels.contains_key(id)
     }
     pub fn upsert(&mut self, msg: ChatMessage) {
         cache_upsert(
@@ -113,9 +125,7 @@ fn cache_remove(state: &mut CacheState, channel: &str, id: &str) {
         if let Some(index) = w.messages.iter().position(|m| m.id == id) {
             w.bytes = w.bytes.saturating_sub(estimate(&w.messages.remove(index)))
         }
-        if w.messages.is_empty() {
-            state.channels.remove(channel);
-        }
+        // Retain the valid empty window until ordinary LRU eviction.
     }
 }
 fn cache_upsert(state: &mut CacheState, mut message: ChatMessage) {
@@ -241,6 +251,17 @@ fn estimate(m: &ChatMessage) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn valid_empty_pages_and_deleted_last_message_survive_until_bounded_lru_eviction() {
+        let mut cache=MessageCache::default();
+        assert!(!cache.contains_channel("20"));
+        cache.replace("20",vec![]);assert!(cache.contains_channel("20"));
+        cache.replace("20",vec![ChatMessage {id:"100".into(),channel_id:"20".into(),..Default::default()}]);
+        cache.remove("20","100");assert!(cache.contains_channel("20")&&cache.get("20").is_empty());
+        for channel in ["21","22","23"] {cache.replace(channel,vec![]);}
+        assert!(!cache.contains_channel("20"));
+        assert_eq!(cache.state.lock().unwrap().channels.len(),3);
+    }
     #[test]
     fn rich_bot_text_and_component_vectors_share_the_existing_cache_budget() {
         let mut cache = MessageCache::default();

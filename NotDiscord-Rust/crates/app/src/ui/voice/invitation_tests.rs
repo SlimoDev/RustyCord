@@ -22,6 +22,40 @@ fn voice_pointer(position:egui::Pos2,pressed:bool,button:egui::PointerButton)->V
     vec![egui::Event::PointerMoved(position),egui::Event::PointerButton {pos:position,button,pressed,modifiers:egui::Modifiers::NONE}]
 }
 #[test]
+fn expanded_camera_and_screen_keep_members_fit_and_return_as_distinct_actions() {
+    for kind in ["camera","screen"] {
+        let (mut app,ctx,mut commands,mut state)=invitation_fixture();
+        ctx.style_mut(|style|style.animation_time=0.);
+        let peer=Person {id:"300".into(),name:"Available peer".into(),..Default::default()};
+        state.call_invite_candidates=vec![peer.clone()];
+        state.call_participants.push(CallParticipant {user:peer.clone(),..Default::default()});
+        state.call_videos=vec![CallVideo {id:99,user_id:peer.id.clone(),label:peer.name.clone(),kind:kind.into(),active:true,view_requested:true,..Default::default()}];
+        let texture=ctx.load_texture("expanded-toolbar-fixture",egui::ColorImage::filled([320,180],Color32::GREEN),egui::TextureOptions::NEAREST);
+        app.video_textures.insert(99,texture);
+        ctx.data_mut(|data|data.insert_temp(egui::Id::new("call-expanded-video"),CallExpansion {
+            scope:"account:100:call:200:7".into(),id:99,zoom:2.,pan:egui::vec2(45.,20.),
+        }));
+        for _ in 0..3 {invitation_frame(&mut app,&ctx,&state,vec![],420.,850.);}
+        let output=invitation_frame(&mut app,&ctx,&state,vec![],420.,850.);
+        let fit=voice_text_rect(&output,"Ajustar").center();
+        for pressed in [true,false] {invitation_frame(&mut app,&ctx,&state,voice_pointer(fit,pressed,egui::PointerButton::Primary),420.,850.);}
+        let expansion=ctx.data(|data|data.get_temp::<CallExpansion>(egui::Id::new("call-expanded-video"))).unwrap();
+        assert_eq!(expansion.zoom,1.);assert_eq!(expansion.pan,egui::Vec2::ZERO);
+        assert!(commands.try_recv().is_err(),"fitting is local and cannot change reception or invite");
+        let members=ctx.data(|data|data.get_temp::<egui::Rect>(egui::Id::new("expanded-call-members-button"))).unwrap().center();
+        for pressed in [true,false] {invitation_frame(&mut app,&ctx,&state,voice_pointer(members,pressed,egui::PointerButton::Primary),420.,850.);}
+        invitation_frame(&mut app,&ctx,&state,vec![egui::Event::Key {key:egui::Key::Escape,physical_key:None,pressed:true,repeat:false,modifiers:egui::Modifiers::NONE}],420.,850.);
+        assert!(ctx.data(|data|data.get_temp::<CallExpansion>(egui::Id::new("call-expanded-video"))).is_some(),"Escape closes members before returning to the gallery");
+        invitation_frame(&mut app,&ctx,&state,vec![egui::Event::Key {key:egui::Key::Escape,physical_key:None,pressed:false,repeat:false,modifiers:egui::Modifiers::NONE}],420.,850.);
+        let output=invitation_frame(&mut app,&ctx,&state,vec![],420.,850.);
+        let back=voice_text_rect(&output,"Volver a participantes").center();
+        for pressed in [true,false] {invitation_frame(&mut app,&ctx,&state,voice_pointer(back,pressed,egui::PointerButton::Primary),420.,850.);}
+        assert!(ctx.data(|data|data.get_temp::<CallExpansion>(egui::Id::new("call-expanded-video"))).is_none());
+        let action=commands.try_recv().unwrap();assert_eq!((action.kind.as_str(),action.text.as_str()),("video-quality","false"));
+        assert!(commands.try_recv().is_err());
+    }
+}
+#[test]
 fn pending_invitees_stay_gray_after_the_ring_stops_without_counting_or_connected_controls() {
     let (mut app,ctx,mut commands,mut state)=invitation_fixture();
     let peer=Person {id:"300".into(),name:"Waiting peer".into(),..Default::default()};

@@ -482,9 +482,19 @@ pub struct IncomingCall {
     pub participants: Vec<Person>,
     pub call_participants: Vec<CallParticipant>,
     pub instance_id: u64,
+    pub message_id: String,
     pub muted: bool,
     pub ringing: bool,
     pub unread: bool,
+    /// Only an explicit, untruncated roster proves that absent peers left.
+    pub roster_complete: bool,
+    pub observation_stale: bool,
+}
+impl IncomingCall {
+    pub fn is_active(&self) -> bool {
+        self.ringing || !self.participants.is_empty() || !self.call_participants.is_empty()
+            || !self.roster_complete
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]

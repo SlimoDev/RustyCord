@@ -1,0 +1,18 @@
+{
+  "Acknowledged": false,
+  "Allocator": false,
+  "Failure": "FAKE_VIDEO_CALLBACK_TIMEOUT",
+  "FakeAudioCapture": true,
+  "FakeVideoCapture": true,
+  "Frames": 0,
+  "InventoryCount": 0,
+  "NativeReadyAck": true,
+  "NativeReferenceReleased": true,
+  "NativeSinkRegistered": true,
+  "NetworkConnections": 0,
+  "RealDevicesActivated": false,
+  "Success": false,
+  "SyntheticDetachReleased": true,
+  "SyntheticFileConfigured": true,
+  "SyntheticNapiFrame": true
+}

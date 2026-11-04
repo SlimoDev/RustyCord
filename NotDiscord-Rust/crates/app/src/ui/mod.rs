@@ -28,6 +28,7 @@ mod resources;
 mod game_mentions;
 mod profile_editor;
 mod shell;
+mod self_presence;
 mod theme;
 mod video;
 mod voice;
@@ -1001,6 +1002,7 @@ impl NotDiscordUi {
                         && snapshot.current_user.as_ref().map(|user| &user.id)
                             == self.state.current_user.as_ref().map(|user| &user.id);
                     self.latest_scroll_version = snapshot.latest_messages_version;
+                    self_presence::project_snapshot(ctx, &mut snapshot);
                     self.state = snapshot;
                     if latest_scroll && self.state.view == "chat" {
                         self.prepare_latest_scroll();
@@ -1054,6 +1056,9 @@ impl NotDiscordUi {
         }
     }
     fn data_update(&mut self, kind: &str, data: Value) {
+        if kind == "presence-result" { self.presence_result(&data); return; }
+        if kind == "presence-discrepancy" { self.presence_discrepancy(&data); return; }
+        if kind == "call-discovery" {voice::call_discovery_update(&self.ctx,&self.state,data);return;}
         if kind == "edit-result" { self.edit_result(&data); return; }
         if kind == "history-page-result" {chat::finish_history_page_request(&self.ctx,&data);return;}
         if kind == "reaction-users" {
@@ -1724,6 +1729,7 @@ impl eframe::App for NotDiscordUi {
             let _ = self.prefs.save(&self.data_dir);
             self.theme.apply(ctx, &self.prefs);
         }
+        self.project_visual_presence();
         let state = std::mem::replace(&mut self.state, AppSnapshot::welcome());
         ctx.data_mut(|data| {
             data.insert_temp(
@@ -1976,7 +1982,7 @@ mod tests {
         );
         (app, updates, commands)
     }
-    fn signed_in(account: &str) -> AppSnapshot {
+    pub(super) fn signed_in(account: &str) -> AppSnapshot {
         AppSnapshot {
             signed_in: true,
             current_user: Some(Person {

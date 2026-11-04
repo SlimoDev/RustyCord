@@ -106,31 +106,41 @@ pub fn run(env: Env) -> napi::Result<Value> {
         input_calls.borrow_mut().push(json!({"method":"setInputVolume","value":value}));
         ctx.env.get_undefined()
     })?)?;
-    for method in ["setOutputDevice","setOutputVolume","setTransportOptions","setLoopback","setEmitVADLevel2"] {
+    for method in ["setOutputDevice","setOutputVolume","setTransportOptions","setLoopback","setEmitVADLevel2","setVideoInputDevice"] {
         let log=events.clone();
         engine.set_named_property(method,env.create_function_from_closure(method,move|ctx| {
             let mut args=Vec::new();for index in 0..ctx.length {args.push(checked(native::read_value(*ctx.env,ctx.get(index)?))?);}
             log.borrow_mut().push(json!({"method":method,"args":args}));ctx.env.get_undefined()
         })?)?;
     }
-    engine.set_named_property("setOnVoiceCallback",env.create_function_from_closure("fakeMeterRegistration",|ctx|ctx.env.get_undefined())?)?;
+    let registrations=events.clone();
+    engine.set_named_property("setOnVoiceCallback",env.create_function_from_closure("fakeMeterRegistration",move|ctx| {
+        registrations.borrow_mut().push(json!({"method":"setOnVoiceCallback"}));ctx.env.get_undefined()
+    })?)?;
+    let input_devices=events.clone();
     engine.set_named_property(
         "setInputDevice",
-        env.create_function_from_closure("fakeInputOff", |ctx| {
+        env.create_function_from_closure("fakeInputOff", move |ctx| {
             let value = ctx.get::<napi::JsString>(0)?.into_utf8()?;
             if !matches!(value.as_str()?,"disabled"|"default") {
                 return Err(fail("Probe refused an input device"));
             }
+            input_devices.borrow_mut().push(json!({"method":"setInputDevice","value":value.as_str()?}));
             ctx.env.get_undefined()
         })?,
     )?;
     let noop = env.create_function_from_closure("fakeDispatch", |ctx| ctx.env.get_undefined())?;
-    let sender: ThreadsafeFunction<Event, ErrorStrategy::Fatal> =
+    let mut sender: ThreadsafeFunction<(), ErrorStrategy::Fatal> =
         noop.create_threadsafe_function(1, |_| Ok(Vec::<JsUnknown>::new()))?;
+    // Fake callbacks may stay allocated until V8's next GC. They must not
+    // keep this account-free Node test process alive after its assertions.
+    sender.unref(&env)?;
     let (output, receiver) = mpsc::channel();
     let (wake, _wake) = mpsc::sync_channel(1);
     let frames = Arc::new(Mutex::new(LatestFrames::default()));
     let closing = Arc::new(AtomicBool::new(false));
+    let mailbox=Arc::new(dispatch_queue::Mailbox::new(closing.clone(),output.clone()));
+    let sender=dispatch_queue::Sender::new(sender,mailbox);
     let mut host = Host {
         env,
         engine: checked(ObjectRef::new(env, engine))?,
@@ -178,6 +188,9 @@ pub fn run(env: Env) -> napi::Result<Value> {
             screen_preview: None,
         },
     };
+    // A failed assertion must still release every N-API reference; otherwise
+    // napi's debug Ref destructor masks the actual contract failure.
+    let exercise=(|| -> napi::Result<Value> {
     let make_connection = |id: u64| -> napi::Result<ObjectRef> {
         let mut connection = env.create_object()?;
         for method in [
@@ -186,6 +199,7 @@ pub fn run(env: Env) -> napi::Result<Value> {
             "setVideoBroadcast",
             "setTransportOptions",
             "clearDesktopSource",
+            "setDesktopSourceWithOptions",
             "setLocalVolume",
             "mergeUsers",
             "setRemoteUserSpeakingStatus",
@@ -320,21 +334,22 @@ pub fn run(env: Env) -> napi::Result<Value> {
         host.connections.insert(2, make_connection(2)?);
         host.sessions.get_mut(&2).unwrap().add_user("300",10);
         if cycle==1 {
+            let receive_gain=host.sessions[&2].members["300"]["volume"].clone();
             for value in [0.,25.,100.,500.] {
                 checked(host.command(json!(1000),"setVolume",&json!({"target":"user","userId":"300","value":value})))?;
-                if host.sessions[&1].members["300"]["volume"].as_f64()!=Some(value/100.)||host.sessions[&2].members["300"]["volume"].as_f64()!=Some(value/100.) {
+                if host.sessions[&1].members["300"]["volume"].as_f64()!=Some(value/100.)||host.sessions[&2].members["300"]["volume"]!=receive_gain {
                     return Err(fail("Participant gain did not apply zero, attenuation, unity and boost"));
                 }
             }
-            if host.sessions[&1].members["300"]["volume"]!=5. || host.sessions[&2].members["300"]["volume"]!=5.
+            if host.sessions[&1].members["300"]["volume"]!=5. || host.sessions[&2].members["300"]["volume"]!=receive_gain
                 || host.sessions[&1].members["400"]["volume"]!=1. || host.sessions[&3].volumes.contains_key("300") {
-                return Err(fail("Participant volume did not apply only to its voice/receive connections"));
+                return Err(fail("Participant volume changed another participant or bypassed dedicated receiver settings"));
             }
             for user in ["100","999"] {
                 if host.command(json!(1001),"setVolume",&json!({"target":"user","userId":user,"value":500})).is_ok() {return Err(fail("Invalid participant volume target accepted"));}
             }
         }
-        let (socket, mut socket_rx) = unbounded_channel();
+        let (socket, socket_rx) = voice_socket::offline(host.runtime.handle());
         host.sockets.insert(2, socket);
         host.watches.insert("call:200:300".into(), 2);
         checked(host.video_source(
@@ -346,6 +361,8 @@ pub fn run(env: Env) -> napi::Result<Value> {
             "call:200:300",
             true,
         ))?;
+        let screen_id=host.video.sources["remote-screen"].id;
+        checked(host.video_command("setVideoStreamVisible",&json!({"id":screen_id,"visible":true})))?;
         push_frame("remote-screen")?;
         peaks.0 = peaks.0.max(host.video.sources.len());
         peaks.1 = peaks.1.max(host.video.sinks.len());
@@ -355,7 +372,7 @@ pub fn run(env: Env) -> napi::Result<Value> {
             "stopWatchStream",
             &json!({"streamKey":"call:200:300","token":cycle}),
         ))?;
-        if !matches!(socket_rx.try_recv(), Ok(Message::Close(_))) {
+        if !socket_rx.cancelled() {
             return Err(fail("Receiver websocket was not closed"));
         }
         stopped_connections += 1;
@@ -415,6 +432,7 @@ pub fn run(env: Env) -> napi::Result<Value> {
     host.watches.insert("call:200:300".into(),2);
     checked(host.video_source(2,"300","failed-screen","screen",false,"call:200:300",true))?;
     let failed_screen=host.video.sources["failed-screen"].id;
+    checked(host.video_command("setVideoStreamVisible",&json!({"id":failed_screen,"visible":true})))?;
     let mut receiver_connection=checked(host.connections[&2].object(env))?;
     receiver_connection.set_named_property("setDisableLocalVideo",env.create_function_from_closure("rejectReceiverDisable",|_| -> napi::Result<napi::JsUndefined> {Err(fail("Synthetic receive decoder rejection"))})?)?;
     if host.video_command("setVideoStreamVisible",&json!({"id":failed_screen,"visible":false})).is_ok()
@@ -544,6 +562,104 @@ pub fn run(env: Env) -> napi::Result<Value> {
     // No receiver operation may call into the own outgoing connection. Check
     // before its intentional teardown instead of relying on a log-tail length.
     let untouched_sender=!events.borrow().iter().any(|call|call["session"]==3);
+    // Ordered publication transitions use the same Host methods as the live
+    // negotiated call, with no native addon, socket or physical capture. The
+    // fake checks ownership and gate continuity; it cannot establish audibility.
+    let mut publication_trace=Vec::<Value>::new();
+    let mut publication_cycles=0;
+    host.inventories.insert("cameras".into(),(Instant::now(),["synthetic-camera".to_owned()].into_iter().collect()));
+    {
+        let main=host.sessions.get_mut(&1).unwrap();
+        main.video_codec=Some(json!({"name":"H264","encode":true,"decode":true}));
+        main.streams=vec![json!({"type":"video","rid":"100","ssrc":101,"rtxSsrc":102,"quality":100,"active":false})];
+    }
+    for ptt in [false,true] {
+        host.settings.ptt=ptt;host.settings.sensitivity_db=-60.;
+        {
+            let main=host.sessions.get_mut(&1).unwrap();
+            main.settings.ptt=ptt;main.ptt_active=ptt;
+            main.credentials.self_mute=false;main.credentials.self_deaf=false;
+        }
+        for audio in [false,true] {
+            for camera_first in [false,true] {
+                host.mic_last=None;checked(host.native_event(Tag::MicLevel,vec![json!(-40.),json!(false)]))?;
+                let calls_before=events.borrow().len();
+                let callbacks_before=host.sessions[&1].input_callbacks;
+                let selection=checked(ShareSelection::parse(&json!({"sourceId":"window:12","audio":{"enabled":audio,"pid":12}})))?;
+                {
+                    let share=host.sessions.get_mut(&3).unwrap();
+                    share.connected=true;share.local_ready=true;share.dave_ready=true;share.session_description=true;
+                    share.streams=vec![json!({"type":"video","rid":"100","ssrc":301,"rtxSsrc":302,"quality":100,"active":false})];
+                }
+                let camera_token=host.sessions[&1].camera_token+1;
+                let start_camera=|host:&mut Host| -> napi::Result<()> {
+                    checked(host.command(json!(5000),"startCamera",&json!({"deviceId":"synthetic-camera","token":camera_token})))?;Ok(())
+                };
+                if camera_first {start_camera(&mut host)?;}
+                let mut share=host.sessions.remove(&3).unwrap();
+                checked(host.share_capture(&mut share,selection.clone()))?;
+                host.sessions.insert(3,share);
+                if !camera_first {start_camera(&mut host)?;}
+                for phase in ["publishing","source-changed","screen-stopped","camera-stopped"] {
+                    if phase=="source-changed" {
+                        let mut share=host.sessions.remove(&3).unwrap();
+                        checked(host.clear_share(&mut share))?;
+                        let mut changed=selection.clone();changed.source="window:13".into();
+                        checked(host.share_capture(&mut share,changed))?;
+                        host.sessions.insert(3,share);
+                    } else if phase=="screen-stopped" {
+                        let mut share=host.sessions.remove(&3).unwrap();
+                        checked(host.clear_share(&mut share))?;share.cancel_share();host.sessions.insert(3,share);
+                    } else if phase=="camera-stopped" {
+                        checked(host.command(json!(5001),"stopCamera",&json!({"token":camera_token+1})))?;
+                    }
+                    host.mic_last=None;checked(host.native_event(Tag::MicLevel,vec![json!(-40.),json!(false)]))?;
+                    let main=&host.sessions[&1];
+                    if !main.connected||!main.dave_ready||!main.transmit_gate||main.ptt_active!=ptt
+                        ||main.input_callbacks<=callbacks_before||host.settings.input_volume!=125.
+                        ||!host.sessions[&3].send_mute() {
+                        return Err(fail("A video transition changed main microphone ownership, gain, encryption or PTT/VAD"));
+                    }
+                    if publication_cycles==0 {publication_trace.push(json!({"phase":phase,"voiceInput":main.input_diagnostics(Instant::now(),false,host.settings.input_volume)}));}
+                }
+                let calls=events.borrow();
+                if calls[calls_before..].iter().any(|call|
+                    (call["session"].is_null()&&matches!(call["method"].as_str(),Some("setInputDevice"|"setInputVolume"|"setOnVoiceCallback"|"setEmitVADLevel2")))
+                    ||call["session"]==1&&matches!(call["method"].as_str(),Some("setSelfMute"|"setSelfDeafen"|"setPTTActive"|"destroy"))) {
+                    return Err(fail("Video publication reconfigured global microphone or the main voice gate"));
+                }
+                publication_cycles+=1;
+            }
+        }
+    }
+    let stats_id=json!(5002);
+    host.pending.insert(stats_id.to_string(),(stats_id.clone(),Instant::now()+Duration::from_secs(2)));
+    host.stats_parts.insert(stats_id.to_string(),json!({"voice":1,"share":null}));
+    checked(host.native_event(Tag::Stats {request:stats_id.clone(),session:1},vec![json!({
+        "transport":{"bytesSent":200,"packetsSent":10},
+        "outbound":{"audio":{"codecName":"opus","bytesSent":200,"packetsSent":10,"framesCaptured":20,"encryptSuccessCount":10}},
+        "private":"must-not-leave-the-engine"})]))?;
+    let input_stats=receiver.try_iter().find(|event|event["id"]==stats_id)
+        .ok_or_else(||fail("Voice input/native output telemetry was not published"))?;
+    let voice_stats=&input_stats["result"]["voice"];
+    if voice_stats["input"]["callbacks"].as_u64().unwrap_or(0)<1
+        ||voice_stats["input"]["networkTransmitEligible"]!=true
+        ||voice_stats["input"]["remoteAudibilityVerified"]!=false
+        ||voice_stats["outbound"]["audio"]["packets"]!=10.
+        ||input_stats.to_string().contains("must-not-leave-the-engine") {
+        return Err(fail("Local input and native audio counter telemetry were conflated or leaked private fields"));
+    }
+    // Publication failures and late callbacks are scoped to their session.
+    {
+        let share=host.sessions.get_mut(&3).unwrap();share.soundshare_requested=true;
+    }
+    checked(host.native_event(Tag::SoundshareFailed(3),vec![]))?;
+    checked(host.native_event(Tag::SourceEnded(3),vec![]))?;
+    checked(host.native_event(Tag::ConnectionFailed(3),vec![]))?;
+    host.mic_last=None;checked(host.native_event(Tag::MicLevel,vec![json!(-40.),json!(false)]))?;
+    if host.sessions.contains_key(&3)||!host.sessions[&1].connected||!host.sessions[&1].transmit_gate {
+        return Err(fail("Failed/late screen callbacks affected the primary microphone"));
+    }
     host.close_id(1);
     host.close_id(3);
     // Exercise the production silent diagnostic path after all fake network
@@ -564,12 +680,13 @@ pub fn run(env: Env) -> napi::Result<Value> {
     checked(host.command(json!(4001),"stopMicTest",&json!({"token":2})))?;
     let mut receiver=make_session(2,true,"300")?;receiver.local_ready=true;receiver.connected=true;receiver.add_user("300",10);
     host.sessions.insert(2,receiver);host.connections.insert(2,make_connection(2)?);
-    let receiver_config=checked(host.command(json!(4010),"configureReceiver",&json!({"inputId":"default","inputVolume":150,"outputId":"default","outputVolume":75,"selfDeaf":true,"userVolumes":{"300":500}})))?.ok_or_else(||fail("Receiver settings did not acknowledge"))?;
-    if receiver_config["receiverOnly"]!=true||host.settings.input!="disabled"||host.settings.input_volume!=0.||!host.sessions[&2].credentials.self_deaf||host.sessions[&2].volumes.get("300")!=Some(&5.) {
-        return Err(fail("Dedicated receiver settings enabled input or lost deaf/participant gain"));
+    let receiver_config=checked(host.command(json!(4010),"configureReceiver",&json!({"inputId":"default","inputVolume":150,"outputId":"default","outputVolume":75,"streamVolumePercent":25,"streamVolumeRevision":1,"selfDeaf":true,"userVolumes":{"300":500}})))?.ok_or_else(||fail("Receiver settings did not acknowledge"))?;
+    if receiver_config["receiverOnly"]!=true||host.settings.input!="disabled"||host.settings.input_volume!=0.||!host.sessions[&2].credentials.self_deaf||!host.sessions[&2].volumes.is_empty()
+        ||host.sessions[&2].members["300"]["volume"]!=1.||host.output_gain(&host.settings)!=0.1875 {
+        return Err(fail("Dedicated receiver enabled input, lost deaf or inherited main voice participant gain"));
     }
-    checked(host.command(json!(4011),"configureReceiver",&json!({"outputVolume":75,"selfDeaf":false,"userVolumes":{"300":0}})))?;
-    if host.sessions[&2].credentials.self_deaf||host.sessions[&2].volumes.get("300")!=Some(&0.) {return Err(fail("Dedicated receiver did not restore output or per-user mute live"));}
+    checked(host.command(json!(4011),"configureReceiver",&json!({"outputVolume":75,"streamVolumePercent":100,"streamVolumeRevision":2,"selfDeaf":false,"userVolumes":{"300":0}})))?;
+    if host.sessions[&2].credentials.self_deaf||!host.sessions[&2].volumes.is_empty()||host.output_gain(&host.settings)!=0.75 {return Err(fail("Dedicated receiver did not restore output independently of main voice participant mute"));}
     host.close_id(2);
     // Exercise the production Ready path, rather than injecting an already
     // connected fake. A factory signature regression must fail before UDP.
@@ -583,7 +700,7 @@ pub fn run(env: Env) -> napi::Result<Value> {
                 return Err(fail("Ready selected the wrong own/remote voice factory"));
             }
             let mut connection = ctx.env.create_object()?;
-            for method in ["destroy", "setSelfMute", "setSelfDeafen", "setTransportOptions", "setPTTActive", "setOnSpeakingCallback", "getEncryptionModes", "prepareSecureFramesEpoch", "getMLSKeyPackage", "mergeUsers", "destroyUser", "executeSecureFramesTransition"] {
+            for method in ["destroy", "setSelfMute", "setSelfDeafen", "setTransportOptions", "setPTTActive", "setOnSpeakingCallback", "getEncryptionModes", "prepareSecureFramesEpoch", "getMLSKeyPackage", "mergeUsers", "setLocalVolume", "destroyUser", "executeSecureFramesTransition"] {
                 connection.set_named_property(method, ctx.env.create_function_from_closure(method, |ctx|ctx.env.get_undefined())?)?;
             }
             Ok(connection)
@@ -595,7 +712,7 @@ pub fn run(env: Env) -> napi::Result<Value> {
         if !host.connections.contains_key(&id) || session.udp_deadline.is_none() { return Err(fail("Ready failed to create a native UDP connection")); }
         host.sessions.insert(id, session);
         if id == 50 {
-            let (wire, mut messages) = unbounded_channel();
+            let (wire, mut messages) = voice_socket::offline(host.runtime.handle());
             host.sockets.insert(id, wire);
             host.dispatch(Event::WsOpen(id));
             let Message::Text(identify) = messages.try_recv().map_err(|_|fail("Voice Identify was not sent"))? else { return Err(fail("Voice Identify frame was not JSON")); };
@@ -659,7 +776,7 @@ pub fn run(env: Env) -> napi::Result<Value> {
         .count();
     // JavaScript has a single Number type; N-API can serialize 5.0 back as JSON
     // integer 5. Assert the actual numeric gain and exact target independently.
-    let participant_volume_native=[1,2].into_iter().all(|session|calls.iter().any(|call|call["session"]==session&&call["method"]=="setLocalVolume"
+    let participant_volume_native=[1].into_iter().all(|session|calls.iter().any(|call|call["session"]==session&&call["method"]=="setLocalVolume"
         &&call["args"].as_array().is_some_and(|args|args.len()==2&&args[0]=="300"&&args[1].as_f64()==Some(5.))));
     let direct_transmit_gates=calls.iter().filter(|call|call["session"]==1&&call["method"]=="setPTTActive").map(|call|call["args"][0].as_bool().unwrap_or(false)).collect::<Vec<_>>();
     let manual_native_gate=calls.iter().any(|call|call["session"]==1&&call["method"]=="setTransportOptions"&&call["args"][0]["inputMode"]==2)
@@ -672,11 +789,21 @@ pub fn run(env: Env) -> napi::Result<Value> {
         "RealAccount":false,"NetworkConnections":0,"NativeEngineLoaded":false,"NativeInitialization":false,"PhysicalDevicesOpened":false,
         "Boundary":"Production Host/video_command/video_attach/video_detach/stopWatchStream/close paths with N-API fake objects; no codec, network or hardware verification"});
     report["DedicatedReceiverHasNoInput"]=json!(true);
-    report["ReceiverDeafAndParticipantGainLive"]=json!(true);
+    report["CameraScreenMicrophoneOwnershipCycles"]=json!(publication_cycles);
+    report["CameraScreenMicrophonePhaseTrace"]=json!(publication_trace);
+    report["FailedScreenAndLateCallbacksPreserveMainInput"]=json!(true);
+    report["RemoteMicrophoneAudibilityVerified"]=json!(false);
+    report["SeparateInputAndSanitizedNativeOutputTelemetry"]=json!(true);
+    report["ReceiverDeafAndIndependentScreenGainLive"]=json!(true);
     report["LocalPublicationStartsWithoutViewer"]=json!(true);
     report["HidingLocalViewPreservesPublication"]=json!(true);
     report["SelectorPromotionClosesImplicitViewer"]=json!(true);
     drop(calls);
-    host.engine.release(env);
     Ok(report)
+    })();
+    host.close_all();
+    for (_,connection) in host.connections.drain() {connection.release(env);}
+    for (_,mut callback) in registered.borrow_mut().drain() {callback.unref(env)?;}
+    host.engine.release(env);
+    exercise
 }

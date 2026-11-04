@@ -7,6 +7,75 @@ fn interaction_text_cursor(output: &egui::FullOutput, needle: &str, index: usize
     }).unwrap_or_else(|| panic!("Missing cursor fixture text: {needle}"))
 }
 #[test]
+fn session_log_menu_and_return_keep_the_chat_draft_position_and_text_selection() {
+    let (mut app,ctx,mut commands)=ui_harness();
+    let (message,mut state)=message_fixture();
+    state.current_user=Some(Person {id:"100".into(),..Default::default()});
+    state.notification_generation=9;
+    state.messages=vec![message.clone()].into();
+    app.prefs.send_typing=false;
+    app.drafts.insert("200".into(),Draft {text:"Unsent chat draft".into(),paths:vec!["prepared.txt".into()],..Default::default()});
+    for _ in 0..3 {chat_frame(&mut app,&ctx,&state,vec![]);}
+    let first=chat_frame(&mut app,&ctx,&state,vec![]);
+    let start=interaction_text_cursor(&first,"Fixture body",0)+egui::vec2(0.1,0.);
+    let end=interaction_text_cursor(&first,"Fixture body",7);
+    chat_frame(&mut app,&ctx,&state,pointer(start,true,egui::PointerButton::Primary));
+    chat_frame(&mut app,&ctx,&state,vec![egui::Event::PointerMoved(end)]);
+    chat_frame(&mut app,&ctx,&state,pointer(end,false,egui::PointerButton::Primary));
+    let selected=copied_history(&chat_frame(&mut app,&ctx,&state,vec![egui::Event::Copy]));
+    assert!(!selected.is_empty());
+    let position=app.positions["200"].offset;
+    let output=chat_frame(&mut app,&ctx,&state,vec![]);
+    let more=painted_text(&output,"···").center();
+    for pressed in [true,false] {chat_frame(&mut app,&ctx,&state,pointer(more,pressed,egui::PointerButton::Primary));}
+    let mut output=chat_frame(&mut app,&ctx,&state,vec![]);
+    for _ in 0..3 {output=chat_frame(&mut app,&ctx,&state,vec![]);}
+    let log=painted_text(&output,"Ver registro de esta sesión (RAM)").center();
+    for pressed in [true,false] {chat_frame(&mut app,&ctx,&state,pointer(log,pressed,egui::PointerButton::Primary));}
+    let action=commands.try_recv().unwrap();
+    assert_eq!((action.kind.as_str(),action.channel_id.as_str()),("history","200"));
+    let context=serde_json::from_str::<Value>(&action.extra).unwrap();
+    assert_eq!(context["navigationContext"],serde_json::json!({"account":"100","generation":9,"guild":"","view":"chat"}));
+    state.view="history".into();state.messages.clear();
+    for _ in 0..3 {chat_frame(&mut app,&ctx,&state,vec![]);}
+    assert_eq!(app.positions["200"].offset,position);
+    assert_eq!(app.drafts["200"].text,"Unsent chat draft");
+    assert_eq!(app.drafts["200"].paths.len(),1);
+    let output=chat_frame(&mut app,&ctx,&state,vec![]);
+    let back=painted_text(&output,"← Volver al chat").center();
+    for pressed in [true,false] {chat_frame(&mut app,&ctx,&state,pointer(back,pressed,egui::PointerButton::Primary));}
+    let action=commands.try_recv().unwrap();
+    assert_eq!((action.kind.as_str(),action.channel_id.as_str()),("return-chat","200"));
+    assert_eq!(serde_json::from_str::<Value>(&action.extra).unwrap()["navigationContext"]["view"],"history");
+    state.view="chat".into();state.messages=vec![message].into();
+    for _ in 0..3 {chat_frame(&mut app,&ctx,&state,vec![]);}
+    assert_eq!(copied_history(&chat_frame(&mut app,&ctx,&state,vec![egui::Event::Copy])),selected);
+    assert_eq!(app.drafts["200"].text,"Unsent chat draft");
+    assert!(commands.try_recv().is_err());
+}
+
+#[test]
+fn session_log_selection_is_discarded_for_a_different_navigation_owner() {
+    for change in ["account","generation","guild","channel"] {
+        let (_,ctx,_)=ui_harness();let (_,mut state)=message_fixture();
+        state.current_user=Some(Person {id:"100".into(),..Default::default()});
+        ctx.data_mut(|data|data.insert_temp(egui::Id::new("history-selection"),HistorySelection {
+            scope:Some(egui::Id::new(("message-scroll","200","chat"))),
+            anchor:Some(HistoryCursor {id:egui::Id::new("selected-row"),character:1}),
+            focus:Some(HistoryCursor {id:egui::Id::new("selected-row"),character:3}),..Default::default()}));
+        remember_session_log_selection(&ctx,&state,true);
+        state.view="history".into();assert!(session_log_return(&ctx,&state).is_none());
+        match change {
+            "account"=>state.current_user.as_mut().unwrap().id="101".into(),
+            "generation"=>state.notification_generation+=1,
+            "guild"=>state.selected_guild_id="500".into(),
+            _=>state.selected_channel_id="201".into(),
+        }
+        state.view="chat".into();assert!(session_log_return(&ctx,&state).is_none());
+        assert!(ctx.data(|data|data.get_temp::<SessionLogReturn>(egui::Id::new("session-log-return"))).is_none());
+    }
+}
+#[test]
 fn url_galleys_copy_exactly_between_plain_runs_and_only_a_click_opens_them() {
     let (mut app, ctx, mut commands) = ui_harness();
     let (mut message, mut state) = message_fixture();

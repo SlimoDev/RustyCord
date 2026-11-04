@@ -71,6 +71,26 @@ impl Socket {
 }
 impl Drop for Socket { fn drop(&mut self) { self.cancel(); } }
 
+/// Exercises the production bounded outbox and cancellation without a socket,
+/// DNS, TLS or a native engine. Available only in the diagnostic build.
+#[cfg(feature = "native-probe")]
+pub(super) struct OfflineReceiver { receiver: mpsc::Receiver<Queued>, cancel: Arc<Cancellation> }
+#[cfg(feature = "native-probe")]
+impl OfflineReceiver {
+    pub(super) fn try_recv(&mut self) -> std::result::Result<Message, mpsc::error::TryRecvError> {
+        self.receiver.try_recv().map(|queued|queued.message)
+    }
+    pub(super) fn cancelled(&self) -> bool { self.cancel.is_cancelled() }
+}
+#[cfg(feature = "native-probe")]
+pub(super) fn offline(runtime: &tokio::runtime::Handle) -> (Socket, OfflineReceiver) {
+    let (outbox, receiver)=Outbox::channel();
+    let cancel=Arc::new(Cancellation::default());
+    let task=runtime.spawn(std::future::pending::<()>());
+    (Socket {outbox,cancel:cancel.clone(),task:task.abort_handle(),heartbeat:Arc::new(Heartbeat::default()),failed:AtomicBool::new(false)},
+        OfflineReceiver {receiver,cancel})
+}
+
 pub(super) fn spawn(runtime: &tokio::runtime::Handle, endpoint: String, id: u64, sender: Sender) -> Socket {
     let (outbox, receiver) = Outbox::channel();
     let cancel = Arc::new(Cancellation::default()); let stop = cancel.clone();

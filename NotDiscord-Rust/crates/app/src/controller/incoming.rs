@@ -416,6 +416,7 @@ impl Controller {
                 self.publish();
             }
             "READY_CATALOG" => {
+                self.fresh_call_discovery_transport();
                 self.sidebar_cancel.cancel();self.sidebar_cancel=tokio_util::sync::CancellationToken::new();
                 self.sidebar_epoch=self.sidebar_epoch.wrapping_add(1);
                 self.sidebar_seed=value;
@@ -775,7 +776,17 @@ impl Controller {
                 }
             }
             "CALL_CREATE" | "CALL_UPDATE" | "CALL_DELETE" => {
-                self.incoming_call(kind, &value);
+                let mut value=value;
+                // Current official clients carry rings as an object; older
+                // payloads use an array. Keep absence distinct from empty.
+                if !value["ringing"].is_array() {
+                    if let Some(rings)=value["ongoing_rings"].as_object() {
+                        value["ringing"]=json!(rings.keys().filter(|id|parsing::valid_id(id)).take(25).collect::<Vec<_>>());
+                    }
+                }
+                if !self.incoming_call(kind, &value) { return Ok(()); }
+                self.observed_private_departure(kind,&value)?;
+                self.decorate_dms();self.publish();self.flush_snapshot(true);
                 self.voice_call_dispatch(kind, &value).await?;
                 self.decorate_dms();
                 self.publish();
@@ -846,7 +857,7 @@ impl Controller {
                 .state
                 .incoming_calls
                 .iter()
-                .any(|c| c.channel_id == n.id)
+                .any(|c| c.channel_id == n.id && c.is_active())
                 || self.voice_channel == n.id;
             n.incoming_call_ringing = self
                 .state
@@ -1864,6 +1875,7 @@ impl Controller {
     }
     pub(super) fn incoming_media_dispatch(&mut self, kind: &str, value: &Value) {
         let mut calls = std::mem::take(&mut self.state.incoming_calls);
+        let before = calls.clone();
         if kind == "VOICE_STATE_UPDATE" {
             let id = s(value, "user_id");
             let channel = s(value, "channel_id");
@@ -1887,6 +1899,8 @@ impl Controller {
                             call.call_participants.retain(|p| p.user.id != id);
                             if call.call_participants.len() < 25 {
                                 call.call_participants.push(participant);
+                            } else {
+                                call.roster_complete = false;
                             }
                         }
                     } else if s(value, "guild_id").is_empty() {
@@ -1928,18 +1942,29 @@ impl Controller {
             }
         }
         self.state.incoming_calls = calls;
-    }
-    fn incoming_call(&mut self, kind: &str, value: &Value) {
-        let channel = s(value, "channel_id");
-        if !parsing::valid_id(&channel) {
-            return;
+        // Observations must publish even when the local voice handler returns
+        // early (including an ACK received after the local transport closed).
+        if matches!(kind, "VOICE_STATE_UPDATE" | "STREAM_CREATE" | "STREAM_UPDATE") {
+            let departed: Vec<_> = self.state.incoming_calls.iter()
+                .filter(|call|self.locally_left_call(&call.channel_id)).map(|call|call.channel_id.clone()).collect();
+            for channel in departed { self.local_call_departure(&channel); }
+            if before != self.state.incoming_calls {
+                let changed: Vec<_>=self.state.incoming_calls.iter().filter(|call|before.iter().find(|old|old.channel_id==call.channel_id)!=Some(*call))
+                    .map(|call|call.channel_id.clone()).collect();
+                for channel in changed {self.observed_call_roster_delta(&channel);}
+                self.decorate_dms();self.publish();self.flush_snapshot(true);
+            }
         }
+    }
+    fn incoming_call(&mut self, kind: &str, value: &Value) -> bool {
+        let channel = s(value, "channel_id");
+        if !self.admit_call_event(kind, value) { return false; }
         if kind == "CALL_DELETE" {
             self.remove_incoming_invitation(&channel);
             self.state
                 .incoming_calls
                 .retain(|c| c.channel_id != channel);
-            return;
+            return true;
         }
         let previous = self
             .state
@@ -1947,6 +1972,9 @@ impl Controller {
             .iter()
             .find(|c| c.channel_id == channel)
             .cloned();
+        let message = s(value, "message_id");
+        let new_service_instance = kind == "CALL_CREATE" && (message.is_empty()
+            || previous.as_ref().is_none_or(|call|call.message_id != message));
         let ringing = if value["ringing"].is_array() {
             items(&value["ringing"])
                 .iter()
@@ -1954,7 +1982,10 @@ impl Controller {
         } else {
             self.incoming_service_ring(&channel).unwrap_or_else(||previous.as_ref().is_some_and(|c| c.ringing))
         };
-        let call_participants = if value["voice_states"].is_array() {
+        let roster_complete = value["voice_states"].as_array().map(|states|
+            states.len() <= 25 && states.iter().all(|state|parsing::valid_id(&s(state,"user_id"))))
+            .unwrap_or_else(||previous.as_ref().filter(|_|!new_service_instance).is_some_and(|call|call.roster_complete));
+        let mut call_participants = if value["voice_states"].is_array() {
             items(&value["voice_states"])
                 .iter()
                 .take(25)
@@ -1962,7 +1993,7 @@ impl Controller {
                     let id = s(v, "user_id");
                     let old = previous
                         .as_ref()
-                        .filter(|_|kind!="CALL_CREATE")
+                        .filter(|_|!new_service_instance)
                         .and_then(|call| call.call_participants.iter().find(|p| p.user.id == id));
                     self.incoming_participant(v, old)
                 })
@@ -1970,7 +2001,7 @@ impl Controller {
         } else {
             previous
                 .as_ref()
-                .filter(|_|kind!="CALL_CREATE")
+                .filter(|_|!new_service_instance)
                 .map(|c| {
                     if c.call_participants.is_empty() {
                         c.participants
@@ -1986,12 +2017,27 @@ impl Controller {
                 })
                 .unwrap_or_default()
         };
+        if !roster_complete && !new_service_instance {
+            if let Some(previous) = &previous {
+                let updates = call_participants;
+                call_participants = previous.call_participants.clone();
+                call_participants.truncate(25);
+                for person in updates {
+                    if let Some(known) = call_participants.iter_mut().find(|known|known.user.id == person.user.id) {
+                        *known = person;
+                    } else if call_participants.len() < 25 {
+                        call_participants.push(person);
+                    }
+                }
+            }
+        }
+        if self.locally_left_call(&channel) { call_participants.retain(|person|person.user.id != self.me()); }
         let participants = call_participants
             .iter()
             .map(|p| p.user.clone())
             .collect::<Vec<_>>();
         let fresh_instance = previous.is_none()
-            || kind == "CALL_CREATE"
+            || new_service_instance
             || ringing && !self.incoming_service_ring(&channel).unwrap_or_else(||previous.as_ref().is_some_and(|call|call.ringing));
         if fresh_instance {
             self.voice_lifecycle.incoming_sequence = self
@@ -2022,6 +2068,9 @@ impl Controller {
             participants,
             call_participants,
             instance_id,
+            message_id: if message.is_empty() {previous.as_ref().map(|call|call.message_id.clone()).unwrap_or_default()} else {message},
+            roster_complete,
+            observation_stale: false,
             muted: self
                 .muted
                 .get(&channel)
@@ -2033,6 +2082,11 @@ impl Controller {
         self.state
             .incoming_calls
             .retain(|c| c.channel_id != channel);
+        if self.state.incoming_calls.len() >= 32 {
+            if let Some(index) = self.state.incoming_calls.iter().position(|call|!call.is_active()) {
+                self.state.incoming_calls.remove(index);
+            }
+        }
         if self.state.incoming_calls.len() < 32 {
             self.state.incoming_calls.push(call.clone());
         }
@@ -2041,6 +2095,7 @@ impl Controller {
         }
         // The dedicated incoming-call window owns this notification. Ordinary
         // message toasts remain independent; do not show a duplicate call toast.
+        true
     }
     fn reject_call_request(&self, action: &UiAction) -> Result<(String, Value), String> {
         let channel = Self::valid(&action.id)?;

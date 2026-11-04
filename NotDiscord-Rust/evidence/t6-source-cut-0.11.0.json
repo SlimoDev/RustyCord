@@ -1,0 +1,107 @@
+{
+  "Schema": 1,
+  "Date": "2026-11-04",
+  "Variant": "standard",
+  "Branch": "NotDiscord",
+  "BaseRevision": "865b2f11069fadcd40f40bc634e7162ea7694f3e",
+  "Version": "0.11.0",
+  "UncommittedSourceChanges": true,
+  "Sources": [
+    {
+      "Path": "crates/app/src/controller.rs",
+      "SHA256": "dd6eaa2bd988ddd51b078fae10a80ca7c48baab28846a678eb302784a409fc23"
+    },
+    {
+      "Path": "crates/app/src/controller/connection.rs",
+      "SHA256": "0acec9507163ff995273be2bdbfe2be4a77055362d13ac63c5cc2015ed5f54d1"
+    },
+    {
+      "Path": "crates/app/src/controller/incoming.rs",
+      "SHA256": "5f5204954fe181832a08f60ce1705c41cb79b1c38e0ad543ad6960811ef73d6d"
+    },
+    {
+      "Path": "crates/app/src/controller/observed_calls.rs",
+      "SHA256": "f8c2b753c31feb00730c2757db772b01de2ac7f524b3957b2e6651235eb88b75"
+    },
+    {
+      "Path": "crates/app/src/controller/presence.rs",
+      "SHA256": "342d13ea569f743309bc0b20f05d136cf48316f1b15a80462e6bd6cb597c7193"
+    },
+    {
+      "Path": "crates/app/src/controller/voice.rs",
+      "SHA256": "a8f7e42b30c1c9b7aa054d562f722234525315cef843a27dd181e09772ca3154"
+    },
+    {
+      "Path": "crates/app/src/diagnostics.rs",
+      "SHA256": "e38427acbbdbe80a9e649c4f34861ea318583cafcff2c88c19670da9e3fbb8aa"
+    },
+    {
+      "Path": "crates/app/src/media.rs",
+      "SHA256": "5b5bffce37836c927a1682f437deb54e68efadbc7bcaa84b32bc3c04f0519997"
+    },
+    {
+      "Path": "crates/app/src/message_cache.rs",
+      "SHA256": "459fa845867c5990c23c90edd341d9f6ffc71d8c73357b8da9dfb32378665c31"
+    },
+    {
+      "Path": "crates/app/src/ui/chat.rs",
+      "SHA256": "b446ba9621662d81a4f9f73798217882b8fdab9a812cf41bfbc1e9a64b7f77f1"
+    },
+    {
+      "Path": "crates/app/src/ui/chat/interaction_tests.rs",
+      "SHA256": "88630ddc7d00bfa889346a0504f7b5236c124320c23d5661591a539848ee33a3"
+    },
+    {
+      "Path": "crates/app/src/ui/mod.rs",
+      "SHA256": "7ef304003d3584e4cd3b743fc1148375e2b05e75e7972e7f2413d47917d3ee2c"
+    },
+    {
+      "Path": "crates/app/src/ui/self_presence.rs",
+      "SHA256": "fc8577d2b0e243c258723b97ca2509c27a1fd794565f316315bbcffde7a06379"
+    },
+    {
+      "Path": "crates/app/src/ui/shell.rs",
+      "SHA256": "b23906203f1c6d057fe3a0cd9bc6d95b6ab6f926f7d2d40e9e674dda767872d0"
+    },
+    {
+      "Path": "crates/app/src/ui/voice.rs",
+      "SHA256": "a6567191cc24cc20d0e29711a43568ac2ffe9a4aec6cef1c05332aaa55d4a3c9"
+    },
+    {
+      "Path": "crates/app/src/ui/voice/invitation_tests.rs",
+      "SHA256": "86f07436e3dc625bdb62219df02069c22298790993e29e020a74d7d74b9a2f15"
+    },
+    {
+      "Path": "crates/core/src/diagnostics.rs",
+      "SHA256": "585f86ba1b07ec9449ff54998e50679d66218eee60da5a211e32136babd73bfb"
+    },
+    {
+      "Path": "crates/core/src/gateway.rs",
+      "SHA256": "4ecc77b928312686884653f8e4a11b77bfc3fb5d883669f29dbd12137b9eaee2"
+    },
+    {
+      "Path": "crates/core/src/models.rs",
+      "SHA256": "b2568d245566fcfcf622e0cd4c7654da26572b35a18a1c7a31da2c3048bed7c6"
+    },
+    {
+      "Path": "crates/media-addon/src/host.rs",
+      "SHA256": "1f9060590b8e3b5599448e68f45209d7bea6719aa1585885eb3ece623f2771bd"
+    },
+    {
+      "Path": "crates/media-addon/src/host/voice_socket.rs",
+      "SHA256": "4300cf99d0f4657f662c3826e8ff129cc67e5e095c0d7c15eac87f2b5de239ab"
+    },
+    {
+      "Path": "crates/media-addon/src/receive_probe.rs",
+      "SHA256": "df9ea5fd890ca0f4e994d3be228a9b7b3390953aebd97be6aaca56f6f4dec8a6"
+    },
+    {
+      "Path": "crates/media-addon/src/session.rs",
+      "SHA256": "b301f618464e5448e351617963f97720558acaea94bc1c8bf76e754a4c67ee5c"
+    },
+    {
+      "Path": "version.json",
+      "SHA256": "c5d313bcf078f00eb4231d8296e881dbc4a6c010afa986be4acd9f9733b96388"
+    }
+  ]
+}

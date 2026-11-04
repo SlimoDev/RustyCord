@@ -23,6 +23,11 @@ pub fn media_event(value: &Value) {
         "enqueue"=>Phase::Enqueue,"heartbeat"=>Phase::Heartbeat,"dispatch"=>Phase::Dispatch,_=>Phase::Unknown,
     };
     match value["event"].as_str().unwrap_or_default() {
+        "mediaStage"=>{
+            if let Some(summary)=voice_input_summary(value) {
+                log::record(Component::Voice,Code::VoiceInputState,Phase::Present,summary);
+            }
+        },
         "transportError"=>log::record(Component::Voice,match value["code"].as_str().unwrap_or_default() {
             "VOICE_HEARTBEAT_TIMEOUT"|"HEARTBEAT_TIMEOUT"=>Code::HeartbeatTimeout,
             "VOICE_SOCKET_HTTP"=>Code::TransportHttp,"VOICE_SOCKET_TLS"=>Code::TransportTls,
@@ -45,6 +50,64 @@ pub fn media_event(value: &Value) {
         },
         "videoError"=>log::record(Component::Media,Code::Recoverable,Phase::Read,correlation),
         _=>{}
+    }
+}
+/// Fixed schema, phase and state/counts only. The arbitrary IPC object never
+/// reaches the recorder, even if it contains extra identifiers or error text.
+fn voice_input_summary(event:&Value)->Option<u64> {
+    let phase=match event["stage"].as_str()? {
+        "share-selected"=>1,"camera-selected"=>2,"camera-capture-requested"=>3,
+        "camera-stopped"=>4,"share-capture-starting"=>5,"share-capture-requested"=>6,
+        "share-capture-cleared"=>7,"video-session-closing"=>8,
+        "connected"=>9,"mls-epoch"=>10,_=>return None,
+    };
+    let input=event.get("voiceInput")?.as_object()?;
+    let mut bits=1u64<<56;
+    for (index,key) in ["sampleStale","inputGateEligible","pttHeld","nativeGateOpen",
+        "transportReady","encryptionReady","networkTransmitEligible","muted","deaf",
+        "localTestActive","inputGainZero"].into_iter().enumerate() {
+        bits|=(input.get(key)?.as_bool()? as u64)<<index;
+    }
+    bits|=match input.get("mode")?.as_str()? {"manual-vad"=>0,"ptt"=>1<<11,_=>return None};
+    let count=input.get("callbacks")?.as_u64()?;
+    bits|=((count>0) as u64)<<12;
+    let age=match input.get("lastCallbackAgeMs")? {
+        Value::Null=>65535,
+        value=>{bits|=1<<13;value.as_u64()?.min(65535)},
+    };
+    Some(bits|((phase as u64)<<16)|(count.min(65535)<<24)|(age<<40))
+}
+
+#[cfg(test)]
+mod voice_input_tests {
+    use super::*;
+    use serde_json::json;
+    fn event()->Value {json!({"stage":"share-selected","voiceInput":{
+        "sampleStale":false,"inputGateEligible":true,"pttHeld":false,"nativeGateOpen":true,
+        "transportReady":true,"encryptionReady":true,"networkTransmitEligible":true,
+        "muted":false,"deaf":false,"localTestActive":false,"inputGainZero":false,
+        "mode":"manual-vad","callbacks":100,"lastCallbackAgeMs":75}})}
+    #[test]
+    fn phase_summary_discards_identifiers_text_and_caps_counts() {
+        let mut value=event();let expected=voice_input_summary(&value).unwrap();
+        value["mediaSession"]=json!(1234);value["stageText"]=json!("private message");
+        value["voiceInput"]["device"]=json!("private device");value["token"]=json!("credential");
+        assert_eq!(voice_input_summary(&value),Some(expected));
+        value["voiceInput"]["callbacks"]=json!(u64::MAX);
+        value["voiceInput"]["lastCallbackAgeMs"]=json!(u64::MAX);
+        let bounded=voice_input_summary(&value).unwrap();
+        assert_eq!((bounded>>24)&65535,65535);assert_eq!((bounded>>40)&65535,65535);
+        assert_eq!(bounded>>56,1);
+    }
+    #[test]
+    fn malformed_telemetry_and_unknown_phases_never_become_false_confirmations() {
+        let mut value=event();value["stage"]=json!("arbitrary remote text");
+        assert_eq!(voice_input_summary(&value),None);
+        value=event();value["voiceInput"]["encryptionReady"]=json!("true");
+        assert_eq!(voice_input_summary(&value),None);
+        value=event();value["voiceInput"]["lastCallbackAgeMs"]=Value::Null;
+        let no_sample=voice_input_summary(&value).unwrap();
+        assert_eq!((no_sample>>13)&1,0);assert_eq!((no_sample>>40)&65535,65535);
     }
 }
 pub fn open(ctx: &egui::Context) {ctx.data_mut(|data|data.insert_temp(egui::Id::new("diagnostic-panel"),true));}

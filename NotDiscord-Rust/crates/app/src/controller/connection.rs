@@ -27,7 +27,7 @@ impl Controller {
     pub(super) fn sync_transport_gate(&mut self) {
         let suspended = self.transport_suspended();
         if let Some(api) = &self.api { api.set_transport_available(!suspended); }
-        if suspended { self.read_acks.discard_pending(); }
+        if suspended { self.suspend_presence_changes(); self.suspend_call_discovery(); self.read_acks.discard_pending(); }
     }
     pub(super) fn connection_changed(&mut self, change: ConnectionChange) {
         let previous = self.state.connection_phase;
@@ -56,9 +56,9 @@ impl Controller {
         }
         self.publish();
     }
-    fn reload_deferred_view(&mut self) {
-        if !std::mem::take(&mut self.recovery.deferred_view)
-            || self.state.view != "chat" || self.state.selected_channel_id.is_empty() { return; }
+    pub(super) fn reload_deferred_view(&mut self) {
+        if self.state.view != "chat" || self.state.selected_channel_id.is_empty()
+            || !std::mem::take(&mut self.recovery.deferred_view) { return; }
         let channel = self.state.selected_channel_id.clone();
         if let Err(error) = self.select_channel(&channel) { self.error(error); }
     }

@@ -11,6 +11,7 @@ type OpenSlot = Arc<Mutex<Option<Result<OpenedMedia, String>>>>;
 pub(super) struct VoiceLifecycle {
     pub(super) media_epoch: u64,
     opening: Option<OpenSlot>,
+    opening_cancel: tokio_util::sync::CancellationToken,
     resume: VecDeque<UiAction>,
     request_pending: bool,
     request_channel: String,
@@ -73,6 +74,8 @@ pub(super) struct VoiceLifecycle {
     video_sessions: HashMap<u64,u64>,
     switching: Option<VoiceSwitch>,
     leaving: Option<VoiceLeave>,
+    leave_sequence: u64,
+    closing_host: Option<MediaBridge>,
     join_wait: Option<VoiceJoinWait>,
     receiver: Option<MediaBridge>,
     receiver_opening: Option<OpenSlot>,
@@ -93,7 +96,13 @@ impl VoiceLifecycle {
 }
 struct VoiceLeave {
     guild: String,
+    channel: String,
     requested_at: Instant,
+    token: u64,
+    write_pending: bool,
+    acknowledged: bool,
+    write_failed: bool,
+    local_closed: bool,
 }
 struct VoicePermissionScope {account:String,guild:String,channel:String,attempt:u64}
 struct VoiceJoinWait {
@@ -298,6 +307,7 @@ impl Controller {
         format!("{detail} El audio de la llamada continúa; vuelve a abrir la pantalla para reintentar.")
     }
     pub(super) async fn probe_media(&mut self) {
+        if self.voice_lifecycle.leaving.is_some() || self.voice_lifecycle.closing_host.is_some() {return;}
         if self.media.is_some() || self.voice_lifecycle.opening.is_some() {
             return;
         }
@@ -327,8 +337,9 @@ impl Controller {
         let ctx = self.ctx.clone();
         let mut action = UiAction::id("__voice-data", "opened");
         action.extra = epoch.to_string();
+        let opening_cancel = self.voice_lifecycle.opening_cancel.child_token();
         self.launch(action, None, async move {
-            let result = async {
+            let operation = async {
                 let media = MediaBridge::start(&root, &data, events, ctx).await?;
                 let capabilities = media.command("capabilities", json!({})).await?;
                 if !b(&capabilities, "voice")
@@ -338,18 +349,24 @@ impl Controller {
                     media.close();
                     return Err("El motor no admite voz cifrada en este host.".into());
                 }
-                media.command("configureAudio", settings).await?;
+                if let Err(error)=media.command("configureAudio", settings).await {media.close();return Err(error);}
                 Ok(OpenedMedia {
                     media,
                     capabilities,
                 })
-            }
-            .await;
+            };
+            let result=tokio::select! {biased;
+                _=opening_cancel.cancelled()=>Err("Se canceló la preparación del motor de audio.".into()),
+                result=operation=>result,
+            };
             *slot.lock().unwrap() = Some(result);
             Ok(json!({"opened":true}))
         });
     }
     async fn queue_media(&mut self, action: UiAction) -> Result<(), String> {
+        if self.voice_lifecycle.leaving.is_some() || self.voice_lifecycle.closing_host.is_some() {
+            return Err("Espera el cierre del motor de audio anterior antes de preparar otro.".into());
+        }
         if self.voice_lifecycle.resume.len() >= 8 {
             return Err("El servicio multimedia todavía se está preparando.".into());
         }
@@ -371,7 +388,7 @@ impl Controller {
             self.state.call_channel_name.clear();
             self.state.call_status_label.clear();
             self.refresh_call();
-            self.report_voice_error("No se confirmó la salida de la llamada anterior. El audio local está cerrado; vuelve a seleccionar el destino para reintentar.");
+            self.report_voice_error("No se confirmó la salida de la llamada anterior. El audio local está cerrado; otra llamada esperará esa confirmación. En llamadas privadas puedes actualizar el grupo de origen para comprobar su estado.");
         }
     }
     pub(super) async fn expire_voice_join(&mut self) {
@@ -498,7 +515,7 @@ impl Controller {
             ));
         }
         let call = self.state.incoming_calls.iter().find(|call| {
-            join_only && call.channel_id == id && matches!(call.kind.as_str(), "dm" | "group")
+            join_only && call.is_active() && call.channel_id == id && matches!(call.kind.as_str(), "dm" | "group")
         })?;
         Some((
             NavItem {
@@ -519,6 +536,8 @@ impl Controller {
         !self.voice_lifecycle.join_only
             || self.state.incoming_calls.iter().any(|call| {
                 call.channel_id == self.voice_lifecycle.request_channel
+                    && call.is_active()
+                    && !call.observation_stale
                     && (self.voice_lifecycle.request_instance == 0
                         || call.instance_id == self.voice_lifecycle.request_instance)
             })
@@ -531,7 +550,10 @@ impl Controller {
         if instance>0&&!self.state.incoming_calls.iter().any(|call|call.channel_id==id&&call.instance_id==instance) {
             return Err("La llamada entrante cambió o terminó.".into());
         }
-        if join_only&&!self.state.incoming_calls.iter().any(|call|call.channel_id==id) {
+        if join_only&&self.state.incoming_calls.iter().any(|call|call.channel_id==id&&call.observation_stale) {
+            return Err("La información de la llamada está desactualizada. Abre el grupo y pulsa Actualizar llamada antes de unirte.".into());
+        }
+        if join_only&&!self.state.incoming_calls.iter().any(|call|call.channel_id==id && call.is_active()) {
             return Err("La llamada ya terminó. No se inició una llamada nueva.".into());
         }
         self.gateway.as_ref().ok_or("La conexión aún no está preparada.")?;
@@ -571,18 +593,9 @@ impl Controller {
         if let Some(previous)=&self.voice_lifecycle.leaving {
             // A manual Leave followed by Join has the same ordering hazard as
             // a direct switch. Never let an old channel:null cancel a new join.
-            let previous_guild=previous.guild.clone();
-            let mut requested_at=previous.requested_at;
-            if requested_at.elapsed() >= Duration::from_secs(8) {
-                self.gateway.as_ref().ok_or("Gateway no disponible.")?.send(GatewayCommand::VoiceState {
-                    guild_id: (!previous_guild.is_empty()).then(||previous_guild.clone()),
-                    channel_id: None,
-                    mute: self.state.self_mute || self.state.self_deaf,
-                    deaf: self.state.self_deaf,
-                    video: false,
-                }).await.map_err(|error|error.to_string())?;
-                requested_at=Instant::now();
-                self.voice_lifecycle.leaving.as_mut().unwrap().requested_at=requested_at;
+            let requested_at=previous.requested_at;
+            if previous.write_failed || requested_at.elapsed() >= Duration::from_secs(8) && !previous.write_pending {
+                return Err("La salida anterior sigue sin confirmar. Espera su evento de salida antes de abrir otra llamada.".into());
             }
             self.voice_lifecycle.switching=Some(VoiceSwitch {channel:id.into(),video,join_only,instance,deadline:requested_at+Duration::from_secs(8)});
             self.state.voice_connecting=true;
@@ -596,12 +609,13 @@ impl Controller {
                 if self.voice_lifecycle.request_channel==id {return Ok(());}
                 self.stop_voice_internal(false).await;
             }
+            if self.voice_lifecycle.leaving.is_some() {
+                self.voice_lifecycle.switching=Some(VoiceSwitch {channel:id.into(),video,join_only,instance,deadline:Instant::now()+Duration::from_secs(8)});
+                self.state.voice_connecting=true;self.state.call_channel_name=item.name;
+                self.state.call_status_label="Cerrando el motor anterior…".into();self.refresh_call();
+                return Ok(());
+            }
             return self.request_voice_scoped(id,video,join_only,instance);
-        }
-        if let Some(media)=self.media.clone() {
-            // Prefer a native teardown acknowledgement before another host can
-            // open the microphone. A wedged helper is still force-closed below.
-            let _=tokio::time::timeout(Duration::from_secs(2),media.command("disconnect",json!({}))).await;
         }
         self.stop_voice().await;
         self.voice_lifecycle.switching=Some(VoiceSwitch {channel:id.into(),video,join_only,instance,deadline:Instant::now()+Duration::from_secs(8)});
@@ -618,6 +632,9 @@ impl Controller {
         join_only: bool,
         instance: u64,
     ) -> Result<(), String> {
+        if self.voice_lifecycle.leaving.is_some() {
+            return Err("Espera la confirmación del cierre anterior antes de abrir el micrófono.".into());
+        }
         if self.voice_lifecycle.mic_prior_deaf.is_some() {
             return Err("Detén la prueba de micrófono antes de iniciar otra llamada.".into());
         }
@@ -631,8 +648,8 @@ impl Controller {
         {
             return Err("La llamada entrante cambió o terminó.".into());
         }
-        if join_only && !self.state.incoming_calls.iter().any(|c| c.channel_id == id) {
-            return Err("La llamada ya terminó. No se inició una llamada nueva.".into());
+        if join_only && !self.state.incoming_calls.iter().any(|c| c.channel_id == id && c.is_active() && !c.observation_stale) {
+            return Err("La llamada cambió, terminó o necesita actualizarse. No se inició una llamada nueva.".into());
         }
         if !self.voice_channel.is_empty() {
             if self.voice_channel == id && video {
@@ -696,6 +713,7 @@ impl Controller {
         };
         if is_dm&&join_only {self.end_incoming_invitation(id,self.voice_lifecycle.request_instance,true);}
         self.pending_video = video;
+        self.local_call_join(id);
         self.state.voice_connecting = true;
         self.state.call_channel_name = item.name.clone();
         self.state.call_status_label = "Solicitando acceso a la llamada…".into();
@@ -1510,6 +1528,9 @@ impl Controller {
         self.stop_voice_internal(true).await;
     }
     async fn stop_voice_internal(&mut self, leave: bool) {
+        let mut opening_media = None;
+        let departed_channel = self.voice_channel.clone();
+        self.local_call_departure(&departed_channel);
         self.clear_private_outgoing();
         self.close_receiver();
         self.voice_lifecycle.switching=None;
@@ -1555,7 +1576,13 @@ impl Controller {
         self.voice_lifecycle.request_guild.clear();
         self.voice_lifecycle.pending_ring.clear();
         self.voice_lifecycle.resume.clear();
-        self.voice_lifecycle.opening = None;
+        self.voice_lifecycle.opening_cancel.cancel();
+        self.voice_lifecycle.opening_cancel=tokio_util::sync::CancellationToken::new();
+        if let Some(slot)=self.voice_lifecycle.opening.take() {
+            if let Some(Ok(opened))=slot.lock().unwrap().take() {
+                opened.media.close();opening_media=Some(opened.media);
+            }
+        }
         self.voice_lifecycle.native_voice = None;
         self.voice_lifecycle.native_share = None;
         self.voice_lifecycle.active_acl=None;
@@ -1578,8 +1605,10 @@ impl Controller {
         self.stream_server.clear();
         self.stream_endpoint.clear();
         self.pending_video = false;
-        if let Some(media) = self.media.take() {
+        let closing_media = self.media.take().or(opening_media);
+        if let Some(media) = &closing_media {
             media.close();
+            self.voice_lifecycle.closing_host=Some(media.clone());
         }
         self.state.voice_connected = false;
         self.state.voice_encryption_ready = false;
@@ -1597,25 +1626,78 @@ impl Controller {
         self.call_people.clear();
         self.voice_lifecycle.pending_volumes.clear();
         self.refresh_call();
-        if leave && had {
-            self.voice_lifecycle.leaving=Some(VoiceLeave {guild:guild.clone(), requested_at:Instant::now()});
-            if let Some(g) = &self.gateway {
-                if !stream.is_empty() {
-                    let _ = g
-                        .send(GatewayCommand::StreamDelete { stream_key: stream })
-                        .await;
-                }
-                let _ = g
-                    .send(GatewayCommand::VoiceState {
-                        guild_id: (!guild.is_empty()).then_some(guild),
-                        channel_id: None,
-                        mute: self.state.self_mute || self.state.self_deaf,
-                        deaf: self.state.self_deaf,
-                        video: false,
-                    })
-                    .await;
-            }
+        // Bounded immediate publication: do not hold the visual departure
+        // behind StreamDelete/VoiceState wire flushes or the actor's next tick.
+        self.publish();
+        self.flush_snapshot(true);
+        let signal_leave=leave&&had;
+        if signal_leave || closing_media.is_some() {
+            self.voice_lifecycle.leave_sequence=self.voice_lifecycle.leave_sequence.wrapping_add(1).max(1);
+            let token=self.voice_lifecycle.leave_sequence;
+            self.voice_lifecycle.leaving=Some(VoiceLeave {guild:guild.clone(),channel:departed_channel,requested_at:Instant::now(),token,
+                write_pending:true,acknowledged:!signal_leave,write_failed:false,local_closed:false});
+            let gateway=self.gateway.clone();
+            let mute=self.state.self_mute||self.state.self_deaf;let deaf=self.state.self_deaf;
+            let mut done=UiAction::new("__voice-leave");done.extra=token.to_string();
+            self.launch(done,None,async move {
+                let local=match closing_media {Some(media)=>media.await_closed().await,None=>Ok(())};
+                if !signal_leave {return Ok(json!({"localClosed":local.is_ok(),"localError":local.err(),"written":true}));}
+                let Some(gateway)=gateway else {return Ok(json!({"localClosed":local.is_ok(),"error":"Gateway no disponible para confirmar la salida."}));};
+                // Each step awaits actual writer completion. Leaving membership
+                // is mandatory even if removing the publication was rejected.
+                let stream_error=if !stream.is_empty() {gateway.send_voice_release(GatewayCommand::StreamDelete {stream_key:stream}).await.err().map(|error|error.to_string())}else{None};
+                let voice=gateway.send_voice_release(GatewayCommand::VoiceState {guild_id:(!guild.is_empty()).then_some(guild),channel_id:None,mute,deaf,video:false}).await;
+                Ok(json!({"localClosed":local.is_ok(),"localError":local.err(),"written":voice.is_ok(),"error":voice.err().map(|error|error.to_string()),"streamError":stream_error}))
+            });
         }
+    }
+    pub(super) fn complete_voice_leave(&mut self, action:&UiAction, value:&Value)->Result<(),String> {
+        let Some(previous)=self.voice_lifecycle.leaving.as_mut().filter(|previous|Some(previous.token)==action.extra.parse().ok()) else {return Ok(());};
+        previous.write_pending=false;
+        previous.write_failed=value["written"]!=true;
+        previous.local_closed=value["localClosed"]==true;
+        if previous.local_closed {self.voice_lifecycle.closing_host=None;}
+        let acknowledged=previous.acknowledged;
+        if !previous.local_closed {self.report_voice_error("No se confirmó el cierre del motor de audio anterior. Se mantiene bloqueada la apertura de otro micrófono.");}
+        else if acknowledged {self.finish_voice_departure()?;}
+        else if value["written"]!=true {self.report_voice_error("El audio local está cerrado; Discord no confirmó la salida. No se repetirá automáticamente.");}
+        Ok(())
+    }
+    /// Session cancellation retires its remote leave task, but the microphone
+    /// owner must still finish before a different account may acquire audio.
+    pub(super) async fn retire_session_voice(&mut self) {
+        let closed=match self.voice_lifecycle.closing_host.take() {
+            Some(media)=>{media.close();match media.await_closed().await {Ok(())=>true,Err(_)=>{self.voice_lifecycle.closing_host=Some(media);false}}},None=>true,
+        };
+        let closing_host=self.voice_lifecycle.closing_host.take();
+        let next=self.voice_lifecycle.leave_sequence.wrapping_add(1).max(1);
+        self.voice_lifecycle=VoiceLifecycle::default();
+        if !closed {
+            self.voice_lifecycle.closing_host=closing_host;
+            self.voice_lifecycle.leave_sequence=next;
+            self.voice_lifecycle.leaving=Some(VoiceLeave {guild:String::new(),channel:String::new(),requested_at:Instant::now(),token:next,
+                write_pending:false,acknowledged:true,write_failed:false,local_closed:false});
+        }
+    }
+    fn finish_voice_departure(&mut self)->Result<(),String> {
+        if !self.voice_lifecycle.leaving.as_ref().is_some_and(|previous|previous.acknowledged&&!previous.write_pending&&previous.local_closed) {return Ok(());}
+        self.voice_lifecycle.leaving=None;
+        self.state.voice_connecting=false;
+        if let Some(next)=self.voice_lifecycle.switching.take() {
+            self.request_voice_scoped(&next.channel,next.video,next.join_only,next.instance)?;
+            for view in self.voice_lifecycle.pending_views.values_mut().filter(|view|view.channel==next.channel) {view.attempt=self.voice_attempt;}
+            for view in self.voice_lifecycle.view_intents.values_mut().filter(|view|view.channel==next.channel) {view.attempt=self.voice_attempt;}
+        }
+        self.refresh_call();self.publish();
+        Ok(())
+    }
+    pub(super) fn observed_private_departure(&mut self,kind:&str,value:&Value)->Result<(),String> {
+        let channel=s(value,"channel_id");let me=self.me();
+        let Some(previous)=self.voice_lifecycle.leaving.as_mut().filter(|previous|previous.guild.is_empty()&&previous.channel==channel) else {return Ok(());};
+        let absent=value["voice_states"].as_array().is_some_and(|states|states.len()<=25
+            && states.iter().all(|state|parsing::valid_id(&s(state,"user_id"))&&s(state,"user_id")!=me));
+        if kind=="CALL_DELETE"||absent {previous.acknowledged=true;self.finish_voice_departure()?;}
+        Ok(())
     }
     fn local_pending_source(&self, kind:&str) -> Option<String> {
         if self.voice_channel.is_empty() {return None;}
@@ -2651,15 +2733,8 @@ impl Controller {
                 self.remember_guild_voice(value);
                 if s(value,"user_id")==self.me()&&self.voice_lifecycle.leaving.as_ref().is_some_and(|previous|s(value,"guild_id")==previous.guild) {
                     if value.get("channel_id").is_some_and(Value::is_null) {
-                        self.voice_lifecycle.leaving=None;
-                        self.state.voice_connecting=false;
-                        if let Some(next)=self.voice_lifecycle.switching.take() {
-                            if let Err(error)=self.request_voice_scoped(&next.channel,next.video,next.join_only,next.instance) {
-                                self.state.call_channel_name.clear();self.state.call_status_label.clear();self.refresh_call();return Err(error);
-                            }
-                            for view in self.voice_lifecycle.pending_views.values_mut().filter(|view|view.channel==next.channel) {view.attempt=self.voice_attempt;}
-                            for view in self.voice_lifecycle.view_intents.values_mut().filter(|view|view.channel==next.channel) {view.attempt=self.voice_attempt;}
-                        }
+                        self.voice_lifecycle.leaving.as_mut().unwrap().acknowledged=true;
+                        self.finish_voice_departure()?;
                     }
                     return Ok(());
                 }
@@ -4246,7 +4321,7 @@ mod tests {
         assert!(
             c.request_voice("200", false, true)
                 .unwrap_err()
-                .contains("ya terminó")
+                .contains("terminó")
         );
         assert!(c.media.is_none() && c.voice_channel.is_empty());
     }
@@ -4509,6 +4584,66 @@ mod tests {
         c.voice_lifecycle.media_epoch = 3;
         (c, u, r)
     }
+    #[tokio::test]
+    async fn local_departure_is_published_before_signalling_and_a_failed_native_close_cannot_release_barrier() {
+        let (mut c,_,_replies)=target();
+        c.state.voice_connected=true;c.voice_guild.clear();
+        c.state.direct_messages.push(NavItem{id:"200".into(),kind:"group".into(),..Default::default()});
+        c.dispatch("CALL_CREATE",json!({"channel_id":"200","message_id":"1000","ringing":[],
+            "voice_states":[{"user_id":"100"},{"user_id":"300"}]})).await.unwrap();
+        c.stop_voice().await;
+        let snapshot=c.latest_snapshot.lock().unwrap().clone().unwrap();
+        assert!(!snapshot.voice_connected&&snapshot.call_channel_id.is_empty());
+        assert_eq!(snapshot.incoming_calls[0].participants.iter().map(|p|p.id.as_str()).collect::<Vec<_>>(),["300"]);
+        let token=c.voice_lifecycle.leaving.as_ref().unwrap().token;
+        c.voice_dispatch("VOICE_STATE_UPDATE",&json!({"user_id":"100","channel_id":null})).await.unwrap();
+        assert!(c.voice_lifecycle.leaving.is_some());
+        let mut done=UiAction::new("__voice-leave");done.extra=token.to_string();
+        c.complete_voice_leave(&done,&json!({"written":true,"localClosed":false})).unwrap();
+        assert!(c.voice_lifecycle.leaving.is_some());
+        assert!(c.queue_media(UiAction::new("mic-start")).await.is_err());
+        assert!(c.voice_lifecycle.opening.is_none());
+        done.extra=(token+1).to_string();
+        c.complete_voice_leave(&done,&json!({"written":true,"localClosed":true})).unwrap();
+        assert!(c.voice_lifecycle.leaving.is_some(),"an unrelated completion cannot release the old native owner");
+    }
+    #[tokio::test]
+    async fn account_retirement_discards_remote_observations_after_actual_local_close() {
+        let (mut c,_,_)=target();
+        let (media,_)=MediaBridge::fake(|_,_|Ok(json!({})));c.media=Some(media);
+        c.voice_lifecycle.observed_guild_voice.insert(("500".into(),"300".into()),json!({"user_id":"300","channel_id":"200"}));
+        c.session_cancel.cancel();
+        c.stop_voice().await;c.retire_session_voice().await;
+        assert!(c.voice_lifecycle.observed_guild_voice.is_empty());
+        assert!(c.voice_lifecycle.leaving.is_none()&&c.voice_lifecycle.closing_host.is_none());
+        c.retire_session_voice().await;
+        assert!(c.voice_lifecycle.leaving.is_none());
+    }
+    #[tokio::test]
+    async fn full_private_roster_can_confirm_unknown_exit_but_local_projection_is_never_evidence() {
+        let (mut c,_,_)=target();c.voice_guild.clear();
+        c.state.direct_messages.push(NavItem{id:"200".into(),kind:"group".into(),..Default::default()});
+        c.dispatch("CALL_CREATE",json!({"channel_id":"200","message_id":"1000","ringing":[],
+            "voice_states":[{"user_id":"100"},{"user_id":"300"}]})).await.unwrap();
+        c.stop_voice().await;
+        let token=c.voice_lifecycle.leaving.as_ref().unwrap().token;
+        let mut done=UiAction::new("__voice-leave");done.extra=token.to_string();
+        c.complete_voice_leave(&done,&json!({"written":false,"localClosed":true})).unwrap();
+        c.dispatch("CALL_UPDATE",json!({"channel_id":"200","voice_states":[{"user_id":"100"},{"user_id":"300"}]})).await.unwrap();
+        assert!(c.voice_lifecycle.leaving.is_some(),"the local UI hides self, but the raw roster still includes self");
+        c.dispatch("CALL_UPDATE",json!({"channel_id":"200","voice_states":[{"user_id":"300"}]})).await.unwrap();
+        assert!(c.voice_lifecycle.leaving.is_none());
+    }
+    #[tokio::test]
+    async fn stale_private_observation_cannot_start_voice_or_turn_an_old_preview_into_a_new_call() {
+        let (mut c,_,_)=target();c.voice_channel.clear();
+        c.state.direct_messages.push(NavItem{id:"200".into(),kind:"group".into(),..Default::default()});
+        c.state.incoming_calls.push(IncomingCall {channel_id:"200".into(),kind:"group".into(),
+            observation_stale:true,instance_id:1,..Default::default()});
+        let error=c.switch_voice("200",false,true,1).await.unwrap_err();
+        assert!(error.contains("Actualizar llamada"));
+        assert!(c.media.is_none()&&!c.voice_lifecycle.request_pending&&c.voice_lifecycle.opening.is_none());
+    }
     fn share(c: &mut Controller) {
         c.state.voice_encryption_ready = true;
         c.state.voice_connected = true;
@@ -4615,7 +4750,7 @@ mod tests {
     async fn terminated_join_does_not_even_consult_api_or_start_media() {
         let (mut c, _) = Controller::test_fixture();
         let error = c.request_voice("200", false, true).unwrap_err();
-        assert!(error.contains("ya terminó"));
+        assert!(error.contains("terminó"));
         assert!(
             c.api.is_none()
                 && c.media.is_none()
@@ -5420,7 +5555,9 @@ mod tests {
             assert_eq!(leave["d"]["guild_id"].as_str(),(!previous_guild.is_empty()).then_some(previous_guild));
             assert!(!c.state.voice_connected&&c.state.voice_connecting&&c.media.is_none()&&c.voice_channel.is_empty());
             assert!(c.call_people.is_empty()&&c.state.call_videos.is_empty()&&c.voice_lifecycle.watches.is_empty());
-            assert!(old.command("stats",json!({})).await.is_err());assert_eq!(old_calls.lock().unwrap().as_slice(),["disconnect"]);
+            assert!(old.command("stats",json!({})).await.is_err());assert!(old_calls.lock().unwrap().is_empty());
+            old.await_closed().await.unwrap();
+            reply(&mut c,&mut replies).await.unwrap();
             c.switch_voice("201",false,join_only,if join_only {12} else {0}).await.unwrap();assert!(wire.try_recv().is_err());
             let mut stale=UiAction::new("__media");stale.extra=old_epoch.to_string();c.complete(stale,json!({"event":"fatal"})).await.unwrap();assert!(c.voice_lifecycle.switching.is_some());
             c.voice_dispatch("VOICE_STATE_UPDATE",&json!({"guild_id":previous_guild,"user_id":"100","channel_id":null})).await.unwrap();
@@ -5480,6 +5617,8 @@ mod tests {
         c.voice_dispatch("VOICE_STATE_UPDATE",&json!({"guild_id":"600","user_id":"100","channel_id":null})).await.unwrap();
         assert!(c.voice_lifecycle.switching.is_some());
         c.voice_dispatch("VOICE_STATE_UPDATE",&json!({"guild_id":"500","user_id":"100","channel_id":null})).await.unwrap();
+        assert!(c.voice_lifecycle.leaving.is_some()&&!c.voice_lifecycle.request_pending,"ACK cannot bypass a pending writer/local close completion");
+        reply(&mut c,&mut replies).await.unwrap();
         assert!(c.voice_lifecycle.leaving.is_none()&&c.voice_lifecycle.switching.is_none()&&c.voice_lifecycle.request_pending);
         let (replacement,calls)=MediaBridge::fake(|command,_|match command {"connectVoice"=>Ok(json!({"session":30})),"mute"=>Ok(json!({})),_=>panic!("Unexpected operation: {command}")});c.media=Some(replacement);
         reply(&mut c,&mut replies).await.unwrap();reply(&mut c,&mut replies).await.unwrap();

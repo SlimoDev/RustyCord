@@ -885,6 +885,7 @@ impl Host {
                     self.close_id(id)
                 }
                 self.share_token = token;
+                if let Some(main) = self.sessions.get(&voice) { self.stage(main, "share-selected"); }
                 self.start_session(p, true, Some(selection))?;
                 Ok(Some(
                     json!({"state":"connecting","verifiedLive":false,"session":self.share}),
@@ -977,6 +978,12 @@ impl Host {
     }
     fn stage(&self, s: &Session, name: &str) {
         let mut event=json!({"event":"mediaStage","stage":name,"kind":s.kind()});
+        // Phase snapshots share the existing bounded diagnostics lane. Never
+        // query stats, record samples or reconfigure input to produce one.
+        let main=if !s.stream() {Some(s)} else {self.voice.and_then(|id|self.sessions.get(&id))};
+        if let Some(main)=main {
+            event["voiceInput"]=main.input_diagnostics(Instant::now(),self.mic_test.is_some(),self.settings.input_volume);
+        }
         if s.receive() {event["streamKey"]=json!(s.credentials.stream_key);event["token"]=json!(s.operation_token);event["mediaSession"]=json!(s.id);}
         self.emit(event);
     }
@@ -1717,6 +1724,7 @@ impl Host {
         if s.closed {
             return;
         }
+        if s.stream() { self.stage(s, "video-session-closing"); }
         if s.receive() && let Some(ssrc)=s.receive_requested_ssrc.take() {
             let mut wants=json!({});wants[ssrc.to_string()]=json!(0);self.send(s.id,15,wants);
         }
@@ -1800,6 +1808,9 @@ impl Host {
                     if let Some(raw) = parsed.filter(Value::is_object) {
                         let mut r = stats::sanitize(&raw, s.state(), s.dave_ready);
                         let now = Instant::now();
+                        if !s.stream() {
+                            r["input"]=s.input_diagnostics(now,self.mic_test.is_some(),self.settings.input_volume);
+                        }
                         if let Some((at, previous)) = self.previous_stats.get(&session) {
                             stats::add_interval(
                                 &mut r,
@@ -2326,6 +2337,7 @@ impl Host {
                 s.camera_token = token;
                 s.camera_request = Some(request);
                 s.camera_deadline = Some(Instant::now() + Duration::from_secs(10));
+                self.stage(&s,"camera-selected");
                 self.emit(json!({"event":"cameraState","token":s.camera_token,"mediaSession":s.id,"state":"preparing"}));
                 let streams: Vec<Value> = s
                     .streams
@@ -2353,6 +2365,7 @@ impl Host {
                 self.video.preview = None;
                 self.eng("setVideoInputDevice", vec![json!(device)])?;
                 self.conn_call(id, "setVideoBroadcast", vec![json!(true)])?;
+                self.stage(&s,"camera-capture-requested");
                 Ok(None)
             }
             "stopCamera" => {
@@ -2396,6 +2409,7 @@ impl Host {
             if let Err(error) = broadcast.and(input) {
                 self.video_error(s.id, &s.credentials.user_id, error);
             }
+            self.stage(s,"camera-stopped");
         }
         Ok(())
     }
@@ -2499,6 +2513,7 @@ impl Host {
                 "The separate Go Live media session is not encrypted and connected yet.",
             ));
         }
+        self.stage(s,"share-capture-starting");
         let width = (selection.height as f64 * 16. / 9.).round() as u32;
         let bitrate = if selection.height > 720 || selection.fps > 30 {
             9000000
@@ -2534,6 +2549,7 @@ impl Host {
         self.conn_call(s.id, "setVideoBroadcast", vec![json!(true)])?;
         self.send(s.id,12,json!({"audio_ssrc":s.ssrc,"video_ssrc":streams.first().map(|v|v["ssrc"].clone()).unwrap_or(json!(0)),"rtx_ssrc":streams.first().map(|v|v["rtxSsrc"].clone()).unwrap_or(json!(0)),"streams":streams.iter().map(|v|json!({"type":v["type"],"rid":v["rid"],"ssrc":v["ssrc"],"rtx_ssrc":v["rtxSsrc"],"quality":v["quality"],"active":v["active"],"max_bitrate":v["maxBitrate"],"max_framerate":v["maxFrameRate"],"max_resolution":v["maxResolution"]})).collect::<Vec<_>>()}));
         s.share_selection = Some(selection);
+        self.stage(s,"share-capture-requested");
         Ok(())
     }
     fn clear_share(&mut self, s: &mut Session) -> Result<()> {
@@ -2548,6 +2564,7 @@ impl Host {
             Ok(())
         })();
         s.clearing_source = false;
+        self.stage(s,"share-capture-cleared");
         result
     }
     fn tick(&mut self) {
