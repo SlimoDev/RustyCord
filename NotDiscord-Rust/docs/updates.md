@@ -4,13 +4,18 @@ Esta entrega actualiza sólo **NotDiscord estándar**. NotDiscord+ conserva su r
 ejecutable y accesos directos anteriores; todavía no participa en el actualizador
 ni en la configuración y exclusión bidireccionales nuevas.
 
-El formato de distribución de 0.10.1 es exclusivamente el instalador
-**NotDiscord-Setup-0.10.1.exe**. No se publica una edición portable de esta versión.
+El formato de distribución de 0.11.0 es exclusivamente el instalador
+**NotDiscord-Setup-0.11.0.exe**. No se publica una edición portable de esta versión.
 La instalación permite elegir una carpeta y, por defecto, utiliza Programs del
 usuario para no requerir elevación. Una ruta protegida necesita el consentimiento
 normal de Windows; el actualizador no intenta eludir UAC.
 
-0.10.1 es una actualización Pequeña desde 0.10.0. La
+0.11.0 es una actualización Mediana desde 0.10.1 de llamadas privadas, presencia,
+cabecera de vídeo y regreso del registro RAM. La [nota de entrega](entrega-local-0.11.0.md)
+identifica las fuentes y los hashes verificados en GitHub. El incidente del micrófono
+físico al publicar vídeo sigue pendiente de reproducción; no se anuncia como corregido.
+
+0.10.1 fue una actualización Pequeña desde 0.10.0. La
 [corrección de carga inicial](startup-catalog-0.10.1.md) documenta la regresión
 de catálogos vacíos, la espera hasta la sincronización y el estado de verificación.
 La disponibilidad remota del instalador y sus hashes se anuncian mediante

@@ -2,7 +2,7 @@
 
 4 de noviembre de 2026. Variante estándar, rama `NotDiscord`, base `865b2f11069fadcd40f40bc634e7162ea7694f3e`. El usuario pidió ejecutar el plan del mismo día. Se aplicaron `notdiscord-planificar`, `notdiscord-programar` e investigación estática con `reverse-engineer-anything`. Los cambios previos de README, plan del 31 de octubre, skills, contrato conservador y fixtures ajenos se conservaron.
 
-Tipo **Mediana**, inferido por los recorridos funcionales y pequeñas adiciones; versión de fuentes **0.10.1 → 0.11.0**. `version.json` queda con `release: null`; no se reutilizan hashes del instalador publicado de 0.10.1. No se modificaron ramas Plus/legacy, instalaciones, accesos directos, cuentas o configuración del usuario. No se hizo commit, push ni publicación. El pedido posterior «Ejecuta todo con la skill de notdiscord-programar» continúa esta misma versión local; la entrega y sus hashes se registran en la nota de entrega enlazada al cierre.
+Tipo **Mediana**, inferido por los recorridos funcionales y pequeñas adiciones; versión de fuentes **0.10.1 → 0.11.0**. El manifiesto de compilación conserva `release: null`; no se reutilizan hashes del instalador publicado de 0.10.1. No se modificaron ramas Plus/legacy, instalaciones, accesos directos, cuentas o configuración del usuario. El pedido posterior «Ejecuta todo con la skill de notdiscord-programar» continuó esta misma versión. La publicación en GitHub se autorizó después y quedó verificada bajo la etiqueta `NotDiscord-v0.11.0`, commit de fuentes `9b0df68a2b0a78bd8fda420906713ffa6a7658b1`; el manifiesto de actualización se anuncia después del asset. La [nota de entrega](entrega-local-0.11.0.md) registra fuentes, hashes, comprobaciones y límites.
 
 ## Estado por requisito
 

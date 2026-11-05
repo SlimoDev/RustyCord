@@ -1,6 +1,12 @@
-# Entrega local de NotDiscord 0.11.0
+# Entrega y publicación de NotDiscord 0.11.0
 
-4 de noviembre de 2026. Variante estándar, rama `NotDiscord`, base `865b2f11069fadcd40f40bc634e7162ea7694f3e`, con cambios locales sin commit. Continuación del pedido «Ejecuta todo con la skill de notdiscord-programar». Actualización **Mediana**, inferida por las correcciones funcionales y pequeñas adiciones; se conserva 0.11.0 porque esta versión aún no se ha publicado.
+Corte de construcción del 4 de noviembre de 2026. Variante estándar, rama `NotDiscord`, base `865b2f11069fadcd40f40bc634e7162ea7694f3e`, con cambios locales sin commit en ese momento. Continuación del pedido «Ejecuta todo con la skill de notdiscord-programar». Actualización **Mediana**, inferida por las correcciones funcionales y pequeñas adiciones; se conservó 0.11.0 porque aún no estaba publicada al compilar.
+
+## Publicación verificada
+
+El pedido posterior autorizó subir esta entrega a GitHub. [NotDiscord 0.11.0](https://github.com/SlimoDev/RustyCord/releases/tag/NotDiscord-v0.11.0) está publicada con un único Setup. Su etiqueta apunta al commit de fuentes `9b0df68a2b0a78bd8fda420906713ffa6a7658b1`. GitHub confirmó el asset `711390899` en estado `uploaded`, 118951901 bytes y SHA-256 `23024f01534d4a886ec4a26453cd046832f272348f77352c2fae4093e7012fee`; la URL pública respondió HTTP 200 con ese tamaño. Se anunció `version.json` después de esa verificación, sin recompilar el instalador.
+
+`evidence/publication-0.11.0.json` registra el recibo público. Los apartados de construcción siguientes conservan el corte local previo, incluidas sus fuentes aún sin commit entonces y el manifiesto de build con `release: null`. La publicación no acredita las pruebas funcionales pendientes del micrófono ni implica ejecutar Setup.
 
 ## Alcance implementado
 
@@ -41,13 +47,13 @@ El runtime se preparó en `target/prepared-runtime-0.11.0-20261104-full`, con 31
 
 ## Instalador generado
 
-[NotDiscord-Setup-0.11.0.exe](../dist/NotDiscord-Setup-0.11.0.exe), **118951901 bytes**. SHA-256:
+[NotDiscord-Setup-0.11.0.exe](https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.11.0/NotDiscord-Setup-0.11.0.exe), **118951901 bytes**. SHA-256:
 
 ```text
 23024f01534d4a886ec4a26453cd046832f272348f77352c2fae4093e7012fee
 ```
 
-Se generó mediante `build-installer.ps1` e Inno Setup existente. El informe `evidence/delivery-0.11.0-local.json` relaciona instalador, ejecutable, addon, runtime e inventario de fuentes. `prepare-update-release.ps1` preparó `dist/version-0.11.0.pending.json` con tamaño y hashes locales. **Es un borrador, no un anuncio de actualización:** su URL/tag remotos no se han publicado ni verificado. El manifiesto raíz y el incluido en Setup mantienen `release: null`, evitando anunciar un asset inexistente y la autorreferencia del hash del instalador.
+Se generó mediante `build-installer.ps1` e Inno Setup existente. El informe histórico `evidence/delivery-0.11.0-local.json` relaciona instalador, ejecutable, addon, runtime e inventario de fuentes antes de publicar. `prepare-update-release.ps1` preparó `dist/version-0.11.0.pending.json` con tamaño y hashes locales. Después de verificar la release, ese contenido se anunció en el manifiesto raíz. El manifiesto compilado y el incluido en Setup mantienen `release: null`, evitando la autorreferencia del hash del instalador.
 
 ## Comprobaciones
 
@@ -68,6 +74,6 @@ Los logs están en `.tools/temp/current/` del repositorio: `calls-0110-full-work
 
 ## Estado de validación funcional
 
-No se abrió la aplicación con una cuenta, no se accedió a credenciales y no se activaron micrófono, cámara ni captura de pantalla físicos. Los probes usaron entradas sintéticas; no son la matriz audible de R2. El instalador se compiló sin ejecutarlo. No se hizo commit, push, publicación ni actualización de la instalación o accesos directos del usuario; `version.json` conserva `release: null`.
+No se abrió la aplicación con una cuenta, no se accedió a credenciales y no se activaron micrófono, cámara ni captura de pantalla físicos. Los probes usaron entradas sintéticas; no son la matriz audible de R2. El instalador se compiló y publicó sin ejecutarlo ni actualizar la instalación o accesos directos del usuario.
 
 Para completar R2 hace falta una llamada real autorizada: establecer voz base, iniciar/parar/cambiar una ventana de prueba y cámara, repetir VAD/PTT, correlacionar callbacks, puerta/cifrado y paquetes, y confirmar audibilidad desde otro participante. Ese ensayo no se realizó. El procedimiento propuesto no graba audio/vídeo ni envía invitaciones. La prueba debe discriminar una pérdida de captura, puerta, publicación o recepción antes de decidir una corrección. También siguen pendientes la comprobación del descubrimiento/presencia desde otro cliente y la revisión visual manual a distintos DPI.
