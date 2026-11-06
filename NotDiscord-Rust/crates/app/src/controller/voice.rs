@@ -2,9 +2,41 @@ use super::*;
 use std::sync::{Arc, Mutex};
 #[path = "private_calls.rs"]
 mod private_calls;
+#[path = "stream_sources.rs"]
+mod stream_sources;
+#[path = "source_lifecycle.rs"]
+mod source_lifecycle;
+#[path = "voice_recovery.rs"]
+mod voice_recovery;
+#[path = "input_diagnostic.rs"]
+mod input_diagnostic;
+#[cfg(test)]
+#[path = "source_lifecycle_tests.rs"]
+mod source_lifecycle_tests;
 struct OpenedMedia {
     media: MediaBridge,
     capabilities: Value,
+}
+enum ShareDeleteCause {
+    StreamFull,
+    Unauthorized,
+    Unknown,
+}
+impl ShareDeleteCause {
+    fn parse(reason: &Value) -> Self {
+        match reason.as_str() {
+            Some("stream_full") => Self::StreamFull,
+            Some("unauthorized") => Self::Unauthorized,
+            _ => Self::Unknown,
+        }
+    }
+    fn message(&self) -> &'static str {
+        match self {
+            Self::StreamFull => "Discord indicó que la transmisión alcanzó su límite de espectadores. Se está cerrando la captura local; el audio de la llamada continúa.",
+            Self::Unauthorized => "Discord no autorizó la publicación de pantalla. Se está cerrando la captura local; el audio de la llamada continúa.",
+            Self::Unknown => "Discord dejó de confirmar la publicación de pantalla. Se está cerrando la captura local; el audio de la llamada continúa.",
+        }
+    }
 }
 type OpenSlot = Arc<Mutex<Option<Result<OpenedMedia, String>>>>;
 #[derive(Default)]
@@ -42,9 +74,22 @@ pub(super) struct VoiceLifecycle {
     diagnostic_sources: Option<u64>,
     watch_attempt: u64,
     watches: HashMap<String, Value>,
+    watch_requests:HashMap<String,(u64,tokio::sync::watch::Receiver<bool>)>,
     watch_stops: HashMap<String, WatchStop>,
     // Active-call RTC identity only; credentials are kept solely in an explicit watch.
     stream_identities: HashMap<String, StreamIdentity>,
+    sources: stream_sources::Sources,
+    view_recovery: Option<source_lifecycle::ViewRecovery>,
+    retiring_view:Option<(String,notdiscord_core::gateway::RecoveryPermit)>,
+    receiver_closing: Option<MediaBridge>,
+    receiver_close_sequence:u64,
+    share_closing:Option<source_lifecycle::ShareClose>,
+    share_request:Option<tokio::sync::watch::Receiver<bool>>,
+    selected_camera:String,
+    selected_share:Option<UiAction>,
+    input_capture_sequence:u64,
+    input_capture:Option<(u64,u64)>,
+    transport_recovery:Option<voice_recovery::VoiceRecovery>,
     early_watch_errors: HashMap<u64, Value>,
     stream_viewers: HashMap<String, HashSet<String>>,
     native_voice: Option<u64>,
@@ -86,13 +131,14 @@ pub(super) struct VoiceLifecycle {
 }
 impl VoiceLifecycle {
     pub(super) fn needs_fast_maintenance(&self)->bool {
-        self.opening.is_some() || self.receiver_opening.is_some() || self.request_pending
+        self.recovery_pending() || self.opening.is_some() || self.receiver_opening.is_some() || self.request_pending
             || !self.resume.is_empty() || !self.pending_views.is_empty()
             || self.pending_camera.is_some() || self.pending_share.is_some()
             || self.switching.is_some() || self.leaving.is_some() || self.join_wait.is_some()
             || !self.watch_stops.is_empty() || self.private_calls.needs_fast_maintenance()
             || self.video_visible!=Some(false)&&self.view_intents.values().any(|view|view.waiting_since.is_some())
     }
+    pub(super) fn recovery_pending(&self)->bool {self.view_recovery.is_some()||self.retiring_view.is_some()||self.transport_recovery.as_ref().is_some_and(|r|r.pending())}
 }
 struct VoiceLeave {
     guild: String,
@@ -163,7 +209,7 @@ impl CallMembership {
 }
 #[derive(Clone, Default)]
 struct StreamIdentity { server: String, channel: Option<String> }
-struct WatchStop { attempt:u64, written:bool, pending:u64 }
+struct WatchStop { attempt:u64, written:bool, pending:u64, local_closed:bool, write_failed:bool }
 impl VoiceLifecycle {
     fn request_current(&self, attempt: u64, current: u64, id: &str) -> bool {
         attempt == current && self.request_pending && self.request_channel == id
@@ -230,13 +276,14 @@ impl Controller {
         self.voice_lifecycle.receiver_epoch=self.voice_lifecycle.receiver_epoch.wrapping_add(1);
         self.voice_lifecycle.receiver_opening=None;
         self.voice_lifecycle.early_watch_errors.clear();
-        if let Some(receiver)=self.voice_lifecycle.receiver.take() {receiver.close();}
+        if let Some(receiver)=self.voice_lifecycle.receiver.take() {self.close_screen_receiver(receiver);}
     }
     fn receiver_command(&self,id:&str,command:&str,args:Value)->Result<(),String> {
         let receiver=self.voice_lifecycle.receiver.clone().ok_or("El receptor de vídeo no está disponible.")?;
         let mut done=UiAction::id("__voice-data",id);let mut meta=self.meta();meta["receiver"]=json!(self.voice_lifecycle.receiver_epoch);
         if id=="stream-volume" {meta["streamVolumeRevision"]=args["revision"].clone();}
         done.extra=meta.to_string();
+        if id=="watch-stop" {done.channel_id=s(&args,"streamKey");done.text=args["token"].as_u64().unwrap_or(0).to_string();}
         if matches!(id,"video-stream-visible"|"video-stream-hidden")
             && let Some(video)=args["id"].as_u64().and_then(|id|self.state.call_videos.iter().find(|video|video.id==id))
             && let Some(watch)=self.voice_lifecycle.watches.get(&video.stream_key) {
@@ -253,6 +300,7 @@ impl Controller {
         } else {self.launch_media("__voice-data",id,command,args)}
     }
     async fn probe_receiver(&mut self)->Result<(),String> {
+        if self.voice_lifecycle.receiver_closing.is_some() {return Ok(());}
         if self.voice_lifecycle.receiver.is_some()||self.voice_lifecycle.receiver_opening.is_some() {return Ok(());}
         let frames=self.media.as_ref().ok_or("La llamada de voz terminó.")?.video_frames();
         self.voice_lifecycle.receiver_epoch=self.voice_lifecycle.receiver_epoch.wrapping_add(1);
@@ -304,7 +352,7 @@ impl Controller {
             "VIDEO_PIPE_FAILED"=>format!("Falló el canal de fotogramas: {}",parsing::limited(event["message"].as_str().or_else(||event["error"]["message"].as_str()).unwrap_or("conexión de vídeo cerrada"),180)),
             _=>"El receptor de pantalla se interrumpió.".into(),
         };
-        format!("{detail} El audio de la llamada continúa; vuelve a abrir la pantalla para reintentar.")
+        format!("{detail} El audio de la llamada continúa.")
     }
     pub(super) async fn probe_media(&mut self) {
         if self.voice_lifecycle.leaving.is_some() || self.voice_lifecycle.closing_host.is_some() {return;}
@@ -1144,23 +1192,54 @@ impl Controller {
             return Ok(());
         }
         if meta.get("receiver").is_some() && meta["receiver"].as_u64()!=Some(self.voice_lifecycle.receiver_epoch) {return Ok(());}
+        if action.kind=="__voice-data"&&action.id=="input-diagnostic" {self.complete_input_diagnostic(&action,&value);return Ok(());}
+        if action.kind=="__voice-data"&&action.id=="share-gateway-start" {
+            if meta["share"].as_u64()!=Some(self.voice_lifecycle.share_attempt){return Ok(());}
+            self.voice_lifecycle.share_request=None;
+            if unwrapped(&value).is_err(){self.stop_share().await?;self.status("No se confirmó la publicación de pantalla. Se conserva el resultado incierto sin repetirla.");}
+            return Ok(());
+        }
         if action.kind=="__voice-data"&&action.id=="stream-volume"
             && meta["streamVolumeRevision"].as_u64()!=Some(self.voice_lifecycle.stream_volume_revision) {return Ok(());}
         if action.kind=="__voice-data"&&action.id=="video-visible"
             &&!self.voice_lifecycle.video_visibility_request.is_some_and(|(sequence,_)|meta["videoVisibility"].as_u64()==Some(sequence)) {return Ok(());}
+        if action.kind=="__voice-data"&&action.id=="watch-gateway-start" {
+            let attempt=action.text.parse::<u64>().ok();
+            if self.voice_lifecycle.watch_requests.get(&action.channel_id).is_some_and(|(current,_)|Some(*current)==attempt){self.voice_lifecycle.watch_requests.remove(&action.channel_id);}
+            if !self.voice_lifecycle.watches.get(&action.channel_id).is_some_and(|watch|watch["attempt"].as_u64()==attempt){return Ok(());}
+            self.voice_lifecycle.watches.get_mut(&action.channel_id).unwrap()["requestPending"]=json!(false);
+            if unwrapped(&value).is_err(){self.block_screen_view(&action.channel_id,"No se confirmó la solicitud de pantalla. No se repetirá una operación incierta.").await?;}
+            else {
+                self.voice_lifecycle.watches.get_mut(&action.channel_id).unwrap()["requested"]=json!(true);
+                self.set_watch_phase(&action.channel_id,"stream-server");self.wait_watch_frame(&action.channel_id);
+                self.try_watch(&action.channel_id).await?;
+            }
+            return Ok(());
+        }
         if action.kind=="__voice-data"&&action.id=="watch-gateway-stop" {
             if !self.voice_lifecycle.watch_stops.get(&action.channel_id).is_some_and(|stop|Some(stop.attempt)==action.text.parse::<u64>().ok()) {return Ok(());}
             match unwrapped(&value) {
                 Ok(_)=>{
                     self.voice_lifecycle.watch_stops.get_mut(&action.channel_id).unwrap().written=true;
+                    if self.voice_lifecycle.watch_stops.get(&action.channel_id).is_some_and(|stop|stop.pending==0&&stop.local_closed&&!stop.write_failed){self.voice_lifecycle.watch_stops.remove(&action.channel_id);}
                     if self.voice_lifecycle.watches.get(&action.channel_id).is_some_and(|watch|watch["requested"]!=true) {Box::pin(self.request_watch(&action.channel_id)).await?;}
                 }
                 Err(error)=>{
-                    if let Some(stop)=self.voice_lifecycle.watch_stops.get_mut(&action.channel_id) {stop.pending=stop.pending.saturating_sub(1);stop.written=true;}
-                    if self.voice_lifecycle.watch_stops.get(&action.channel_id).is_some_and(|stop|stop.pending==0) {self.voice_lifecycle.watch_stops.remove(&action.channel_id);}
-                    if self.voice_lifecycle.watches.contains_key(&action.channel_id) {self.fail_watch(&action.channel_id,&format!("No se pudo cerrar la suscripción anterior. Puedes reintentar. {error}")).await?;}
+                    if let Some(stop)=self.voice_lifecycle.watch_stops.get_mut(&action.channel_id) {stop.write_failed=true;stop.written=false;}
+                    self.block_screen_view(&action.channel_id,&format!("No se confirmó el cierre anterior de pantalla. {error}")).await?;
                 }
             }
+            return Ok(());
+        }
+        if action.kind=="__voice-data"&&action.id=="watch-stop" {
+            if let Some(stop)=self.voice_lifecycle.watch_stops.get_mut(&action.channel_id)
+                &&Some(stop.attempt)==action.text.parse::<u64>().ok() {
+                stop.local_closed=unwrapped(&value).is_ok();
+                if stop.local_closed&&self.voice_lifecycle.retiring_view.as_ref().is_some_and(|(key,_)|key==&action.channel_id)
+                    &&let Some((_,permit))=self.voice_lifecycle.retiring_view.take(){permit.finish(false);}
+            }
+            if self.voice_lifecycle.watch_stops.get(&action.channel_id).is_some_and(|stop|stop.pending==0&&stop.local_closed&&stop.written&&!stop.write_failed){self.voice_lifecycle.watch_stops.remove(&action.channel_id);}
+            self.sync_transport_gate();
             return Ok(());
         }
         if action.kind == "__voice-share"
@@ -1194,17 +1273,17 @@ impl Controller {
                 }
                 if meta.get("receiver").is_some() && matches!(action.id.as_str(),"video-stream-visible"|"video-stream-hidden") {
                     if self.voice_lifecycle.watches.get(&action.channel_id).is_some_and(|watch|watch["attempt"].as_u64()==action.text.parse::<u64>().ok()) {
-                        self.fail_watch(&action.channel_id,&format!("No se pudo representar esta pantalla. El audio continúa; puedes reintentar. {error}")).await?;
+                        self.fail_watch(&action.channel_id,&format!("No se pudo representar esta pantalla. El audio continúa. {error}")).await?;
                     }
                     return Ok(());
                 }
                 if meta.get("receiver").is_some() && action.id!="watch-start" {
-                    self.receiver_failed(&format!("{error} El audio de la llamada continúa; vuelve a abrir la pantalla para reintentar.")).await?;
+                    self.receiver_failed(&format!("{error} El audio de la llamada continúa.")).await?;
                     return Ok(());
                 }
                 if meta.get("receiver").is_some() && action.id=="watch-start" {
                     if self.voice_lifecycle.watches.get(&action.channel_id).is_some_and(|watch|watch["attempt"].as_u64()==action.text.parse::<u64>().ok()) {
-                        self.fail_watch(&action.channel_id,&format!("{error} El audio de la llamada continúa; puedes reintentar esta pantalla.")).await?;
+                        self.fail_watch(&action.channel_id,&format!("{error} El audio de la llamada continúa.")).await?;
                     }
                     return Ok(());
                 }
@@ -1455,6 +1534,7 @@ impl Controller {
                     .chain(self.state.call_videos.iter().filter(|video|!video.local).map(|video|video.user_id.clone()))
                     .chain(self.voice_lifecycle.view_intents.values().map(|view|view.owner.clone()))
                     .filter(|id|id!=&me&&!present.contains(id)&&parsing::valid_id(id)).collect::<HashSet<_>>();
+                for owner in &removed {self.end_screen_publication(&self.stream_key_for(owner),true).await?;}
                 self.voice_lifecycle.membership.complete=true;
                 for owner in &removed {self.voice_lifecycle.membership.leave(owner);}
                 for owner in present {self.voice_lifecycle.membership.join(owner);}
@@ -1465,6 +1545,14 @@ impl Controller {
                 self.voice_lifecycle.view_intents.retain(|_,view|!removed.contains(&view.owner));
                 let watches=self.voice_lifecycle.watches.iter().filter(|(_,watch)|removed.contains(&s(watch,"owner"))).map(|(key,_)|key.clone()).collect::<Vec<_>>();
                 for key in watches {self.stop_watch(&key).await?;}
+            }
+            if let Some(states)=value["voice_states"].as_array() {
+                for state in states {
+                    let owner=s(state,"user_id");if owner==self.me()||!parsing::valid_id(&owner){continue;}
+                    let key=self.stream_key_for(&owner);
+                    if state["self_stream"]==false {self.end_screen_publication(&key,false).await?;}
+                    else if state["self_stream"]==true {let fresh=self.call_people.get(&owner).is_none_or(|p|!p.screen_sharing);self.track_screen_offer(&key,"",fresh);}
+                }
             }
             if let Some(call) = self
                 .state
@@ -1502,6 +1590,7 @@ impl Controller {
             self.resume_pending_views().await?;
         }
         if kind == "CALL_DELETE" {
+            if !channel.is_empty()&&channel==self.voice_channel {self.stop_voice_internal(false).await;self.status("La llamada finalizó.");return Ok(());}
             self.voice_lifecycle.view_intents.retain(|_,view|view.channel!=channel);
             self.voice_lifecycle
                 .pending_views
@@ -1528,6 +1617,14 @@ impl Controller {
         self.stop_voice_internal(true).await;
     }
     async fn stop_voice_internal(&mut self, leave: bool) {
+        self.cancel_voice_transport_recovery();
+        let share_request=self.voice_lifecycle.share_request.take();
+        let watch_requests=self.voice_lifecycle.watch_requests.values().map(|(_,barrier)|barrier.clone()).collect::<Vec<_>>();
+        self.voice_lifecycle.selected_camera.clear();self.voice_lifecycle.selected_share=None;
+        if let Some((scope,capture))=self.voice_lifecycle.input_capture.take(){crate::diagnostics::end_voice_capture(scope,capture);}
+        self.cancel_screen_recovery();
+        self.voice_lifecycle.sources.clear();
+        self.voice_lifecycle.share_closing=None;
         let mut opening_media = None;
         let departed_channel = self.voice_channel.clone();
         self.local_call_departure(&departed_channel);
@@ -1541,6 +1638,7 @@ impl Controller {
         self.state.call_videos.clear();
         self.voice_lifecycle.video_sessions.clear();
         self.voice_lifecycle.watches.clear();
+        self.voice_lifecycle.watch_requests.clear();
         self.voice_lifecycle.watch_stops.clear();
         self.voice_lifecycle.stream_identities.clear();
         self.voice_lifecycle.stream_viewers.clear();
@@ -1639,10 +1737,11 @@ impl Controller {
             let gateway=self.gateway.clone();
             let mute=self.state.self_mute||self.state.self_deaf;let deaf=self.state.self_deaf;
             let mut done=UiAction::new("__voice-leave");done.extra=token.to_string();
-            self.launch(done,None,async move {
+            self.launch_owned_close(done,async move {
                 let local=match closing_media {Some(media)=>media.await_closed().await,None=>Ok(())};
                 if !signal_leave {return Ok(json!({"localClosed":local.is_ok(),"localError":local.err(),"written":true}));}
                 let Some(gateway)=gateway else {return Ok(json!({"localClosed":local.is_ok(),"error":"Gateway no disponible para confirmar la salida."}));};
+                for mut barrier in watch_requests.into_iter().chain(share_request){loop {let complete=*barrier.borrow_and_update();if complete||barrier.changed().await.is_err(){break;}}}
                 // Each step awaits actual writer completion. Leaving membership
                 // is mandatory even if removing the publication was rejected.
                 let stream_error=if !stream.is_empty() {gateway.send_voice_release(GatewayCommand::StreamDelete {stream_key:stream}).await.err().map(|error|error.to_string())}else{None};
@@ -1658,7 +1757,9 @@ impl Controller {
         previous.local_closed=value["localClosed"]==true;
         if previous.local_closed {self.voice_lifecycle.closing_host=None;}
         let acknowledged=previous.acknowledged;
-        if !previous.local_closed {self.report_voice_error("No se confirmó el cierre del motor de audio anterior. Se mantiene bloqueada la apertura de otro micrófono.");}
+        let local_closed=previous.local_closed;
+        self.complete_voice_transport_close(local_closed);
+        if !local_closed {self.report_voice_error("No se confirmó el cierre del motor de audio anterior. Se mantiene bloqueada la apertura de otro micrófono.");}
         else if acknowledged {self.finish_voice_departure()?;}
         else if value["written"]!=true {self.report_voice_error("El audio local está cerrado; Discord no confirmó la salida. No se repetirá automáticamente.");}
         Ok(())
@@ -1666,12 +1767,19 @@ impl Controller {
     /// Session cancellation retires its remote leave task, but the microphone
     /// owner must still finish before a different account may acquire audio.
     pub(super) async fn retire_session_voice(&mut self) {
+        let receiver_closed=match self.voice_lifecycle.receiver_closing.as_ref() {Some(receiver)=>receiver.await_closed().await.is_ok(),None=>true};
+        if receiver_closed {self.voice_lifecycle.receiver_closing=None;if let Some((_,permit))=self.voice_lifecycle.retiring_view.take(){permit.finish(false);}}
+        let receiver_closing=self.voice_lifecycle.receiver_closing.take();let retiring_view=self.voice_lifecycle.retiring_view.take();
         let closed=match self.voice_lifecycle.closing_host.take() {
             Some(media)=>{media.close();match media.await_closed().await {Ok(())=>true,Err(_)=>{self.voice_lifecycle.closing_host=Some(media);false}}},None=>true,
         };
+        self.complete_voice_transport_close(closed);
+        let transport_recovery=self.voice_lifecycle.transport_recovery.take();
         let closing_host=self.voice_lifecycle.closing_host.take();
         let next=self.voice_lifecycle.leave_sequence.wrapping_add(1).max(1);
         self.voice_lifecycle=VoiceLifecycle::default();
+        if transport_recovery.as_ref().is_some_and(|r|r.pending()){self.voice_lifecycle.transport_recovery=transport_recovery;}
+        if !receiver_closed {self.voice_lifecycle.receiver_closing=receiver_closing;self.voice_lifecycle.retiring_view=retiring_view;}
         if !closed {
             self.voice_lifecycle.closing_host=closing_host;
             self.voice_lifecycle.leave_sequence=next;
@@ -2120,6 +2228,7 @@ impl Controller {
         Ok(())
     }
     pub(super) async fn media_action(&mut self, action: &UiAction) -> Result<bool, String> {
+        if self.input_diagnostic_action(action)?{return Ok(true);}
         match action.kind.as_str() {
             "preview-camera"
             | "start-camera-preview"
@@ -2293,10 +2402,11 @@ impl Controller {
                 if self.voice_lifecycle.watch_stops.len()>=256&&!self.voice_lifecycle.watch_stops.contains_key(&key) {
                     return Err("Hay demasiados cierres de pantalla pendientes de confirmación. Puedes reintentar esta pantalla cuando Discord los confirme.".into());
                 }
-                self.voice_lifecycle.watch_stops.entry(key.clone()).or_insert(WatchStop {attempt:0,written:true,pending:0});
+                self.voice_lifecycle.watch_stops.entry(key.clone()).or_insert(WatchStop {attempt:0,written:true,pending:0,local_closed:true,write_failed:false});
                 self.voice_lifecycle.watch_attempt += 1;
                 let identity=self.voice_lifecycle.stream_identities.get(&key).cloned().unwrap_or_default();
-                self.voice_lifecycle.watches.insert(key.clone(),json!({"owner":owner,"started":false,"requested":false,"attempt":self.voice_lifecycle.watch_attempt,"server":identity.server,"channel":identity.channel,"phase":"stream-server"}));
+                let publication=self.voice_lifecycle.sources.revision(&key);
+                self.voice_lifecycle.watches.insert(key.clone(),json!({"owner":owner,"started":false,"requested":false,"attempt":self.voice_lifecycle.watch_attempt,"server":identity.server,"channel":identity.channel,"phase":"stream-server","publication":publication}));
                 self.state
                     .call_videos
                     .retain(|video| video.stream_key != key);
@@ -2530,6 +2640,7 @@ impl Controller {
             }
             "toggle-camera" => {
                 if self.state.camera_enabled || self.state.camera_preparing {
+                    self.voice_lifecycle.selected_camera.clear();
                     self.voice_lifecycle.pending_camera = None;
                     self.stop_local_call_preview(Some("camera"))?;
                     let key=format!("{}:{}",self.voice_channel,self.me());
@@ -2564,6 +2675,7 @@ impl Controller {
                     return Err("Selecciona una cámara disponible.".into());
                 }
                 if !self.state.voice_encryption_ready {
+                    self.voice_lifecycle.selected_camera=action.id.clone();
                     self.voice_lifecycle.camera_attempt += 1;
                     self.voice_lifecycle.pending_camera = Some((action.id.clone(), Instant::now()));
                     self.state.camera_preparing = true;
@@ -2583,6 +2695,7 @@ impl Controller {
                     return Err("La cámara todavía se está preparando.".into());
                 }
                 self.voice_lifecycle.camera_attempt += 1;
+                self.voice_lifecycle.selected_camera=action.id.clone();
                 self.state.camera_preparing = true;
                 self.refresh_call();
                 self.launch_media(
@@ -2598,6 +2711,7 @@ impl Controller {
                     || self.state.screen_preparing
                     || action.kind == "stop-share"
                 {
+                    self.voice_lifecycle.selected_share=None;
                     self.stop_share().await?;
                 } else {
                     self.require_voice_video()?;
@@ -2609,6 +2723,7 @@ impl Controller {
             }
             "start-share" => {
                 self.require_voice_video()?;
+                if self.voice_lifecycle.share_closing.is_some(){return Err("Espera la confirmación del cierre de la pantalla anterior.".into());}
                 if self.voice_channel.is_empty() {
                     return Err("La llamada terminó. No se compartió la pantalla.".into());
                 }
@@ -2626,7 +2741,16 @@ impl Controller {
                 {
                     return Err("Selecciona una fuente y calidad disponibles.".into());
                 }
+                if !self.stream_key.is_empty() {
+                    self.stop_share().await?;
+                    self.voice_lifecycle.pending_share=Some((action.clone(),Instant::now()));
+                    self.voice_lifecycle.selected_share=Some(action.clone());
+                    self.state.screen_preparing=true;
+                    self.status("Cerrando la publicación anterior antes de cambiar la fuente de pantalla.");
+                    return Ok(true);
+                }
                 if !self.state.voice_encryption_ready {
+                    self.voice_lifecycle.selected_share=Some(action.clone());
                     self.voice_lifecycle.share_attempt += 1;
                     self.voice_lifecycle.pending_share = Some((action.clone(), Instant::now()));
                     self.state.screen_preparing = true;
@@ -2637,6 +2761,7 @@ impl Controller {
                     return Ok(true);
                 }
                 self.voice_lifecycle.share_attempt += 1;
+                self.voice_lifecycle.selected_share=Some(action.clone());
                 self.voice_lifecycle.native_share = None;
                 self.voice_lifecycle.early_share = None;
                 self.stream_source = action.id.clone();
@@ -2649,13 +2774,15 @@ impl Controller {
                 self.state.screen_preparing = true;
                 self.refresh_call();
                 let gateway = self.gateway.clone().ok_or("Gateway no disponible.")?;
-                gateway
-                    .send(GatewayCommand::StreamCreate {
-                        guild_id: (!self.voice_guild.is_empty()).then(|| self.voice_guild.clone()),
-                        channel_id: self.voice_channel.clone(),
-                    })
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let guild_id=(!self.voice_guild.is_empty()).then(||self.voice_guild.clone());let channel_id=self.voice_channel.clone();
+                let (finished,barrier)=tokio::sync::watch::channel(false);self.voice_lifecycle.share_request=Some(barrier);
+                let mut done=UiAction::id("__voice-data","share-gateway-start");done.extra=self.meta().to_string();
+                let cancelled=self.session_cancel.clone();
+                self.launch_owned_close(done,async move {
+                    if cancelled.is_cancelled(){let _=finished.send(true);return Ok(wrapped(Err("La sesión cambió antes de solicitar pantalla.".into())));}
+                    let result=gateway.send(GatewayCommand::StreamCreate {guild_id,channel_id}).await.map(|_|json!({})).map_err(|e|e.to_string());
+                    let _=finished.send(true);Ok(wrapped(result))
+                });
             }
             "set-volume" => {
                 let args: Value =
@@ -2750,6 +2877,15 @@ impl Controller {
                     // Only explicit channel:null removes current membership.
                     self.voice_channel.clone()
                 } else { s(value, "channel_id") };
+                if id!=self.me()&&!self.voice_channel.is_empty()&&parsing::valid_id(&id) {
+                    let key=self.stream_key_for(&id);
+                    let left=value.get("channel_id").is_some()&&channel!=self.voice_channel;
+                    if left||value.get("self_stream")==Some(&Value::Bool(false)){self.end_screen_publication(&key,left).await?;}
+                    else if value.get("self_stream")==Some(&Value::Bool(true)) {
+                        let new=self.call_people.get(&id).is_none_or(|p|!p.screen_sharing);
+                        self.track_screen_offer(&key,"",new);
+                    }
+                }
                 if id!=self.me() && parsing::valid_id(&id) && !self.voice_channel.is_empty()
                     && value.get("channel_id").is_some() {
                     if channel==self.voice_channel {self.voice_lifecycle.membership.join(&id);}
@@ -2854,6 +2990,9 @@ impl Controller {
                 self.remember_stream_identity(value);
                 self.observe_stream_viewers(value);
                 let key=s(value,"stream_key");
+                if let Some((channel,_))=super::incoming::incoming_stream_identity(&key)&&channel==self.voice_channel {
+                    self.track_screen_offer(&key,&s(value,"rtc_server_id"),false);
+                }
                 if let Some(watch)=self.voice_lifecycle.watches.get_mut(&key) {
                     if let Some(identity)=self.voice_lifecycle.stream_identities.get(&key) {
                         watch["server"]=json!(identity.server);watch["channel"]=json!(identity.channel);
@@ -2875,6 +3014,10 @@ impl Controller {
                 self.remember_stream_identity(value);
                 self.observe_stream_viewers(value);
                 let key = s(value, "stream_key");
+                if let Some((channel,_))=super::incoming::incoming_stream_identity(&key)&&channel==self.voice_channel {
+                    let fresh=!self.voice_lifecycle.watch_stops.get(&key).is_some_and(|stop|stop.pending>0)&&!self.voice_lifecycle.watches.contains_key(&key);
+                    self.track_screen_offer(&key,&s(value,"rtc_server_id"),fresh);
+                }
                 if let Some((channel, owner)) = super::incoming::incoming_stream_identity(&key) {
                     if channel == self.voice_channel {
                         if let Some(person) = self.call_people.get_mut(&owner) {
@@ -2919,24 +3062,35 @@ impl Controller {
             }
             "STREAM_DELETE" => {
                 let key = s(value, "stream_key");
+                if self.acknowledge_share_close(&key){return Ok(());}
                 let expected=value["reason"]=="user_requested"&&self.voice_lifecycle.watch_stops.get(&key).is_some_and(|stop|stop.pending>0);
                 if expected {
                     let stop=self.voice_lifecycle.watch_stops.get_mut(&key).unwrap();stop.pending-=1;
-                    if stop.pending==0 {self.voice_lifecycle.watch_stops.remove(&key);}
+                    if stop.pending==0&&stop.written&&stop.local_closed&&!stop.write_failed {self.voice_lifecycle.watch_stops.remove(&key);}
                     // A viewer's STREAM_STOP receives the same dispatch as a
                     // publisher. Its delayed reply cannot cancel a fresh watch.
                     if self.voice_lifecycle.watches.get(&key).is_some_and(|watch|watch["requested"]!=true) {Box::pin(self.request_watch(&key)).await?;}
                 } else if self.voice_lifecycle.watches.contains_key(&key) {
                     self.voice_lifecycle.watches.get_mut(&key).unwrap()["requested"]=json!(false);
                     match value["reason"].as_str() {
-                        Some("stream_full")=>self.fail_watch(&key,"La transmisión alcanzó su límite de espectadores. Puedes volver a intentarlo.").await?,
-                        Some("unauthorized")=>self.fail_watch(&key,"Discord no autorizó esta suscripción de pantalla.").await?,
+                        Some("stream_full")=>self.block_screen_view(&key,"La transmisión alcanzó su límite de espectadores.").await?,
+                        Some("unauthorized")=>self.block_screen_view(&key,"Discord no autorizó esta suscripción de pantalla.").await?,
                         _=>self.finish_watch(&key).await?,
                     }
+                } else if !expected && let Some((channel,owner))=super::incoming::incoming_stream_identity(&key)
+                    &&channel==self.voice_channel&&owner!=self.me() {
+                    if self.voice_lifecycle.sources.revision(&key).is_none(){self.track_screen_offer(&key,"",false);}
+                    self.block_screen_view(&key,"La publicación de pantalla ya no está confirmada como disponible.").await?;
                 }
                 // The publisher's VOICE_STATE self_stream, not a viewer's
                 // subscription teardown, controls whether its screen is offered.
-                if s(value, "stream_key") == self.stream_key {
+                if s(value, "stream_key") == self.stream_key && value["reason"]!="user_requested" {
+                    // Keep a fixed, classified cause before local cleanup.
+                    // An arbitrary dispatch payload is neither a diagnostic
+                    // message nor proof that the remote publisher ended.
+                    let cause=ShareDeleteCause::parse(&value["reason"]);
+                    self.report_voice_error(cause.message());
+                    self.voice_lifecycle.selected_share=None;
                     self.stop_share().await?;
                 }
             }
@@ -2949,6 +3103,7 @@ impl Controller {
         Ok(())
     }
     async fn try_voice(&mut self) -> Result<(), String> {
+        if !self.voice_recovery_allows_transport(){return Ok(());}
         if self.voice_started
             || self.voice_session.is_empty()
             || self.voice_endpoint.is_empty()
@@ -3040,18 +3195,18 @@ impl Controller {
     }
     fn watch_timeout_message(watch:&Value)->&'static str {
         match watch["phase"].as_str().unwrap_or("") {
-            "stream-stop"=>"Discord no confirmó el cierre de la suscripción anterior. Puedes reintentar sin salir de voz.",
-            "stream-identity"=>"Discord no entregó la identidad RTC de esta pantalla. El audio continúa; puedes reintentar.",
-            "stream-server"=>"Discord no entregó el servidor de esta transmisión. El audio continúa; puedes reintentar.",
-            "receiver"=>"El receptor de pantalla no terminó de abrirse. El audio continúa; puedes reintentar.",
-            "websocket-open"|"transport"=>"No se completó la conexión al servidor de pantalla. El audio continúa; puedes reintentar.",
-            "ready-received"|"native-connection-before"|"native-connection-created"|"udp-ready"|"transport-configured"|"encryption-modes-ready"=>"No se completó la negociación de transporte del vídeo. El audio continúa; puedes reintentar.",
-            "session-description"|"mls-epoch"|"mls-key-package-before"|"mls-key-package-created"|"mls-state-updated"|"waiting-peer"=>"No se confirmó el cifrado DAVE de esta pantalla. El audio continúa; puedes reintentar.",
-            "connected"=>"El receptor se conectó, pero no llegó la fuente de vídeo de la transmisión. El audio continúa; puedes reintentar.",
-            "video-subscription-requested"=>"Se solicitó el vídeo al servidor, pero no llegó su primer fotograma. El audio continúa; puedes reintentar.",
-            "native-source"=>"Se registró la fuente de pantalla, pero no comenzó la entrega de vídeo. El audio continúa; puedes reintentar.",
-            "first-frame"=>"Se instaló el receptor de fotogramas, pero el motor nativo no entregó el primero. El audio continúa; puedes reintentar.",
-            _=>"La transmisión no respondió. El audio continúa; puedes volver a intentarlo.",
+            "stream-stop"=>"Discord no confirmó el cierre de la suscripción anterior. El audio continúa.",
+            "stream-identity"=>"Discord no entregó la identidad RTC de esta pantalla. El audio continúa.",
+            "stream-server"=>"Discord no entregó el servidor de esta transmisión. El audio continúa.",
+            "receiver"=>"El receptor de pantalla no terminó de abrirse. El audio continúa.",
+            "websocket-open"|"transport"=>"No se completó la conexión al servidor de pantalla. El audio continúa.",
+            "ready-received"|"native-connection-before"|"native-connection-created"|"udp-ready"|"transport-configured"|"encryption-modes-ready"=>"No se completó la negociación de transporte del vídeo. El audio continúa.",
+            "session-description"|"mls-epoch"|"mls-key-package-before"|"mls-key-package-created"|"mls-state-updated"|"waiting-peer"=>"No se confirmó el cifrado DAVE de esta pantalla. El audio continúa.",
+            "connected"=>"El receptor se conectó, pero no llegó la fuente de vídeo de la transmisión. El audio continúa.",
+            "video-subscription-requested"=>"Se solicitó el vídeo al servidor, pero no llegó su primer fotograma. El audio continúa.",
+            "native-source"=>"Se registró la fuente de pantalla, pero no comenzó la entrega de vídeo. El audio continúa.",
+            "first-frame"=>"Se instaló el receptor de fotogramas, pero el motor nativo no entregó el primero. El audio continúa.",
+            _=>"La transmisión no respondió. El audio continúa.",
         }
     }
     async fn try_share(&mut self) -> Result<(), String> {
@@ -3077,8 +3232,8 @@ impl Controller {
         Ok(())
     }
     async fn request_watch(&mut self,key:&str)->Result<(),String> {
-        if !self.voice_lifecycle.watches.get(key).is_some_and(|watch|watch["requested"]!=true) {return Ok(());}
-        if self.voice_lifecycle.watch_stops.get(key).is_some_and(|stop|!stop.written) {
+        if !self.voice_lifecycle.watches.get(key).is_some_and(|watch|watch["requested"]!=true&&watch["requestPending"]!=true) {return Ok(());}
+        if self.voice_lifecycle.watch_stops.get(key).is_some_and(|stop|!stop.written||stop.pending>0||!stop.local_closed||stop.write_failed) {
             self.set_watch_phase(key,"stream-stop");return Ok(());
         }
         // Replies received while the prior subscription was closing are not
@@ -3088,17 +3243,22 @@ impl Controller {
             if let Some(Value::String(token))=watch.get_mut("token") {token.zeroize();}
             watch["endpoint"]=json!("");watch["token"]=json!("");
         }
-        let requested=match self.gateway.as_ref() {
-            Some(gateway)=>gateway.send(GatewayCommand::StreamWatch {stream_key:key.into()}).await.map_err(|error|error.to_string()),
-            None=>Err("Gateway no disponible.".into()),
-        };
-        if let Err(error)=requested {
-            self.fail_watch(key,&format!("No se pudo solicitar esta transmisión. Puedes volver a intentarlo. {error}")).await?;
-            return Ok(());
-        }
-        if let Some(watch)=self.voice_lifecycle.watches.get_mut(key) {watch["requested"]=json!(true);}
+        let Some(gateway)=self.gateway.clone() else {return self.block_screen_view(key,"Gateway no disponible para solicitar la pantalla.").await;};
+        let attempt=self.voice_lifecycle.watches[key]["attempt"].as_u64().unwrap_or(0);
+        let (finished,barrier)=tokio::sync::watch::channel(false);
+        self.voice_lifecycle.watch_requests.insert(key.into(),(attempt,barrier));
+        self.voice_lifecycle.watches.get_mut(key).unwrap()["requestPending"]=json!(true);
+        let mut done=UiAction::id("__voice-data","watch-gateway-start");done.channel_id=key.into();done.text=attempt.to_string();done.extra=self.meta().to_string();
+        let stream_key=key.to_owned();
+        let cancelled=self.session_cancel.clone();
+        // Retain the real writer completion even if its UI intent disappears;
+        // mandatory STREAM_DELETE must remain ordered after this admission.
+        self.launch_owned_close(done,async move {
+            if cancelled.is_cancelled(){let _=finished.send(true);return Ok(wrapped(Err("La sesión cambió antes de solicitar vídeo.".into())));}
+            let result=gateway.send(GatewayCommand::StreamWatch {stream_key}).await.map(|_|json!({})).map_err(|e|e.to_string());
+            let _=finished.send(true);Ok(wrapped(result))
+        });
         self.set_watch_phase(key,"stream-server");
-        self.wait_watch_frame(key);
         Ok(())
     }
     async fn try_watch(&mut self, key: &str) -> Result<(), String> {
@@ -3132,22 +3292,24 @@ impl Controller {
     async fn stop_watch(&mut self, key: &str) -> Result<(), String> {
         let removed=self.voice_lifecycle.watches.remove(key);
         let existed=removed.is_some();
-        let subscribed=removed.as_ref().is_some_and(|watch|watch["requested"]==true);
+        let start_barrier=self.voice_lifecycle.watch_requests.get(key).map(|(_,receiver)|receiver.clone());
+        let subscribed=removed.as_ref().is_some_and(|watch|watch["requested"]==true||watch["requestPending"]==true);
+        let local_closed=!existed||self.voice_lifecycle.receiver.is_none()&&self.voice_lifecycle.receiver_closing.is_none();
         self.state
             .call_videos
             .retain(|video| video.stream_key != key);
         self.voice_lifecycle.video_sessions.retain(|id,_|self.state.call_videos.iter().any(|video|video.id==*id));
         self.voice_lifecycle.watch_attempt += 1;
+        if existed {
+            let stop=self.voice_lifecycle.watch_stops.entry(key.into()).or_insert(WatchStop {attempt:self.voice_lifecycle.watch_attempt,written:!subscribed,pending:0,local_closed,write_failed:false});
+            stop.attempt=self.voice_lifecycle.watch_attempt;stop.local_closed=local_closed;
+        }
         if self.voice_lifecycle.watches.is_empty() {
             self.voice_lifecycle.early_watch_errors.clear();
             self.voice_lifecycle.receiver_epoch=self.voice_lifecycle.receiver_epoch.wrapping_add(1);
             self.voice_lifecycle.receiver_opening=None;
             if let Some(receiver)=self.voice_lifecycle.receiver.take() {
-                receiver.clear_video_frames();let key=key.to_owned();let token=self.voice_lifecycle.watch_attempt;
-                tokio::spawn(async move {
-                    if existed {let _=tokio::time::timeout(Duration::from_secs(2),receiver.command("stopWatchStream",json!({"streamKey":key,"token":token}))).await;}
-                    let _=tokio::time::timeout(Duration::from_secs(1),receiver.command("shutdown",json!({}))).await;receiver.close();
-                });
+                self.close_screen_receiver_after(receiver,existed.then(||(key.to_owned(),self.voice_lifecycle.watch_attempt)));
             }
         } else if existed && self.voice_lifecycle.receiver.is_some() {
             self.receiver_command(
@@ -3156,60 +3318,33 @@ impl Controller {
                 json!({"streamKey":key,"token":self.voice_lifecycle.watch_attempt}),
             )?;
         }
-        if !subscribed&&self.voice_lifecycle.watch_stops.get(key).is_some_and(|stop|stop.pending==0) {self.voice_lifecycle.watch_stops.remove(key);}
+        if !subscribed&&self.voice_lifecycle.watch_stops.get(key).is_some_and(|stop|stop.pending==0&&stop.local_closed) {self.voice_lifecycle.watch_stops.remove(key);}
         if subscribed && let Some(gateway)=self.gateway.clone() {
             let attempt=self.voice_lifecycle.watch_attempt;
             // One bounded counter retains all outstanding USER_REQUESTED
             // replies; a second close cannot overwrite the first reply's guard.
-            let stop=self.voice_lifecycle.watch_stops.entry(key.into()).or_insert(WatchStop {attempt,written:false,pending:0});
+            let stop=self.voice_lifecycle.watch_stops.entry(key.into()).or_insert(WatchStop {attempt,written:false,pending:0,local_closed,write_failed:false});
             stop.attempt=attempt;stop.written=false;stop.pending=stop.pending.saturating_add(1);
             let mut done=UiAction::id("__voice-data","watch-gateway-stop");done.channel_id=key.into();done.text=attempt.to_string();done.extra=self.meta().to_string();
             let key=key.to_owned();
             // Original GatewayConnectionStore STREAM_STOP calls streamDelete
             // for viewers too (web.4d4b2f75fdea5470.js bytes 4951222/4955300).
-            self.launch(done,None,async move {Ok(wrapped(gateway.send(GatewayCommand::StreamDelete {stream_key:key}).await.map(|_|json!({})).map_err(|error|error.to_string())))});
+            self.launch_owned_close(done,async move {
+                if let Some(mut barrier)=start_barrier {loop {let complete=*barrier.borrow_and_update();if complete||barrier.changed().await.is_err(){break;}}}
+                Ok(wrapped(gateway.send_voice_release(GatewayCommand::StreamDelete {stream_key:key}).await.map(|_|json!({})).map_err(|error|error.to_string())))
+            });
         }
         self.publish();
         Ok(())
     }
     async fn fail_watch(&mut self, key: &str, message: &str) -> Result<(), String> {
-        if let Some((channel,owner))=super::incoming::incoming_stream_identity(key)
-            && let Some(intent)=self.voice_lifecycle.view_intents.get_mut(&format!("{channel}:{owner}"))
-            && intent.kind=="screen" {intent.error=parsing::limited(message,256);}
-        let placeholder = self
-            .state
-            .call_videos
-            .iter()
-            .find(|video| video.stream_key == key)
-            .cloned();
-        self.stop_watch(key).await?;
-        if let Some(mut video) = placeholder {
-            video.active = false;
-            video.status = "error".into();
-            video.error = message.into();
-            self.state.call_videos.push(video);
-        }
-        self.status(message);
-        self.refresh_call();
-        Ok(())
+        self.recover_screen_view(key,message).await
     }
     async fn finish_watch(&mut self, key: &str) -> Result<(), String> {
-        // A normal terminal subscription is neither a decoder failure nor a
-        // publisher announcement. Remove only this viewer's resources. The
-        // publisher's VOICE_STATE controls its independently offered buttons.
-        if let Some(watch)=self.voice_lifecycle.watches.get_mut(key) {
-            watch["requested"]=json!(false);
-            let owner=s(watch,"owner");
-            self.voice_lifecycle.pending_views.retain(|_,view|view.owner!=owner||view.kind!="screen");
-            if let Some(intent)=self.voice_lifecycle.view_intents.get_mut(&format!("{}:{owner}",self.voice_channel))
-                && intent.kind=="screen" {intent.error="La visualización terminó. Puedes volver a abrirla sin salir de voz.".into();}
-        }
-        self.stop_watch(key).await?;
-        self.refresh_call();
-        self.publish();
-        Ok(())
+        self.recover_screen_view(key,"La suscripción de pantalla terminó sin una retirada confirmada del emisor.").await
     }
     async fn stop_share(&mut self) -> Result<(), String> {
+        if self.voice_lifecycle.share_closing.is_some(){return Ok(());}
         self.stop_local_call_preview(Some("screen"))?;
         self.voice_lifecycle.pending_share = None;
         let view_key=format!("{}:{}",self.voice_channel,self.me());
@@ -3230,25 +3365,31 @@ impl Controller {
         self.state.screen_sharing = false;
         self.state.screen_paused = false;
         self.state.screen_preparing = false;
-        if let Some(media) = self.media.clone() {
-            let token = self.voice_lifecycle.share_attempt;
-            tokio::spawn(async move {
-                let _ = media.command("stopShare", json!({"token":token})).await;
-            });
-        }
-        if !key.is_empty() {
-            if let Some(g) = &self.gateway {
-                let _ = g
-                    .send(GatewayCommand::StreamDelete { stream_key: key })
-                    .await;
-            }
-        }
+        let media=self.media.clone();let gateway=self.gateway.clone();let request=self.voice_lifecycle.share_request.take();
+        let token=self.voice_lifecycle.share_attempt;
+        self.voice_lifecycle.share_closing=Some(source_lifecycle::ShareClose {key:key.clone(),token,local_closed:media.is_none(),written:key.is_empty(),acknowledged:key.is_empty(),failed:false});
+        let mut done=UiAction::id("__source-close","share");done.text=token.to_string();
+        let closing_key=key.clone();
+        self.launch_owned_close(done,async move {
+            let local=match media {Some(media)=>media.command("stopShare",json!({"token":token})).await,None=>Ok(json!({}))};
+            if let Some(mut barrier)=request {loop {let complete=*barrier.borrow_and_update();if complete||barrier.changed().await.is_err(){break;}}}
+            let remote=if closing_key.is_empty(){Ok(())}else if let Some(gateway)=gateway {gateway.send_voice_release(GatewayCommand::StreamDelete {stream_key:closing_key}).await.map_err(|e|e.to_string())}else{Err("Gateway no disponible para el cierre de pantalla.".into())};
+            Ok(json!({"localClosed":local.is_ok(),"written":remote.is_ok()}))
+        });
+        if !key.is_empty(){self.end_screen_publication(&key,false).await?;}
         self.refresh_call();
+        self.flush_snapshot(true);
         self.sync_receiver_settings();
         Ok(())
     }
     pub(super) async fn media_event(&mut self, value: Value) -> Result<(), String> {
+        if self.stale_voice_transport_event(&value){return Ok(());}
         match s(&value, "event").as_str() {
+            "voiceDiagnostic"=>{
+                if value["record"]["kind"]=="end"&&self.voice_lifecycle.input_capture.is_some_and(|(_,capture)|value["record"]["capture"].as_u64()==Some(capture)){
+                    if let Some((scope,capture))=self.voice_lifecycle.input_capture.take(){crate::diagnostics::end_voice_capture(scope,capture);}
+                }
+            }
             "receiver-host"=>{
                 if value["epoch"].as_u64()!=Some(self.voice_lifecycle.receiver_epoch) {return Ok(());}
                 let event=value["value"].clone();let kind=s(&event,"event");
@@ -3278,7 +3419,7 @@ impl Controller {
                         (stream.is_empty()||stream==key.as_str())&&(user.is_empty()||s(watch,"owner")==user)
                             && (kind!="videoError"||event["mediaSession"].as_u64().is_some_and(|session|watch["nativeSession"].as_u64()==Some(session)))
                     ).map(|(key,_)|key.clone()).collect::<Vec<_>>();
-                    let message=if s(&event,"message").is_empty() {"El vídeo no pudo abrirse. El audio continúa; puedes reintentar la pantalla.".to_owned()}else{s(&event,"message")};
+                    let message=if s(&event,"message").is_empty() {"El vídeo no pudo abrirse. El audio continúa.".to_owned()}else{s(&event,"message")};
                     if keys.is_empty()&&kind=="videoError"
                         && let Some(session)=event["mediaSession"].as_u64().filter(|session|*session>0)
                         && self.voice_lifecycle.early_watch_errors.len()<4
@@ -3329,6 +3470,7 @@ impl Controller {
                     if status=="waiting" {self.set_watch_phase(&key,"native-source");}
                     else if status=="loading" {self.set_watch_phase(&key,"first-frame");}
                     else if status=="playing" {
+                        self.screen_recovery_succeeded(&key);
                         let watch=self.voice_lifecycle.watches.get_mut(&key).unwrap();watch["phase"]=json!("frames-received");watch["waitEpoch"]=json!(watch["waitEpoch"].as_u64().unwrap_or(0).wrapping_add(1));
                     }
                 }
@@ -3513,6 +3655,7 @@ impl Controller {
                     return Ok(());
                 }
                 let state = s(&value, "state");
+                if self.handle_voice_transport_event(&value)? {return Ok(());}
                 apply_readiness(&mut self.state, &value);
                 if self.state.voice_encryption_ready {
                     self.voice_lifecycle.join_wait=None;self.state.voice_error.clear();
@@ -3551,6 +3694,10 @@ impl Controller {
                     return Ok(());
                 }
                 let state = s(&value, "state");
+                if value["recovering"]==true {
+                    self.state.screen_sharing=false;self.state.screen_paused=false;self.state.screen_preparing=self.voice_lifecycle.selected_share.is_some();
+                    self.refresh_call();return Ok(());
+                }
                 let transient=matches!(state.as_str(),"connecting"|"negotiating"|"waiting-peer"|"connected");
                 if matches!(state.as_str(),"capture-requested"|"audio-attached"|"sharing"|"paused"|"started") {
                     self.state.screen_sharing=true;
@@ -3560,7 +3707,10 @@ impl Controller {
                 // already confirmed capture/publication offer.
                 self.state.screen_preparing=transient&&!self.state.screen_sharing;
                 if matches!(state.as_str(), "error" | "stopped" | "disconnected") {
+                    self.voice_lifecycle.selected_share=None;
+                    let reason=parsing::limited(value["reason"]["message"].as_str().unwrap_or("La publicación de pantalla terminó."),256);
                     self.stop_share().await?;
+                    if state!="stopped"{self.status(&format!("Pantalla interrumpida: {reason}"));}
                 }
                 self.refresh_call();
             }
@@ -3583,6 +3733,7 @@ impl Controller {
                     return Ok(());
                 }
                 let state = s(&value, "state");
+                if value["recovering"]==true {self.state.camera_enabled=false;self.state.camera_preparing=!self.voice_lifecycle.selected_camera.is_empty();self.refresh_call();return Ok(());}
                 if matches!(state.as_str(),"started"|"active") {
                     // Re-keying temporarily clears encryption readiness. It
                     // does not withdraw a camera that was already confirmed.
@@ -3760,6 +3911,7 @@ impl Controller {
         self.status(message);self.refresh_call();self.sync_receiver_settings();
     }
     fn refresh_call(&mut self) {
+        self.project_screen_availability();
         self.state.stream_volume_percent=self.media_preferences.stream_volume_percent;
         self.voice_lifecycle.video_sessions.retain(|id,_|self.state.call_videos.iter().any(|video|video.id==*id));
         self.sync_private_call_snapshot(Instant::now());
@@ -3963,6 +4115,7 @@ mod tests {
         c.act(view("screen",true,attempt)).await.unwrap();
         let watch=loop {let payload=tokio::time::timeout(Duration::from_secs(2),wire.recv()).await.unwrap().unwrap();if payload["op"]==20 {break payload;}};
         let key="guild:500:200:300";assert_eq!(watch["d"]["stream_key"],key);
+        reply_named(&mut c,&mut replies,"watch-gateway-start").await;
         c.voice_dispatch("STREAM_CREATE",&json!({"stream_key":key,"rtc_server_id":"600","rtc_channel_id":"601"})).await.unwrap();
         c.voice_dispatch("STREAM_SERVER_UPDATE",&json!({"stream_key":key,"endpoint":"offline.discord.media","token":"SYNTHETIC-NOT-REAL"})).await.unwrap();
         wait_named_calls(&receive_calls,"watchStream",1).await;
@@ -4491,6 +4644,7 @@ mod tests {
         reply(&mut c, &mut rx).await.unwrap();
         wait_calls(&calls, 2).await;
         assert!(!c.voice_lifecycle.watches.contains_key(key));
+        reply_named(&mut c,&mut rx,"receiver").await;
         info["attempt"] = json!(3);
         let count=starts.clone();let (next,_)=MediaBridge::fake_receiver(move|command,_| {if command=="watchStream" {count.fetch_add(1,std::sync::atomic::Ordering::Relaxed);}Ok(json!({}))},main.video_frames());c.voice_lifecycle.receiver=Some(next);
         c.voice_lifecycle.watches.insert(key.into(), info);
@@ -4686,6 +4840,14 @@ mod tests {
             .unwrap();
         c.complete(done.action, done.result.unwrap()).await
     }
+    async fn reply_named(c:&mut Controller,rx:&mut mpsc::UnboundedReceiver<Completed>,id:&str) {
+        tokio::time::timeout(Duration::from_secs(3),async {
+            loop {
+                let done=rx.recv().await.expect("owned operation completion");let matches=done.action.id==id;
+                c.complete(done.action,done.result.unwrap()).await.unwrap();if matches{break;}
+            }
+        }).await.unwrap();
+    }
     #[test]
     fn solo_and_peer_readiness_preserve_crypto_boundary_and_clock() {
         let mut state = AppSnapshot::default();
@@ -4853,6 +5015,33 @@ mod tests {
         wait_calls(&calls, 1).await;
         assert_eq!(*calls.lock().unwrap(), ["stopShare"]);
         assert!(!c.state.screen_preparing && !c.state.screen_sharing && c.stream_source.is_empty());
+    }
+    #[tokio::test]
+    async fn unexpected_own_stream_delete_keeps_a_safe_cause_and_only_stops_screen_capture() {
+        for (reason, detail) in [
+            (json!("stream_full"), "límite de espectadores"),
+            (json!("unauthorized"), "no autorizó"),
+            (json!("untrusted-private-payload"), "dejó de confirmar"),
+        ] {
+            let (mut c, _, mut replies)=target();share(&mut c);
+            let (bridge, calls)=MediaBridge::fake(|_,_|Ok(json!({})));
+            c.media=Some(bridge);
+            c.state.screen_sharing=true;c.state.camera_enabled=true;
+            c.voice_lifecycle.selected_share=Some(UiAction::id("start-share","window:123"));
+            c.state.call_videos.push(CallVideo {id:31,user_id:"100".into(),kind:"camera".into(),active:true,..Default::default()});
+            c.voice_dispatch("STREAM_DELETE",&json!({"stream_key":"call:200:100","reason":reason})).await.unwrap();
+            assert!(c.state.voice_error.contains(detail));
+            assert!(!c.state.voice_error.contains("untrusted-private-payload"));
+            assert!(c.state.voice_connected&&c.state.voice_encryption_ready&&c.state.camera_enabled);
+            assert_eq!(c.voice_channel,"200");assert_eq!(c.voice_attempt,7);
+            assert!(c.state.call_videos.iter().any(|video|video.id==31&&video.active));
+            assert!(!c.state.screen_sharing&&c.stream_source.is_empty());
+            assert!(c.voice_lifecycle.selected_share.is_none());
+            wait_calls(&calls,1).await;
+            assert_eq!(*calls.lock().unwrap(),["stopShare"]);
+            reply_named(&mut c,&mut replies,"share").await;
+            assert!(c.state.voice_error.contains(detail),"cleanup must preserve the original cause");
+        }
     }
     #[tokio::test]
     async fn share_loss_during_start_cleans_same_attempt() {
@@ -5302,7 +5491,7 @@ mod tests {
         assert!(c.state.voice_connected&&c.state.voice_encryption_ready);assert_eq!(c.voice_channel,"200");assert!(calls.lock().unwrap().is_empty());
     }
     #[tokio::test]
-    async fn watch_failure_keeps_retry_error_and_cancel_by_owner_only_closes_receiver() {
+    async fn watch_failure_retires_the_error_tile_and_cancel_by_owner_only_closes_receiver() {
         let (mut c, _, _) = target();
         let (bridge, voice_calls) = MediaBridge::fake(|_, _| Ok(json!({})));
         let (receiver,calls)=MediaBridge::fake_receiver(|_,_|Ok(json!({})),bridge.video_frames());
@@ -5324,8 +5513,8 @@ mod tests {
         c.media_event(json!({"event":"watchState","streamKey":key,"token":3,"state":"error","reason":{"message":"Synthetic receiver failed"}})).await.unwrap();
         wait_named_calls(&calls,"shutdown",1).await;
         assert!(!c.voice_lifecycle.watches.contains_key(key));
-        assert_eq!(c.state.call_videos[0].status, "error");
-        assert_eq!(c.state.call_videos[0].error, "Synthetic receiver failed");
+        assert!(c.state.call_videos.is_empty());
+        assert_eq!(c.state.status, "Synthetic receiver failed");
         assert!(c.state.voice_connected);
         c.media_action(&UiAction::id("stop-watch-stream", "300"))
             .await
@@ -5378,6 +5567,7 @@ mod tests {
         c.state.call_videos=vec![CallVideo{id:10,user_id:"300".into(),kind:"screen".into(),stream_key:key.into(),status:"playing".into(),active:true,..Default::default()},CallVideo{id:11,user_id:"400".into(),kind:"camera".into(),active:true,..Default::default()}];
         c.stop_watch(key).await.unwrap();
         wait_named_calls(&calls,"stopWatchStream",1).await;
+        reply_named(&mut c,&mut rx,"receiver").await;
         assert!(c.state.voice_connected&&c.state.voice_encryption_ready&&c.media.as_ref().unwrap().same_instance(&bridge));
         assert_eq!(c.voice_channel,"200");assert!(c.voice_lifecycle.watches.is_empty());
         assert_eq!(c.state.call_videos.len(),1);assert!(c.state.call_videos[0].active);
@@ -5748,6 +5938,7 @@ mod tests {
         let (main,main_calls)=MediaBridge::fake(|command,_|panic!("A receive failure touched the microphone/voice bridge: {command}"));c.media=Some(main.clone());
         let key="call:200:300";
         for cycle in 0..3 {
+            c.track_screen_offer(key,&(400+cycle).to_string(),true);c.refresh_call();
             let (receiver,calls)=MediaBridge::fake_receiver(|command,args|match command {
                 "watchStream"=>{assert!(args["selfMute"]==true&&args["streamOwnerId"]=="300");Ok(json!({"session":1}))},
                 "stopWatchStream"|"shutdown"|"configureReceiver"=>Ok(json!({})),_=>panic!("Unexpected receiver command: {command}"),
@@ -5763,11 +5954,13 @@ mod tests {
             else {
                 let failed=if cycle==1 {json!({"event":"fatal"})}else{json!({"event":"videoError","scope":"stream","userId":"300","mediaSession":1,"message":"Synthetic decoder failure"})};
                 c.media_event(json!({"event":"receiver-host","epoch":epoch,"value":failed})).await.unwrap();
-                assert!(c.state.call_videos.iter().any(|video|video.stream_key==key&&video.status=="error"));
+                assert!(!c.state.call_videos.iter().any(|video|video.stream_key==key));
+                assert!(c.call_people["300"].screen_view_unavailable);
             }
             assert!(c.state.voice_connected&&c.state.voice_encryption_ready&&c.voice_channel=="200");
             assert_eq!(c.call_people.len(),2);assert!(c.media.as_ref().unwrap().same_instance(&main));
             assert!(c.voice_lifecycle.receiver.is_none()&&c.voice_lifecycle.watches.is_empty());
+            reply_named(&mut c,&mut replies,"receiver").await;
             c.media_event(json!({"event":"receiver-host","epoch":epoch,"value":{"event":"fatal"}})).await.unwrap();
             assert!(c.state.voice_connected&&main_calls.lock().unwrap().is_empty());
         }

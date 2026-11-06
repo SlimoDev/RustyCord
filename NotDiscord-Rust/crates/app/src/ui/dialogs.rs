@@ -223,6 +223,32 @@ fn search_popup_rect(screen: egui::Rect, search: egui::Rect) -> egui::Rect {
 mod tests {
     use super::*;
     #[test]
+    fn gif_removal_pending_uses_the_paint_generation_while_the_app_snapshot_is_extracted() {
+        let (mut app,_,mut commands)=super::super::tests::harness();
+        let frame=AppSnapshot {signed_in:true,notification_generation:7,view:"chat".into(),selected_channel_id:"200".into(),
+            current_user:Some(Person {id:"100".into(),..Default::default()}),connection_phase:ConnectionPhase::Synchronized,
+            ..Default::default()};
+        app.picker_account="100".into();app.paint_scope=PaintScope::of(&frame);app.gif_favorites=GifFavorites::Ready;
+        app.state=AppSnapshot::welcome();
+        let value=PickerValue {value:"https://cdn.discordapp.com/attachments/1/2/fixture.gif".into(),..Default::default()};
+        app.set_gif_favorite(value.clone(),GifFavorite {saved:true,remote:Some(value.value.clone()),local:None});
+        let removal=commands.try_recv().unwrap();assert_eq!(removal.kind,"gif-favorite-remove");
+        assert_eq!(serde_json::from_str::<Value>(&removal.extra).unwrap()["generation"],7);
+        let ctx=app.ctx.clone();
+        let _=ctx.run(egui::RawInput::default(),|ctx| {
+            egui::CentralPanel::default().show(ctx,|ui| {
+                assert!(!app.state.signed_in);
+                let (enabled,label)=app.gif_favorite_action(&GifFavorite {saved:true,remote:Some(value.value.clone()),local:None});
+                assert_eq!((enabled,label),(false,"Actualizando favoritos…"));
+                assert!(!ui.add_enabled(enabled,egui::Button::new(label)).enabled());
+            });
+        });
+        assert!(commands.try_recv().is_err(),"painting the pending favorite cannot start another removal");
+        app.paint_scope.generation=8;
+        assert_eq!(app.gif_favorite_action(&GifFavorite {saved:true,remote:Some(value.value),local:None}),(true,"Quitar de favoritos"),
+            "a pending marker belongs to its original generation");
+    }
+    #[test]
     fn fixed_footer_uses_actual_clip_even_when_requested_space_extends_past_it() {
         let ctx = egui::Context::default();
         let _ = ctx.run(egui::RawInput {
@@ -1814,7 +1840,7 @@ impl NotDiscordUi {
     pub(super) fn gif_favorites_status(&self)->GifFavorites{self.gif_favorites}
     pub(super) fn paint_scope_suspended(&self)->bool{self.paint_scope.suspended}
     fn gif_removal_pending(&self)->bool{
-        let id=egui::Id::new(("gif-removal",&self.picker_account,self.state.notification_generation));
+        let id=egui::Id::new(("gif-removal",&self.picker_account,self.paint_scope.generation));
         self.ctx.data(|memory|memory.get_temp::<(String,String)>(id).is_some())
     }
     /// Sole entry to the favorites writer for the catalog and the chat. New

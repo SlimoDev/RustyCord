@@ -96,8 +96,12 @@ pub struct Session {
     pub camera_deadline: Option<Instant>,
     pub ptt_active: bool,
     pub transmit_gate: bool,
+    pub input_gate_requested: bool,
+    pub input_vad_detected: bool,
+    pub input_has_signal: bool,
     pub input_observed_at: Option<Instant>,
     pub input_callbacks: u64,
+    pub input_capture: crate::stats::InputCapture,
     pub manual_release_at: Option<Instant>,
     pub local_vad: bool,
     pub share_selection: Option<ShareSelection>,
@@ -152,8 +156,12 @@ impl Session {
             camera_deadline: None,
             ptt_active: false,
             transmit_gate: false,
+            input_gate_requested: false,
+            input_vad_detected: false,
+            input_has_signal: false,
             input_observed_at: None,
             input_callbacks: 0,
+            input_capture: crate::stats::InputCapture::default(),
             manual_release_at: None,
             local_vad: false,
             share_selection: None,
@@ -237,10 +245,12 @@ impl Session {
     }
     pub fn reset_input_activity(&mut self) {
         self.transmit_gate=false;self.input_observed_at=None;self.manual_release_at=None;
+        self.input_gate_requested=false;self.input_vad_detected=false;self.input_has_signal=false;
     }
     pub fn input_activity(&mut self,now:Instant,above:bool,has_signal:bool,eligible:bool)->bool {
         self.input_callbacks=self.input_callbacks.saturating_add(1);
         self.input_observed_at=Some(now);
+        self.input_vad_detected=above;self.input_has_signal=has_signal;
         if !eligible {self.manual_release_at=None;return false;}
         if self.settings.ptt {self.manual_release_at=None;return self.ptt_active&&has_signal;}
         if above {self.manual_release_at=Some(now+Duration::from_millis(250));return true;}
@@ -254,6 +264,24 @@ impl Session {
     }
     /// Local telemetry only. A native gate or a level callback does not prove
     /// that encoded packets reached the remote participant.
+    pub fn input_state(&self, now: Instant, mic_test: bool, input_volume: f64) -> crate::stats::voice::InputState {
+        use crate::stats::voice::{InputMode, InputState};
+        let stale = self.input_observed_at.is_none_or(|at| now.saturating_duration_since(at) >= Duration::from_millis(400));
+        let desired = !stale && if self.settings.ptt { self.ptt_active && self.input_has_signal }
+            else { self.input_vad_detected || self.manual_release_at.is_some_and(|at| now < at) };
+        InputState {
+            mode: if self.settings.ptt { InputMode::Ptt } else { InputMode::ManualVad },
+            callbacks: self.input_callbacks.min(u32::MAX as u64) as u32,
+            last_callback_age_ms: self.input_observed_at.map(|at| now.saturating_duration_since(at).as_millis().min(u16::MAX as u128) as u16),
+            sample_stale: stale, vad_detected: self.input_vad_detected, ptt_held: self.ptt_active,
+            desired, gate_requested: self.input_gate_requested, gate_open: self.transmit_gate,
+            input_eligible: !self.stream() && self.local_ready && !self.closed
+                && !self.credentials.self_mute && !self.credentials.self_deaf && !mic_test && input_volume > 0.,
+            transport_ready: self.local_ready, encryption_ready: self.connected && self.dave_ready,
+            muted: self.credentials.self_mute, deaf: self.credentials.self_deaf,
+            local_test_active: mic_test, input_gain_zero: input_volume == 0.,
+        }
+    }
     pub fn input_diagnostics(&self, now: Instant, mic_test: bool, input_volume: f64) -> Value {
         let eligible = !self.stream() && self.local_ready && !self.closed
             && !self.credentials.self_mute && !self.credentials.self_deaf
@@ -262,6 +290,8 @@ impl Session {
             "lastCallbackAgeMs":self.input_observed_at.map(|at|now.saturating_duration_since(at).as_millis().min(u64::MAX as u128) as u64),
             "sampleStale":self.input_observed_at.is_none_or(|at|now.saturating_duration_since(at)>=Duration::from_millis(400)),
             "inputGateEligible":eligible,"mode":if self.settings.ptt{"ptt"}else{"manual-vad"},
+            "vadDetected":self.input_vad_detected,"desired":self.input_state(now,mic_test,input_volume).desired,
+            "gateRequested":self.input_gate_requested,
             "pttHeld":self.ptt_active,"nativeGateOpen":self.transmit_gate,
             "transportReady":self.local_ready,"encryptionReady":self.connected&&self.dave_ready,
             "networkTransmitEligible":eligible&&self.connected&&self.dave_ready,
@@ -367,7 +397,7 @@ impl Session {
         }
         self.speaking.insert(id.to_owned(), active);
         Some(
-            json!({"event":"speaking","userId":id,"self":id==self.credentials.user_id,"active":active}),
+            json!({"event":"speaking","mediaSession":self.id,"userId":id,"self":id==self.credentials.user_id,"active":active}),
         )
     }
 }
@@ -421,6 +451,27 @@ mod tests {
         assert_eq!(rekey["nativeGateOpen"],false);assert_eq!(rekey["networkTransmitEligible"],false);
         assert_eq!(s.input_diagnostics(now,true,100.)["inputGateEligible"],false);
         assert_eq!(s.input_diagnostics(now,false,0.)["inputGateEligible"],false);
+    }
+    #[test]
+    fn typed_input_distinguishes_desired_vad_ptt_gate_and_stale_samples() {
+        let mut s = session(); let now = Instant::now();
+        s.local_ready = true; s.connected = true; s.dave_ready = true;
+        assert!(s.input_activity(now, true, true, true));
+        let pending_gate = s.input_state(now, false, 100.);
+        assert!(pending_gate.vad_detected && pending_gate.desired && pending_gate.encryption_ready);
+        assert!(!pending_gate.gate_open); // Intent is not a successful native gate.
+        s.credentials.self_mute = true;
+        let muted = s.input_state(now, false, 100.);
+        assert!(muted.desired); assert!(!muted.input_eligible);
+        s.settings.ptt = true; s.ptt_active = false;
+        assert!(!s.input_state(now, false, 100.).desired);
+        s.ptt_active = true; assert!(s.input_state(now, false, 100.).desired);
+        let stale = s.input_state(now + Duration::from_millis(400), false, 100.);
+        assert!(stale.sample_stale); assert!(!stale.desired);
+        s.begin_epoch(); let rekey = s.input_state(now, false, 100.);
+        assert!(!rekey.encryption_ready); assert!(rekey.last_callback_age_ms.is_none());
+        let serialized = serde_json::to_string(&rekey).unwrap();
+        assert!(!serialized.contains("voiceToken")); assert!(!serialized.contains("userId"));
     }
     #[test]
     fn ptt_ignores_manual_threshold_and_stale_input_expires_in_half_a_second() {

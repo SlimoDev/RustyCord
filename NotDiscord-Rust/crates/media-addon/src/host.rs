@@ -28,6 +28,10 @@ use tokio_tungstenite::tungstenite::Message;
 mod dispatch_queue;
 #[path = "host/voice_socket.rs"]
 mod voice_socket;
+#[path = "host/applied_frames.rs"]
+mod applied_frames;
+#[path = "host/recovery_methods.rs"]
+mod recovery_methods;
 #[path = "video.rs"]
 pub(crate) mod video;
 
@@ -54,15 +58,18 @@ pub enum Tag {
     SoundshareFailed(u64),
     MicLevel,
     Stats { request: Value, session: u64 },
+    InputDiagnosticStats { session: u64, capture: u64, query: u64 },
+    Applied(applied_frames::Ticket, Box<Tag>),
 }
 pub enum Event {
     Request(Value),
     Ready,
     Closed,
     Tick,
-    WsOpen(u64),
-    WsFrame(u64, Frame),
-    WsError(u64, &'static str, MediaError),
+    WsOpen(u64, u64),
+    WsFrame(u64, u64, Frame),
+    WsError(u64, u64, voice_socket::Failure),
+    SocketJoined(u64),
     Callback(Tag, Vec<Value>),
     PreviewResult {
         token: u64,
@@ -84,6 +91,12 @@ pub struct Host {
     sessions: HashMap<u64, Session>,
     connections: HashMap<u64, ObjectRef>,
     sockets: HashMap<u64, voice_socket::Socket>,
+    stopped_sockets: HashMap<u64, voice_socket::StoppedSocket>,
+    recoveries: RefCell<HashMap<u64, applied_frames::Recovery>>,
+    frame_context: Option<applied_frames::Ticket>,
+    close_barriers: HashSet<u64>,
+    close_waiters: Vec<(Value, Result<Value>, HashSet<u64>)>,
+    close_failures: HashSet<u64>,
     voice: Option<u64>,
     share: Option<u64>,
     sequence: u64,
@@ -94,6 +107,7 @@ pub struct Host {
     configure_settings: HashMap<String, AudioSettings>,
     stats_parts: HashMap<String, Value>,
     previous_stats: HashMap<u64, (Instant, Value)>,
+    stats_leases: HashMap<u64, Value>,
     mic_test: Option<Instant>,
     mic_stop_failed: bool,
     mic_token: u64,
@@ -158,6 +172,12 @@ pub fn start(env: Env, engine: JsObject, pipe: String, data_dir: String) -> napi
         sessions: HashMap::new(),
         connections: HashMap::new(),
         sockets: HashMap::new(),
+        stopped_sockets: HashMap::new(),
+        recoveries: RefCell::new(HashMap::new()),
+        frame_context: None,
+        close_barriers: HashSet::new(),
+        close_waiters: Vec::new(),
+        close_failures: HashSet::new(),
         voice: None,
         share: None,
         sequence: 0,
@@ -168,6 +188,7 @@ pub fn start(env: Env, engine: JsObject, pipe: String, data_dir: String) -> napi
         configure_settings: HashMap::new(),
         stats_parts: HashMap::new(),
         previous_stats: HashMap::new(),
+        stats_leases: HashMap::new(),
         mic_test: None,
         mic_stop_failed: false,
         mic_token: 0,
@@ -304,7 +325,19 @@ fn valid_pipe(pipe: &str) -> bool {
     (id.len() == 32 || id.len() == 36) && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
 }
 impl Host {
-    fn emit(&self, value: Value) {
+    fn emit(&self, mut value: Value) {
+        if matches!(value["event"].as_str(), Some("voiceState" | "shareState" | "watchState" | "cameraState"
+            | "speaking" | "participant" | "inputGateState" | "videoStream" | "videoError"))
+            && value.get("transportGeneration").is_none()
+            && let Some(generation) = value["mediaSession"].as_u64().and_then(|id|
+                self.recoveries.borrow().get(&id).map(|recovery| recovery.protocol.generation())) {
+            value["transportGeneration"] = json!(generation);
+        }
+        if matches!(value["event"].as_str(), Some("cameraState" | "shareState" | "watchState"))
+            && value["mediaSession"].as_u64().is_some_and(|id| self.recoveries.borrow().get(&id)
+                .is_some_and(|recovery| recovery.interrupted)) {
+            value["recovering"] = json!(true);
+        }
         let _ = self.output.send(value);
     }
     fn reply(&mut self, id: Value, result: Result<Value>) {
@@ -347,6 +380,12 @@ impl Host {
         native::optional_json(self.env, &self.conn(id)?, name, args)
     }
     fn callback(&self, tag: Tag) -> Result<JsFunction> {
+        let tag = if let Some(ticket) = self.frame_context.filter(|ticket| tag.session() == Some(ticket.session))
+            && matches!(tag, Tag::Connected(_) | Tag::Modes(..) | Tag::Codecs(..) | Tag::Key(..)
+                | Tag::Proposals(..) | Tag::Commit(..) | Tag::Transition(..)) {
+            self.recoveries.borrow_mut().get_mut(&ticket.session).ok_or_else(MediaError::internal)?.wait(ticket)?;
+            Tag::Applied(ticket, Box::new(tag))
+        } else { tag };
         let sender = self.sender.clone();
         self.env
             .create_function_from_closure("mediaCallback", move |ctx| {
@@ -472,7 +511,9 @@ impl Host {
         Ok(())
     }
     fn transmit_gate(&mut self,s:&mut Session,wanted:bool)->Result<bool> {
-        let active=wanted&&s.connected&&!s.closed&&!s.send_mute()&&self.mic_test.is_none()&&self.settings.input_volume>0.;
+        s.input_gate_requested=wanted;
+        let protocol_ready=self.recoveries.borrow().get(&s.id).is_some_and(|recovery|recovery.protocol.can_transmit(s.dave_ready,self.connections.contains_key(&s.id)));
+        let active=wanted&&protocol_ready&&s.connected&&!s.closed&&!s.send_mute()&&self.mic_test.is_none()&&self.settings.input_volume>0.;
         if s.transmit_gate==active {return Ok(active);}
         if let Err(error)=self.conn_call(s.id,"setPTTActive",vec![json!(active),json!(false),json!(false)]) {
             // Preserve incoming audio if the native transmit control failed.
@@ -501,14 +542,10 @@ impl Host {
   Event::Tick=>self.tick(),
   Event::PreviewResult{token,source,ok}=>self.preview_result(token,&source,ok),
   Event::Request(request)=>{let id=request["id"].clone();let valid=id.as_str().is_some_and(|s|s.len()<=128)||id.as_i64().is_some();if !valid{self.reply(Value::Null,Err(MediaError::new("INVALID_REQUEST","A short request id is required.")));return}if self.pending.len()>=32{self.reply(id,Err(MediaError::new("QUEUE_LIMIT","Too many media requests.")));return}self.pending.insert(id.to_string(),(id.clone(),Instant::now()+Duration::from_secs(30)));let cmd=request["command"].as_str().unwrap_or("");match self.command(id.clone(),cmd,&request["params"]){Ok(Some(value))=>self.reply(id,Ok(value)),Ok(None)=>{},Err(e)=>self.reply(id,Err(e))}},
-  Event::WsOpen(id)=>{if let Some(s)=self.sessions.get(&id){let p=&s.credentials;self.stage(s,"websocket-open");self.send(id,0,json!({"server_id":p.server_id,"channel_id":p.channel_id,"user_id":p.user_id,"session_id":p.session_id,"token":p.voice_token,"max_dave_protocol_version":1,"video":true,"streams":[{"type":"video","rid":"100","quality":100,"active":false}]}));}},
-  Event::WsFrame(id,frame)=>{if let Some(mut s)=self.sessions.remove(&id){let result=self.frame(&mut s,frame);if let Err(e)=result{self.fail(&mut s,e)}if !s.closed{self.sessions.insert(id,s);}}},
-  Event::WsError(id,phase,error)=>{if let Some(mut s)=self.sessions.remove(&id){
-    // Fixed phase/code vocabulary and an ephemeral session generation only.
-    // Preserve this cause before close removes transport/capture resources.
-    self.emit(json!({"event":"transportError","mediaSession":id,"phase":if error.code=="VOICE_HEARTBEAT_TIMEOUT" {"heartbeat"}else{phase},"code":error.code}));
-    self.fail(&mut s,error);
-  }},
+  Event::WsOpen(id,generation)=>self.socket_open(id,generation),
+  Event::WsFrame(id,generation,frame)=>self.socket_frame(id,generation,frame),
+  Event::WsError(id,generation,failure)=>self.socket_error(id,generation,failure),
+  Event::SocketJoined(id)=>self.socket_joined(id),
   Event::Callback(tag,values)=>{if let Err(e)=self.native_event(tag.clone(),values){match tag.session(){Some(id)=>{if let Some(mut s)=self.sessions.remove(&id){self.fail(&mut s,e)}},None=>{if let Some(id)=tag.request(){self.reply(id,Err(e));}}}}},
  }
     }
@@ -556,6 +593,8 @@ impl Host {
                 self.stats_start(id)?;
                 Ok(None)
             }
+            "startInputDiagnostic" | "cancelInputDiagnostic" => self.input_diagnostic_command(name, p).map(Some),
+            "suspendVoice" | "resumeVoice" => self.recovery_command(name, p).map(Some),
             "configureReceiver"=>{
                 if self.voice.is_some()||self.share.is_some() {return Err(MediaError::new("RECEIVER_ONLY","Receiver settings cannot modify a microphone or outgoing connection."));}
                 self.initialize()?;
@@ -639,16 +678,19 @@ impl Host {
                         "This stream watch was already cancelled.",
                     ));
                 }
-                self.watch_tokens.insert(key.clone(), token);
+                if self.watches.contains_key(&key) {
+                    return Err(MediaError::new("REPLACE_REQUIRES_STOP", "Cierra la observación anterior y espera su confirmación antes de reemplazarla."));
+                }
+                if !self.close_barriers.is_empty() {
+                    return Err(MediaError::new("SOURCE_CLOSING", "La fuente anterior todavía está cerrando su conexión."));
+                }
                 if self.watches.len() >= 2 && !self.watches.contains_key(&key) {
                     return Err(MediaError::new(
                         "WATCH_LIMIT",
                         "Close another screen stream first.",
                     ));
                 }
-                if let Some(id) = self.watches.remove(&key) {
-                    self.close_id(id);
-                }
+                self.watch_tokens.insert(key.clone(), token);
                 self.start_session(p, true, None)?;
                 Ok(Some(
                     json!({"state":"connecting","session":self.watches.get(&key)}),
@@ -665,7 +707,7 @@ impl Host {
                 if let Some(id) = self.watches.remove(&key) {
                     self.close_id(id);
                 }
-                Ok(Some(json!({"state":"stopped"})))
+                self.wait_for_socket_close(id, json!({"state":"stopped"}))
             }
             "listDevices" | "configureAudio" => {
                 self.initialize()?;
@@ -846,7 +888,7 @@ impl Host {
             "disconnect" => {
                 self.stop_mic_test()?;
                 self.close_all();
-                Ok(Some(json!({"state":"disconnected"})))
+                self.wait_for_socket_close(id, json!({"state":"disconnected"}))
             }
             "mute" | "deafen" | "ptt" | "startCamera" | "stopCamera" | "setVolume" => {
                 self.voice_command(id, name, p)
@@ -858,6 +900,12 @@ impl Host {
                         "SHARE_CANCELLED",
                         "This screen selection was already cancelled.",
                     ));
+                }
+                if self.share.is_some() {
+                    return Err(MediaError::new("REPLACE_REQUIRES_STOP", "Detén la publicación anterior y espera su confirmación antes de reemplazarla."));
+                }
+                if !self.close_barriers.is_empty() {
+                    return Err(MediaError::new("SOURCE_CLOSING", "La fuente anterior todavía está cerrando su conexión."));
                 }
                 if self.mic_test.is_some() {
                     return Err(MediaError::new(
@@ -881,9 +929,6 @@ impl Host {
                         "Open the source picker again and select an available source.",
                     ));
                 }
-                if let Some(id) = self.share.take() {
-                    self.close_id(id)
-                }
                 self.share_token = token;
                 if let Some(main) = self.sessions.get(&voice) { self.stage(main, "share-selected"); }
                 self.start_session(p, true, Some(selection))?;
@@ -900,7 +945,7 @@ impl Host {
                 if let Some(id) = self.share.take() {
                     self.close_id(id)
                 }
-                Ok(Some(json!({"state":"stopped"})))
+                self.wait_for_socket_close(id, json!({"state":"stopped"}))
             }
             "shutdown" => {
                 self.reply(id, Ok(json!({"state":"closed"})));
@@ -991,7 +1036,7 @@ impl Host {
         if let Some(socket) = self.sockets.get(&id) {
             if let Err(error) = socket.send(Message::Text(json!({"op":op,"d":data}).to_string().into())) {
                 if socket.fail_once() {
-                    let _ = self.sender.call(Event::WsError(id, "enqueue", error), ThreadsafeFunctionCallMode::NonBlocking);
+                    let _ = self.sender.call(Event::WsError(id, socket.generation(), voice_socket::Failure::new("enqueue", error)), ThreadsafeFunctionCallMode::NonBlocking);
                 }
             }
         }
@@ -1001,7 +1046,7 @@ impl Host {
         let socket = self.sockets.get(&id).ok_or_else(|| MediaError::new("VOICE_SEND_CLOSED", "La conexión de voz ya se cerró."))?;
         if let Err(error) = socket.send(Message::Binary(data.into())) {
             if socket.fail_once() {
-                let _ = self.sender.call(Event::WsError(id, "enqueue", error.clone()), ThreadsafeFunctionCallMode::NonBlocking);
+                let _ = self.sender.call(Event::WsError(id, socket.generation(), voice_socket::Failure::new("enqueue", error.clone())), ThreadsafeFunctionCallMode::NonBlocking);
             }
             return Err(error);
         }
@@ -1043,7 +1088,8 @@ impl Tag {
             | Self::Proposals(i, ..)
             | Self::Commit(i, ..)
             | Self::Transition(i, ..) => Some(*i),
-            Self::Stats { session, .. } => Some(*session),
+            Self::Stats { session, .. } | Self::InputDiagnosticStats { session, .. } => Some(*session),
+            Self::Applied(ticket, _) => Some(ticket.session),
             _ => None,
         }
     }
@@ -1064,6 +1110,9 @@ impl Host {
         stream: bool,
         selection: Option<ShareSelection>,
     ) -> Result<()> {
+        if !self.close_failures.is_empty() {
+            return Err(MediaError::new("NATIVE_RELEASE_UNKNOWN", "La liberación anterior debe resolverse antes de abrir otra sesión multimedia."));
+        }
         self.initialize()?;
         let engine = self.engine()?;
         let version =
@@ -1089,6 +1138,7 @@ impl Host {
         s.volumes.remove(&s.credentials.user_id);
         s.operation_token = p["token"].as_u64().unwrap_or(0);
         s.suspended_share = selection;
+        self.recoveries.borrow_mut().insert(id, applied_frames::Recovery::default());
         self.emit(s.state_event("connecting", None));
         self.sockets.insert(id, voice_socket::spawn(self.runtime.handle(), endpoint, id, self.sender.clone()));
         if s.receive() {
@@ -1104,9 +1154,6 @@ impl Host {
     fn frame(&mut self, s: &mut Session, frame: Frame) -> Result<()> {
         if s.closed {
             return Ok(());
-        }
-        if let Some(seq) = frame.seq {
-            s.seq = seq as i64;
         }
         let d = frame.data;
         match frame.op {
@@ -1171,7 +1218,7 @@ impl Host {
                 self.update_camera_subscription(s);
                 if !s.stream() {
                     self.emit(
-                        json!({"event":"participant","userId":id,"present":true,"video":has_video}),
+                        json!({"event":"participant","mediaSession":s.id,"userId":id,"present":true,"video":has_video}),
                     );
                 }
             }
@@ -1185,7 +1232,7 @@ impl Host {
                     s.camera_receive_users.remove(id);
                     self.update_camera_subscription(s);
                     if !s.stream() {
-                        self.emit(json!({"event":"participant","userId":id,"present":false}));
+                        self.emit(json!({"event":"participant","mediaSession":s.id,"userId":id,"present":false}));
                     }
                     self.update_readiness(s)?;
                 }
@@ -1568,6 +1615,8 @@ impl Host {
         Ok(())
     }
     fn check_connected(&mut self, s: &mut Session) -> Result<()> {
+        if !self.recoveries.borrow().get(&s.id).is_some_and(|recovery|
+            recovery.protocol.can_transmit(s.dave_ready, self.connections.contains_key(&s.id))) { return Ok(()); }
         if !s.establish() {
             return Ok(());
         }
@@ -1677,7 +1726,7 @@ impl Host {
                 self.merge_audio_user(s,id)?;
             }
             if fresh && !s.stream() {
-                self.emit(json!({"event":"participant","userId":id,"present":true}));
+                self.emit(json!({"event":"participant","mediaSession":s.id,"userId":id,"present":true}));
             }
         }
         self.update_camera_subscription(s);
@@ -1724,6 +1773,8 @@ impl Host {
         if s.closed {
             return;
         }
+        let transport_generation = self.recoveries.borrow().get(&s.id).map(|recovery| recovery.protocol.generation());
+        if let Some(record) = s.input_capture.cancel(stats::voice::EndReason::ConnectionChanged) { self.emit_voice_record(record); }
         if s.stream() { self.stage(s, "video-session-closing"); }
         if s.receive() && let Some(ssrc)=s.receive_requested_ssrc.take() {
             let mut wants=json!({});wants[ssrc.to_string()]=json!(0);self.send(s.id,15,wants);
@@ -1757,15 +1808,20 @@ impl Host {
         s.connected = false;
         s.credentials.voice_token.clear();
         s.credentials.session_id.clear();
-        if let Some(socket) = self.sockets.remove(&s.id) {
-            // Cancellation and AbortHandle bypass both data and Pong backlog;
-            // dropping the split socket releases the transport immediately.
-            socket.cancel();
+        let stopped = self.sockets.remove(&s.id).map(voice_socket::Socket::stop)
+            .or_else(|| self.stopped_sockets.remove(&s.id));
+        if let Some(stopped) = stopped {
+            self.close_barriers.insert(s.id);
+            let sender = self.sender.clone(); let id = s.id;
+            self.runtime.spawn(async move {
+                stopped.wait().await;
+                let _ = sender.call(Event::SocketJoined(id), ThreadsafeFunctionCallMode::NonBlocking);
+            });
         }
         if let Some(conn) = self.connections.remove(&s.id) {
             if let Ok(obj) = conn.object(self.env) {
-                let _ = native::call_json(self.env, &obj, "destroy", vec![]);
-            }
+                if native::call_json(self.env, &obj, "destroy", vec![]).is_err() { self.close_failures.insert(s.id); }
+            } else { self.close_failures.insert(s.id); }
             conn.release(self.env);
         }
         if self.voice == Some(s.id) {
@@ -1776,14 +1832,35 @@ impl Host {
         }
         self.watches.retain(|_, session| *session != s.id);
         self.previous_stats.remove(&s.id);
+        self.stats_leases.remove(&s.id);
+        self.recoveries.borrow_mut().remove(&s.id);
         if notify {
-            self.emit(s.state_event("disconnected", None));
+            let mut event = s.state_event("disconnected", None);
+            event["transportGeneration"] = json!(transport_generation);
+            self.emit(event);
         }
     }
 }
 
 impl Host {
     fn native_event(&mut self, tag: Tag, values: Vec<Value>) -> Result<()> {
+        if let Tag::Applied(ticket, inner) = tag {
+            if !self.recoveries.borrow().get(&ticket.session).is_some_and(|recovery| recovery.contains(ticket)) { return Ok(()); }
+            let previous = self.frame_context.replace(ticket);
+            let result = self.native_event(*inner, values);
+            self.frame_context = previous;
+            result?;
+            let applied = self.recoveries.borrow_mut().get_mut(&ticket.session).map(|recovery| recovery.complete(ticket));
+            if let Some(result) = applied {
+                let resumed = result?;
+                if let Some(mut s) = self.sessions.remove(&ticket.session) {
+                    let result = self.refresh_applied(&mut s, resumed);
+                    if let Err(error) = result { self.fail(&mut s, error); }
+                    if !s.closed { self.sessions.insert(s.id, s); }
+                }
+            }
+            return Ok(());
+        }
         let value = values.first().cloned().unwrap_or(Value::Null);
         match tag.clone() {
             Tag::Inventory { request, part } | Tag::Configure { request, part } => {
@@ -1795,6 +1872,7 @@ impl Host {
                 );
             }
             Tag::Stats { request, session } => {
+                if self.stats_leases.get(&session) == Some(&request) { self.stats_leases.remove(&session); }
                 let report = if let Some(s) = self.sessions.get(&session) {
                     let parsed = if let Some(raw) = value.as_str() {
                         if raw.len() > protocol::MAX_FRAME {
@@ -1828,6 +1906,19 @@ impl Host {
                     stats::unavailable("disconnected", "CONNECTION_CHANGED")
                 };
                 self.stats_result(request, session, report);
+                return Ok(());
+            }
+            Tag::InputDiagnosticStats { session, capture, query } => {
+                let parsed = if let Some(text) = value.as_str() {
+                    (text.len() <= protocol::MAX_FRAME).then(|| serde_json::from_str::<Value>(text).ok()).flatten()
+                } else { Some(value) };
+                let record = self.sessions.get_mut(&session).filter(|s| !s.stream() && !s.closed).and_then(|s| {
+                    let now = Instant::now();
+                    let report = parsed.filter(Value::is_object).map(|raw| stats::sanitize(&raw, s.state(), s.dave_ready));
+                    let input = s.input_state(now, self.mic_test.is_some(), self.settings.input_volume);
+                    s.input_capture.complete(capture, query, now, s.epoch, input, report.as_ref())
+                });
+                if let Some(record) = record { self.emit_voice_record(record); }
                 return Ok(());
             }
             Tag::MicLevel => {
@@ -1955,6 +2046,9 @@ impl Host {
                     let ok = value.as_bool().unwrap_or(false);
                     let version = values.get(1).and_then(Value::as_u64).unwrap_or(0);
                     if !ok {
+                        if self.recoveries.borrow().get(&id).is_some_and(|recovery| recovery.interrupted) {
+                            return Err(MediaError::new("MLS_RESUME_INVALID", "La conexión conservada no confirmó un estado de cifrado válido."));
+                        }
                         s.failed_mls += 1;
                         if s.failed_mls >= 5 {
                             return Err(MediaError::new(
@@ -2437,7 +2531,7 @@ impl Host {
                 self.video_remove_user(s.id, id);
             }
             if !s.stream() {
-                self.emit(json!({"event":"participant","userId":id,"present":true,"video":ssrc>0}));
+                self.emit(json!({"event":"participant","mediaSession":s.id,"userId":id,"present":true,"video":ssrc>0}));
             }
             return Ok(());
         }
@@ -2574,6 +2668,7 @@ impl Host {
             let _=self.stop_mic_test();
         }
         let ids: Vec<_> = self.sessions.keys().copied().collect();
+        let mut diagnostic_queries = Vec::new();
         for id in ids {
             if let Some(mut s) = self.sessions.remove(&id) {
                 let result = (|| {
@@ -2623,9 +2718,28 @@ impl Host {
                 if let Err(e) = result {
                     self.fail(&mut s, e)
                 }
+                if !s.closed && !s.stream() {
+                    match s.input_capture.poll(now, s.epoch) {
+                        stats::CapturePoll::Query { capture, query } => diagnostic_queries.push((id, capture, query)),
+                        stats::CapturePoll::End { capture, reason } => self.emit_voice_record(stats::voice::VoiceRecord::End { capture, reason }),
+                        stats::CapturePoll::Idle => {}
+                    }
+                }
                 if !s.closed {
                     self.sessions.insert(id, s);
                 }
+            }
+        }
+        for (session, capture, query) in diagnostic_queries {
+            let tag = Tag::InputDiagnosticStats { session, capture, query };
+            let result = self.conn(session).and_then(|conn| {
+                if conn.has_named_property("getFilteredStats").unwrap_or(false) {
+                    self.conn_callback(session, "getFilteredStats", vec![self.json(json!(7))?], tag)
+                } else { self.conn_callback(session, "getStats", vec![], tag) }
+            });
+            if result.is_err() {
+                let record = self.sessions.get_mut(&session).and_then(|s| s.input_capture.rejected(capture, query));
+                if let Some(record) = record { self.emit_voice_record(record); }
             }
         }
         let expired: Vec<Value> = self
@@ -2660,6 +2774,10 @@ impl Host {
         }
     }
     fn stats_start(&mut self, id: Value) -> Result<()> {
+        if !self.stats_leases.is_empty() || self.voice.and_then(|id| self.sessions.get(&id))
+            .is_some_and(|s| s.input_capture.active() || s.input_capture.pending()) {
+            return Err(MediaError::new("NATIVE_STATS_BUSY", "Espera a que termine la consulta nativa de estadísticas."));
+        }
         let mut parts = json!({"voice":null,"share":null});
         for (part, session) in [("voice", self.voice), ("share", self.share)] {
             if let Some(session) = session {
@@ -2686,6 +2804,7 @@ impl Host {
         );
         for part in ["voice", "share"] {
             if let Some(session) = parts[part].as_u64() {
+                self.stats_leases.insert(session, id.clone());
                 let conn = self.conn(session)?;
                 let tag = Tag::Stats {
                     request: id.clone(),
@@ -2711,6 +2830,29 @@ impl Host {
             }
         }
         Ok(())
+    }
+    fn emit_voice_record(&self, record: stats::voice::VoiceRecord) {
+        self.emit(json!({"event":"voiceDiagnostic","record":record}));
+    }
+    fn input_diagnostic_command(&mut self, name: &str, p: &Value) -> Result<Value> {
+        let capture = p["capture"].as_u64().filter(|capture| *capture > 0)
+            .ok_or_else(|| MediaError::new("INVALID_DIAGNOSTIC_CAPTURE", "La captura necesita una intención local vigente."))?;
+        let id = self.voice_id()?;
+        let record = {
+            let s = self.sessions.get_mut(&id).filter(|s| !s.stream()).ok_or_else(MediaError::internal)?;
+            if name == "cancelInputDiagnostic" {
+                // A stale cancellation must not revoke a replacement run.
+                s.input_capture.cancel_capture(capture, stats::voice::EndReason::Cancelled)
+            } else {
+                if self.stats_leases.contains_key(&id) || !self.connections.contains_key(&id)
+                    || !s.input_capture.start(capture, Instant::now()) {
+                    return Err(MediaError::new("NATIVE_STATS_BUSY", "La conexión nativa no está disponible para otra captura de diagnóstico."));
+                }
+                Some(stats::voice::VoiceRecord::Start { capture })
+            }
+        };
+        if let Some(record) = record { self.emit_voice_record(record); }
+        Ok(json!({"admitted":true,"capture":capture,"durationMs":10000,"maxSamples":10}))
     }
     fn stats_result(&mut self, id: Value, session: u64, report: Value) {
         let key = id.to_string();

@@ -15,9 +15,10 @@ autorizada. Planificar por sí solo no autoriza programar ni publicar.
 
 Localiza el repositorio y su checkout; revisa las instrucciones aplicables, los
 cambios locales y los mensajes posteriores al plan. Identifica variante, rama,
-restricciones de cuentas, ejecución y pruebas, y entregables autorizados. No
-deduzcas autorización para otra variante, una cuenta o publicación por invocar
-esta skill. Conserva los cambios del usuario y los datos fuera del alcance.
+restricciones de cuentas, ejecución y pruebas, y entregables autorizados. Aplica
+la preferencia permanente de publicación descrita en Entrega sin extenderla a
+otra variante, cuentas o instalación. Conserva los cambios del usuario y los
+datos fuera del alcance.
 
 Determina siempre el tipo de actualización antes de fijar su versión:
 
@@ -61,17 +62,29 @@ que afecte al alcance o a una acción aún no autorizada.
 
 ## Entrega
 
-Si corresponde generar instalador o publicar una versión, sigue
-[el flujo de entrega](references/release.md). Una tarea de documentación no
-obliga a compilar el producto. La petición de código no autoriza por sí sola
-publicación, instalación en el equipo o acceso a cuentas.
+**Preferencia permanente del usuario:** al terminar la implementación de un plan
+y sus comprobaciones permitidas, publica en GitHub las fuentes pertinentes, el
+instalador y el manifiesto de actualización de la variante y versión acordadas,
+para actualizaciones **Pequeñas, Medianas y Grandes**. Incluye esta publicación
+en la ejecución del plan, sin pedir otra confirmación ni detenerte en una entrega
+local. Una instrucción posterior de no publicar o limitarse a entrega local
+prevalece. Redactar un plan o modificar sólo documentación no publica el producto.
+
+Sigue [el flujo de entrega](references/release.md): verifica el asset antes de
+anunciar el manifiesto. Los ensayos de cuenta, dispositivos o suspensión real
+no autorizados se documentan como pendientes y no bloquean por sí solos una
+publicación cuyos controles permitidos pasaron; no anuncies esos casos como
+corregidos o probados. Un fallo de compilación o de una comprobación requerida
+debe resolverse antes de publicar. La publicación no autoriza instalar, iniciar
+el cliente, acceder a cuentas ni usar dispositivos.
 
 Para una entrega **Pequeña** autorizada, genera y publica el instalador y su
 manifiesto; deja que el usuario actualice la instalación desde NotDiscord.
 Conserva la instalación, los accesos directos y las otras copias de uso del
 usuario salvo que pida actualizarlos. Los binarios temporales de compilación y
-empaquetado siguen siendo necesarios para producir el instalador. Para los
-demás tipos, resuelve los entregables según el pedido vigente.
+empaquetado siguen siendo necesarios para producir el instalador. Fuera de la
+ejecución de planes y de las entregas Pequeñas, resuelve la publicación según el
+pedido vigente.
 
 Entrega la variante y versión acordadas e indica causa, corrección, evidencia,
 comprobaciones y limitaciones. Distingue lo implementado de lo verificado y de

@@ -7,6 +7,53 @@ fn interaction_text_cursor(output: &egui::FullOutput, needle: &str, index: usize
     }).unwrap_or_else(|| panic!("Missing cursor fixture text: {needle}"))
 }
 #[test]
+fn group_removal_records_distinguish_the_actor_target_and_incomplete_payload_without_network() {
+    let fixtures=[
+        (serde_json::json!({"author":{"id":"100","username":"Ana"},"mentions":[{"id":"101","username":"Bruno"}]}),Some("Ana"),"eliminó a Bruno del grupo."),
+        (serde_json::json!({"author":{"id":"101","username":"Bruno"},"mentions":[{"id":"101","username":"Old Bruno"}]}),Some("Bruno"),"salió del grupo."),
+        (serde_json::json!({"author":{"id":"100","username":"Alex"},"mentions":[{"id":"101","username":"Alex"}]}),Some("Alex"),"eliminó a Alex del grupo."),
+        (serde_json::json!({"author":{"id":"100","username":"Ana"},"mentions":[]}),None,"Se registró una salida o retirada del grupo."),
+        (serde_json::json!({"author":{"id":"100","username":"Ana"},"mentions":[{"id":"101"}]}),None,"Se registró una salida o retirada del grupo."),
+        (serde_json::json!({"author":{"id":"100","username":"Ana"},"mentions":[{"id":"101","username":"Bruno"},{"id":"102","username":"Clara"}]}),None,"Se registró una salida o retirada del grupo."),
+        (serde_json::json!({"author":{"username":"Unknown"},"mentions":[{"id":"101","username":"Bruno"}]}),None,"Se registró una salida o retirada del grupo."),
+    ];
+    for view in ["chat","search","pins","history"] {
+        for (payload,actor,expected) in &fixtures {
+            let (mut app,ctx,mut commands)=ui_harness();let (_,mut state)=message_fixture();
+            state.view=view.into();
+            let mut payload=payload.clone();payload["id"]=serde_json::json!("400");payload["channel_id"]=serde_json::json!("200");payload["type"]=serde_json::json!(2);
+            let message=notdiscord_core::parsing::message(&payload);
+            let output=message_frame(&mut app,&ctx,&message,&state,vec![]);
+            painted_text(&output,expected);
+            if let Some(actor)=actor {painted_text(&output,actor);}
+            else {
+                for name in ["Ana","Bruno","Clara","Unknown"] {assert!(maybe_painted_text(&output,name).is_none(),"an incomplete record cannot attribute a removal to {name}");}
+            }
+            assert_eq!(system_record_description(&message),*expected);
+            assert!(commands.try_recv().is_err(),"rendering historical group membership performs no lookup");
+        }
+    }
+}
+
+#[test]
+fn group_removal_context_copy_preserves_the_independently_expected_actor_and_target() {
+    let (mut app,ctx,mut commands)=ui_harness();let (_,state)=message_fixture();
+    ctx.style_mut(|style|style.animation_time=0.);
+    let message=notdiscord_core::parsing::message(&serde_json::json!({"id":"400","channel_id":"200","type":2,
+        "author":{"id":"100","username":"Ana"},"mentions":[{"id":"101","username":"Bruno"}]}));
+    let mut output=message_frame(&mut app,&ctx,&message,&state,vec![]);
+    for _ in 0..3 {output=message_frame(&mut app,&ctx,&message,&state,vec![]);}
+    let body=painted_text(&output,"eliminó a Bruno del grupo.").center();
+    for pressed in [true,false] {message_frame(&mut app,&ctx,&message,&state,pointer(body,pressed,egui::PointerButton::Secondary));}
+    for _ in 0..3 {output=message_frame(&mut app,&ctx,&message,&state,vec![]);}
+    let copy=painted_text(&output,"Copiar texto").center();
+    message_frame(&mut app,&ctx,&message,&state,pointer(copy,true,egui::PointerButton::Primary));
+    let copied=message_frame(&mut app,&ctx,&message,&state,pointer(copy,false,egui::PointerButton::Primary));
+    assert!(copied.platform_output.commands.iter().any(|command|matches!(command,
+        egui::OutputCommand::CopyText(text) if text=="Ana eliminó a Bruno del grupo.")));
+    assert!(commands.try_recv().is_err());
+}
+#[test]
 fn session_log_menu_and_return_keep_the_chat_draft_position_and_text_selection() {
     let (mut app,ctx,mut commands)=ui_harness();
     let (message,mut state)=message_fixture();

@@ -10,6 +10,24 @@ fn checked<T>(value: Result<T>) -> napi::Result<T> {
     value.map_err(|error| fail(&error.message))
 }
 
+// Advance only the local test runtime and dispatch its real SocketJoined
+// events. An aborted fake task, like a real socket, is not closed merely
+// because cancellation was requested. No socket, timer or device is created.
+fn settle_offline_closes(host: &mut Host) -> napi::Result<()> {
+    for _ in 0..16 {
+        host.runtime.block_on(tokio::task::yield_now());
+        let mailbox = host.sender.mailbox.clone();
+        while let Some(delivery) = mailbox.pop() {
+            host.dispatch(delivery.event);
+            mailbox.complete(delivery.bytes);
+        }
+        if host.close_barriers.is_empty() && host.close_waiters.is_empty() {
+            return Ok(());
+        }
+    }
+    Err(fail("The offline socket task did not confirm closure"))
+}
+
 fn factory_contracts(env: Env) -> napi::Result<usize> {
     let mut verified = 0;
     for (modern, legacy, own_stream, expected, asymmetric) in [
@@ -64,6 +82,95 @@ fn factory_contracts(env: Env) -> napi::Result<usize> {
         verified += 1;
     }
     Ok(verified)
+}
+
+/// Real production preview closures against a deferred N-API thenable. It
+/// never calls initialize, imports an engine or captures any window/device.
+fn preview_pipeline_contract(env: Env, host: &mut Host) -> napi::Result<()> {
+    use base64::Engine as _;
+    let pending = Rc::new(RefCell::new(Vec::<(Ref<()>, Ref<()>)>::new()));
+    let queries = Rc::new(RefCell::new(Vec::<String>::new()));
+    let waiters = pending.clone(); let calls = queries.clone();
+    let mut engine = checked(host.engine())?;
+    engine.set_named_property("getSingleWindowPreview", env.create_function_from_closure("deferredSyntheticPreview", move |ctx| {
+        let handle = ctx.get::<napi::JsString>(0)?.into_utf8()?.as_str()?.to_owned();
+        if !matches!(handle.as_str(), "7001" | "7002") || ctx.get::<napi::JsNumber>(1)?.get_uint32()? != 640
+            || ctx.get::<napi::JsNumber>(2)?.get_uint32()? != 360 { return Err(fail("Preview query escaped its synthetic identity or bounds")); }
+        calls.borrow_mut().push(handle);
+        let callbacks = waiters.clone();
+        let mut promise = ctx.env.create_object()?;
+        promise.set_named_property("then", ctx.env.create_function_from_closure("holdSyntheticPreview", move |ctx| {
+            let success = ctx.get::<JsFunction>(0)?; let failure = ctx.get::<JsFunction>(1)?;
+            callbacks.borrow_mut().push((ctx.env.create_reference(success)?, ctx.env.create_reference(failure)?));
+            ctx.env.get_undefined()
+        })?)?;
+        Ok(promise)
+    })?)?;
+    let result = (|| -> napi::Result<()> {
+        host.video.visible = true;
+        host.inventories.insert("sources".into(), (Instant::now(), HashSet::from(["window:7001".into(), "window:7002".into()])));
+        let first = host.video.preview_token + 1; let second = first + 1;
+        checked(host.start_screen_preview(&json!({"sourceId":"window:7001","token":first})))?;
+        if *queries.borrow() != ["7001"] { return Err(fail("First preview was not issued once")); }
+        host.preview_tick_at(Instant::now() + Duration::from_secs(6));
+        for elapsed in [10, 60, 600] { host.preview_tick_at(Instant::now() + Duration::from_secs(elapsed)); }
+        if queries.borrow().len() != 1 { return Err(fail("Preview timeout reopened native work before settlement")); }
+        checked(host.start_screen_preview(&json!({"sourceId":"window:7002","token":second})))?;
+        if queries.borrow().len() != 1 { return Err(fail("A replacement preview overlapped the pending query")); }
+        let current_id = host.video.sources["preview:window:7002"].id;
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_raw(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 128]).unwrap()
+            .write_to(&mut png, image::ImageFormat::Png).map_err(|_| fail("Synthetic PNG failed"))?;
+        let url = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png.into_inner()));
+        let deliver = |index: usize, source: &str| -> napi::Result<()> {
+            let callback: JsFunction = { let pending = pending.borrow(); env.get_reference_value(&pending[index].0)? };
+            callback.call(None, &[checked(native::json_value(env, json!([{"id":source,"url":url}])))?])?;
+            Ok(())
+        };
+        deliver(0, "window:7001")?;
+        if host.video.output.frames.lock().unwrap().buffered_bytes() != 0 { return Err(fail("An expired old preview published stale RGBA")); }
+        host.preview_tick();
+        if *queries.borrow() != ["7001", "7002"] { return Err(fail("The replacement demand did not resume after the old callback")); }
+        deliver(0, "window:7001")?; host.preview_tick();
+        if queries.borrow().len() != 2 || host.video.output.frames.lock().unwrap().buffered_bytes() != 0 {
+            return Err(fail("A duplicate old callback released the new lease or published stale RGBA"));
+        }
+        deliver(1, "window:7002")?;
+        let frames = host.video.output.frames.lock().unwrap().drain();
+        if frames.len() != 1 || frames[0].subscription_id != current_id || frames[0].width != 2 || frames[0].height != 1
+            || frames[0].rgba != [255, 0, 0, 255, 0, 255, 0, 128] {
+            return Err(fail("The current settled preview did not deliver the expected RGBA frame"));
+        }
+        // Screen previews use the callback ABI, whereas single-window previews
+        // use a Promise. Exercise the real branch with its width/height/callback
+        // arguments so a scope or ownership change cannot silently break it.
+        let screen_url = url.clone();
+        let screen_calls = queries.clone();
+        engine.set_named_property("getScreenPreviews", env.create_function_from_closure("syntheticScreenPreview", move |ctx| {
+            if ctx.length != 3 || ctx.get::<napi::JsNumber>(0)?.get_uint32()? != 640
+                || ctx.get::<napi::JsNumber>(1)?.get_uint32()? != 360 {
+                return Err(fail("Screen preview lost its callback ABI bounds"));
+            }
+            screen_calls.borrow_mut().push("screen:7003".into());
+            let callback = ctx.get::<JsFunction>(2)?;
+            callback.call(None, &[checked(native::json_value(*ctx.env,
+                json!([{"id":"screen:7003","url":screen_url}])))?])?;
+            ctx.env.get_undefined()
+        })?)?;
+        host.inventories.get_mut("sources").unwrap().1.insert("screen:7003".into());
+        checked(host.start_screen_preview(&json!({"sourceId":"screen:7003","token":second + 1})))?;
+        let frames = host.video.output.frames.lock().unwrap().drain();
+        if *queries.borrow() != ["7001", "7002", "screen:7003"] || frames.len() != 1
+            || frames[0].rgba != [255, 0, 0, 255, 0, 255, 0, 128] {
+            return Err(fail("Screen callback preview did not deliver its synthetic RGBA frame"));
+        }
+        Ok(())
+    })();
+    host.stop_screen_preview();
+    for (mut success, mut failure) in pending.borrow_mut().drain(..) { success.unref(env)?; failure.unref(env)?; }
+    engine.delete_named_property("getSingleWindowPreview")?;
+    engine.delete_named_property("getScreenPreviews")?;
+    result
 }
 
 pub fn run(env: Env) -> napi::Result<Value> {
@@ -155,6 +262,12 @@ pub fn run(env: Env) -> napi::Result<Value> {
         sessions: HashMap::new(),
         connections: HashMap::new(),
         sockets: HashMap::new(),
+        stopped_sockets: HashMap::new(),
+        recoveries: RefCell::new(HashMap::new()),
+        frame_context: None,
+        close_barriers: HashSet::new(),
+        close_waiters: Vec::new(),
+        close_failures: HashSet::new(),
         voice: Some(1),
         share: Some(3),
         sequence: 3,
@@ -165,6 +278,7 @@ pub fn run(env: Env) -> napi::Result<Value> {
         configure_settings: HashMap::new(),
         stats_parts: HashMap::new(),
         previous_stats: HashMap::new(),
+        stats_leases: HashMap::new(),
         mic_test: None,
         mic_stop_failed: false,
         mic_token: 0,
@@ -186,6 +300,7 @@ pub fn run(env: Env) -> napi::Result<Value> {
             preview: None,
             preview_token: 0,
             screen_preview: None,
+            preview_pipeline: Rc::new(RefCell::new(preview::Pipeline::default())),
         },
     };
     // A failed assertion must still release every N-API reference; otherwise
@@ -238,6 +353,7 @@ pub fn run(env: Env) -> napi::Result<Value> {
         Ok(Session::new(id, credentials, AudioSettings::default()))
     };
     for (id, stream, owner) in [(1, false, ""), (3, true, "100")] {
+        host.recoveries.borrow_mut().insert(id, crate::host::applied_frames::Recovery::default());
         host.sessions.insert(id, make_session(id, stream, owner)?);
         host.connections.insert(id, make_connection(id)?);
     }
@@ -393,6 +509,7 @@ pub fn run(env: Env) -> napi::Result<Value> {
         {
             return Err(fail("Stopping a receiver affected voice or the sender"));
         }
+        settle_offline_closes(&mut host)?;
         for _ in receiver.try_iter() {}
     }
     checked(host.video_command(
@@ -678,8 +795,8 @@ pub fn run(env: Env) -> napi::Result<Value> {
     };
     if !silent_monitor||!host.sessions.is_empty()||!host.sockets.is_empty() {return Err(fail("Silent monitor armed audible output or a network session"));}
     checked(host.command(json!(4001),"stopMicTest",&json!({"token":2})))?;
-    let mut receiver=make_session(2,true,"300")?;receiver.local_ready=true;receiver.connected=true;receiver.add_user("300",10);
-    host.sessions.insert(2,receiver);host.connections.insert(2,make_connection(2)?);
+    let mut receiver_session=make_session(2,true,"300")?;receiver_session.local_ready=true;receiver_session.connected=true;receiver_session.add_user("300",10);
+    host.sessions.insert(2,receiver_session);host.connections.insert(2,make_connection(2)?);
     let receiver_config=checked(host.command(json!(4010),"configureReceiver",&json!({"inputId":"default","inputVolume":150,"outputId":"default","outputVolume":75,"streamVolumePercent":25,"streamVolumeRevision":1,"selfDeaf":true,"userVolumes":{"300":500}})))?.ok_or_else(||fail("Receiver settings did not acknowledge"))?;
     if receiver_config["receiverOnly"]!=true||host.settings.input!="disabled"||host.settings.input_volume!=0.||!host.sessions[&2].credentials.self_deaf||!host.sessions[&2].volumes.is_empty()
         ||host.sessions[&2].members["300"]["volume"]!=1.||host.output_gain(&host.settings)!=0.1875 {
@@ -714,7 +831,8 @@ pub fn run(env: Env) -> napi::Result<Value> {
         if id == 50 {
             let (wire, mut messages) = voice_socket::offline(host.runtime.handle());
             host.sockets.insert(id, wire);
-            host.dispatch(Event::WsOpen(id));
+            host.recoveries.borrow_mut().insert(id, crate::host::applied_frames::Recovery::default());
+            host.dispatch(Event::WsOpen(id, 0));
             let Message::Text(identify) = messages.try_recv().map_err(|_|fail("Voice Identify was not sent"))? else { return Err(fail("Voice Identify frame was not JSON")); };
             let identify:Value=serde_json::from_str(&identify).map_err(|_|fail("Voice Identify JSON invalid"))?;
             if identify["op"]!=0 || identify["d"]["max_dave_protocol_version"]!=1 || identify["d"]["user_id"]!="100" {return Err(fail("Voice Identify lost DAVE or user identity"));}
@@ -769,6 +887,33 @@ pub fn run(env: Env) -> napi::Result<Value> {
         host.sessions.insert(id, session);
         host.close_id(id);
     }
+    preview_pipeline_contract(env, &mut host)?;
+    settle_offline_closes(&mut host)?;
+    // A session-invalid main socket may already be gone while its independent
+    // GoLive publication remains. Disconnect must release that publication and
+    // withhold its ACK until the old writer/reader task actually joins.
+    if !host.sessions.is_empty() || host.voice.is_some() {
+        return Err(fail("Disconnect fixture needs a retired main voice session"));
+    }
+    host.share = Some(70);
+    host.sessions.insert(70, make_session(70, true, "100")?);
+    host.connections.insert(70, make_connection(70)?);
+    let (publication_socket, publication_receiver) = voice_socket::offline(host.runtime.handle());
+    host.sockets.insert(70, publication_socket);
+    for _ in receiver.try_iter() {}
+    host.dispatch(Event::Request(json!({"id":"close-orphan-publication","command":"disconnect","params":{}})));
+    if !publication_receiver.cancelled() || host.share.is_some() || !host.sessions.is_empty()
+        || !host.connections.is_empty() || !host.sockets.is_empty()
+        || !host.close_barriers.contains(&70) || host.close_waiters.len() != 1
+        || receiver.try_iter().any(|event| event["id"] == "close-orphan-publication") {
+        return Err(fail("Disconnect acknowledged before orphan publication task joined"));
+    }
+    settle_offline_closes(&mut host)?;
+    let replies = receiver.try_iter().filter(|event| event["id"] == "close-orphan-publication").collect::<Vec<_>>();
+    if replies.len() != 1 || replies[0]["ok"] != true || replies[0]["result"]["state"] != "disconnected"
+        || !events.borrow().iter().any(|call| call["session"] == 70 && call["method"] == "destroy") {
+        return Err(fail("Disconnect did not confirm orphan publication release exactly once"));
+    }
     let calls = events.borrow();
     let required_disables = calls
         .iter()
@@ -798,6 +943,11 @@ pub fn run(env: Env) -> napi::Result<Value> {
     report["LocalPublicationStartsWithoutViewer"]=json!(true);
     report["HidingLocalViewPreservesPublication"]=json!(true);
     report["SelectorPromotionClosesImplicitViewer"]=json!(true);
+    report["PreviewPendingLeaseSurvivesTimeoutAndSelection"]=json!(true);
+    report["PreviewLateCallbackReleasesOnlyItsQuery"]=json!(true);
+    report["PreviewLateFramesDroppedCurrentRgbaVerified"]=json!(true);
+    report["PreviewScreenCallbackAbiVerified"]=json!(true);
+    report["DisconnectWithoutMainClosesOwnPublicationAfterJoin"]=json!(true);
     drop(calls);
     Ok(report)
     })();

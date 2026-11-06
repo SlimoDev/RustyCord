@@ -3,6 +3,8 @@
 use serde::Serialize;
 use std::{collections::{HashMap,VecDeque}, fs::{self, File, OpenOptions}, io::{Read,Seek,SeekFrom,Write}, path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, AtomicU64, Ordering}, mpsc::{self, SyncSender}}, time::{Duration, Instant, SystemTime}};
+#[path = "voice_diagnostics.rs"]
+pub mod voice;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum Component { App, Controller, Voice, Media, Menus, Notifications, Sound, Input, Gifs }
@@ -12,7 +14,9 @@ pub enum Code { Started, CleanShutdown, PreviousUnclean, Recoverable, TaskFailed
     VisibilityChanged, FocusChanged, ToastQueued, ToastActivated, SoundQueued, Panic,
     TransportHttp, TransportTls, TransportIo, TransportCapacity, TransportProtocol,
     TransportClosed, TransportAlreadyClosed, TransportUtf8, TransportEndpoint, TransportFormat,
-    ControlReadFailed, ControlWriteFailed, ControlTimeout, VideoPipeFailed, AppStartFailed, HostForcedStop, CallSourcesState, VoiceInputState }
+    ControlReadFailed, ControlWriteFailed, ControlTimeout, VideoPipeFailed, AppStartFailed, HostForcedStop, CallSourcesState, VoiceInputState,
+    VoiceInputCaptureStarted, VoiceInputSample, VoiceInputCaptureFinished,
+    PowerSuspended, PowerResumed, PowerObserverUnavailable }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum Phase { Start, Stop, Connect, Read, Write, Enqueue, Heartbeat, Dispatch, Present, Persist, Unknown }
 #[derive(Clone, Debug, Serialize)]
@@ -20,6 +24,8 @@ pub struct Event {
     schema: u8, utc: String, monotonic_ms: u64, sequence: u64, version: String,
     build: Option<&'static str>, component: Component, code: Code, phase: Phase,
     correlation: u64, severity: &'static str, repetitions: u32, dropped_before: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    voice: Option<voice::VoiceRecord>,
 }
 impl Event {
     /// Changes when the record gains a repetition, without comparing its fields.
@@ -191,13 +197,26 @@ impl Drop for Session {
     }
 }
 pub fn record(component: Component, code: Code, phase: Phase, correlation: u64) {
+    record_inner(component, code, phase, correlation, None);
+}
+/// A separately typed payload, never a native JSON object or an identifier.
+pub fn record_voice(record: voice::VoiceRecord) {
+    if !record.valid() { return; }
+    let (code, phase, capture) = match &record {
+        voice::VoiceRecord::Start { capture } => (Code::VoiceInputCaptureStarted, Phase::Start, *capture),
+        voice::VoiceRecord::Sample { sample } => (Code::VoiceInputSample, Phase::Present, sample.capture),
+        voice::VoiceRecord::End { capture, .. } => (Code::VoiceInputCaptureFinished, Phase::Stop, *capture),
+    };
+    record_inner(Component::Voice, code, phase, capture, Some(record));
+}
+fn record_inner(component: Component, code: Code, phase: Phase, correlation: u64, voice: Option<voice::VoiceRecord>) {
     let Some(recorder)=RECORDER.get() else { return; };
     let event=Event {schema:1,utc:chrono::Utc::now().to_rfc3339(),monotonic_ms:recorder.start.elapsed().as_millis().min(u64::MAX as u128) as u64,
         sequence:recorder.sequence.fetch_add(1,Ordering::Relaxed),version:recorder.version.clone(),build:option_env!("NOTDISCORD_BUILD_ID").filter(|id|matches!(id.len(),40|64)&&id.bytes().all(|b|b.is_ascii_hexdigit())),component,code,phase,correlation,
-        severity:match code {Code::Panic|Code::HostExited|Code::TaskFailed|Code::AppStartFailed=>"error",Code::Started|Code::CleanShutdown|Code::MenuOpened|Code::MenuDemand|Code::VisibilityChanged|Code::FocusChanged|Code::ToastQueued|Code::ToastActivated|Code::SoundQueued|Code::CallSourcesState=>"info",_=>"warning"},
-        repetitions:1,dropped_before:recorder.dropped.swap(0,Ordering::Relaxed)};
+        severity:match code {Code::Panic|Code::HostExited|Code::TaskFailed|Code::AppStartFailed=>"error",Code::Started|Code::CleanShutdown|Code::MenuOpened|Code::MenuDemand|Code::VisibilityChanged|Code::FocusChanged|Code::ToastQueued|Code::ToastActivated|Code::SoundQueued|Code::CallSourcesState|Code::VoiceInputState|Code::VoiceInputCaptureStarted|Code::VoiceInputSample|Code::VoiceInputCaptureFinished|Code::PowerSuspended|Code::PowerResumed=>"info",_=>"warning"},
+        repetitions:1,dropped_before:recorder.dropped.swap(0,Ordering::Relaxed),voice};
     if let Ok(mut ring)=recorder.ring.try_lock() {
-        if let Some(last)=ring.back_mut() && last.component==component && last.code==code && last.phase==phase && last.correlation==correlation && event.monotonic_ms.saturating_sub(last.monotonic_ms)<1000 {
+        if let Some(last)=ring.back_mut() && last.component==component && last.code==code && last.phase==phase && last.correlation==correlation && last.voice==event.voice && event.monotonic_ms.saturating_sub(last.monotonic_ms)<1000 {
             last.repetitions=last.repetitions.saturating_add(1);last.dropped_before=last.dropped_before.saturating_add(event.dropped_before);return;
         }
         if ring.len()==256 {ring.pop_front();} ring.push_back(event.clone());

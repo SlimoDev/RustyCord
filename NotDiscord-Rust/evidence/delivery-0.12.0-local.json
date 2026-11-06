@@ -1,0 +1,192 @@
+{
+  "Schema": 1,
+  "Date": "2026-11-06",
+  "Variant": "standard",
+  "Version": "0.12.0",
+  "UpdateType": "Mediana",
+  "Branch": "NotDiscord",
+  "BaseRevision": "3bee4c8c6a9e7442817302850286d170c56976ad",
+  "Uncommitted": true,
+  "BuildId": "b953c4e22ef2384c5424917ac28f94479e7411910b25e7ecefaa1713fba4691e",
+  "BinaryBuildIdVerified": true,
+  "SourceFilesUnchanged": 184,
+  "ProductionFeatures": [],
+  "DiagnosticFeatures": [
+    "native-probe"
+  ],
+  "ProductionBuildPassed": true,
+  "AllTargetsReleaseCheckPassed": true,
+  "WorkspaceLibraryTests": {
+    "AppPassed": 766,
+    "AppIgnored": 5,
+    "CorePassed": 176,
+    "MediaPassed": 53,
+    "Failed": 0,
+    "TotalPassed": 995
+  },
+  "InitialRestrictedRun": {
+    "AppPassed": 761,
+    "AppFailed": 5,
+    "Reason": "Windows private pipes and junction creation denied by restricted token; unchanged tests all passed in unrestricted Windows test context"
+  },
+  "DiagnosticFeatureTestsPassed": 55,
+  "DiagnosticTestsOverlapMedia": true,
+  "WorkspaceSuiteSourceCutSHA256": "532397d22ed4303f1c28df5a8503bf9482ffbf680340d358be9f11f2910f01a5",
+  "PostWorkspaceSuiteChange": "Sólo receive_probe.rs, excluido de producción por cfg(native-probe): renombrar sesión fake que ocultaba el receptor mpsc. Después pasaron 55 tests de esa feature y ambos drivers N-API.",
+  "DiagnosticFakes": {
+    "Success": true,
+    "CameraScreenMicrophoneCycles": 8,
+    "ReceiverCycles": 64,
+    "PreviewPromiseAndCallbackAbiVerified": true,
+    "OrphanOwnPublicationCloseAfterJoinVerified": true,
+    "NativeEngineLoaded": false,
+    "PhysicalDevicesOpened": false,
+    "NetworkConnections": 0
+  },
+  "PackageVerified": true,
+  "ProductionIpcChecks": 7,
+  "ThirdPartyNativeModuleLoadedForCapabilities": true,
+  "ThirdPartyNativeInitialization": false,
+  "PhysicalMicrophoneCauseProven": false,
+  "RemoteAudibilityVerified": false,
+  "ClientStarted": false,
+  "RealAccountUsed": false,
+  "RealSuspend": false,
+  "InstallerExecuted": false,
+  "Published": false,
+  "RootReleaseAnnounced": false,
+  "PendingManifestRemoteUrlVerified": false,
+  "PerformanceMeasurements": false,
+  "RustSrcReviewCoverage": {
+    "Current": 174,
+    "Reviewed": 174,
+    "Missing": 0
+  },
+  "T8Status": "Voluntary bounded telemetry implemented and synthetically verified; C5 physical cause/audible acceptance remains open",
+  "PreviousInstallerPreserved": true,
+  "UnrelatedFilesPreserved": 6,
+  "OtherBranchRefs": {
+    "Plus": "d35c06ac7e824c17198791b3d9208f732bc8be81",
+    "Legacy": "637d41f897a0e435c3d7e26d1c400afd6a640d0e"
+  },
+  "Artifacts": [
+    {
+      "Path": "dist/NotDiscord-Setup-0.12.0.exe",
+      "Bytes": 119095983,
+      "SHA256": "5097b8b7d034ffb5c5b7e8786c5984a0654c41f6b3bf855aa063f632f8874915"
+    },
+    {
+      "Path": "dist/version-0.12.0.pending.json",
+      "Bytes": 497,
+      "SHA256": "7e56b6a6fca19ed838d75effaca458f3d4ba892aa32c3eca47b32019f41f3927"
+    },
+    {
+      "Path": "target/installer-payload-0.12.0-20261106/NotDiscord.exe",
+      "Bytes": 28555264,
+      "SHA256": "a58cee23c11e59dd91bd3cab39b9e007f5a5ffea9359601c2243bb1e35b821e0"
+    },
+    {
+      "Path": "target/installer-payload-0.12.0-20261106/NotDiscord.Media.node",
+      "Bytes": 4454912,
+      "SHA256": "5671a71f3af9592306bb2f0f09250e3b64c2550aceff953d7b72a87415eacdde"
+    },
+    {
+      "Path": "target/installer-payload-0.12.0-20261106/media-runtime/runtime-inventory.json",
+      "Bytes": 7539,
+      "SHA256": "267e6d6be60bb4b0b0e28a3fe8fe2c12dd4003cac872b9d3da25b56b7472578f"
+    },
+    {
+      "Path": "evidence/source-cut-0.12.0-delivery.json",
+      "Bytes": 28906,
+      "SHA256": "b953c4e22ef2384c5424917ac28f94479e7411910b25e7ecefaa1713fba4691e"
+    },
+    {
+      "Path": "evidence/source-cut-0.12.0-workspace-tests.json",
+      "Bytes": 28683,
+      "SHA256": "532397d22ed4303f1c28df5a8503bf9482ffbf680340d358be9f11f2910f01a5"
+    },
+    {
+      "Path": "evidence/t13-review-0.12.0.json",
+      "Bytes": 150388,
+      "SHA256": "b78b10ae4f5df2472f936ecbcb4e977dbbf0ac1349b016ca0096462c4d259cc3"
+    },
+    {
+      "Path": "evidence/t8-media-continuity-0.12.0.json",
+      "Bytes": 5241,
+      "SHA256": "c74bcb278208b959ce593d3445972a9fdb2e19f72d52c96f33ba0af7d1f9ed81"
+    },
+    {
+      "Path": "evidence/t13-preview-pipeline-0.12.0.json",
+      "Bytes": 5146,
+      "SHA256": "723897fcbecfb7dafb37b1975aa1cedb91167692ca3ae2f0e17a30ff3447f395"
+    },
+    {
+      "Path": "evidence/production-exports-0.12.0.json",
+      "Bytes": 360,
+      "SHA256": "4933b32e0e83d6fd4d8d0d034a7558273febe5ee75949bd75fb18028d7013b83"
+    },
+    {
+      "Path": "evidence/production-host-0.12.0.json",
+      "Bytes": 406,
+      "SHA256": "489ed620f1a4ffe7eb11d49a7673a0ada77c985355efc3aed46e2592e10a1342"
+    }
+  ],
+  "LocalLogsRelativeToAppRoot": [
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/workspace-tests-0120.log",
+      "SHA256": "7deb26b7b548f86b010e591d87877156a32392eeef4ee82dce2ae6bfdb05826a"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/workspace-tests-0120-windows.log",
+      "SHA256": "91a5df49eaee7ff2a6406a021b73f0e684277243322298d52946e7bc8500ede1"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/media-feature-tests-0120.log",
+      "SHA256": "937fa03055d0184ac9d583267dc29d52a395fae2ee5c7e02e35d234bee32a942"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/media-feature-tests-0120-fixed.log",
+      "SHA256": "30542b506ccc4776b5b8e1537d8192e8e3b8d618bbeae4ecc4a13a6073b422a3"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/media-diagnostic-build-0120.log",
+      "SHA256": "fa0cf79b72891ba29810e1119b6eba855f76b93aa6fea525bb53af0ef4552f77"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/continuity-probe-0120.log",
+      "SHA256": "f92cc0e40aea6c23decab4542bb6748a33ad2ea8305f2c9d5061ede83d341256"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/preview-probe-0120.log",
+      "SHA256": "2075a5a42b788b020efc131dc2cf5734a6ff2040addbc742d7faa6a53a54225c"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/production-build-0120.log",
+      "SHA256": "fdac7f90e6c7b920fc09e98c289ab271b01dada20ad17738d8c235f58f4a4c0e"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/all-targets-release-0120.log",
+      "SHA256": "1b2292d048555ddb583f5271c053af26885f026d98cdfddc999b592b4eea2cec"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/prepare-runtime.log",
+      "SHA256": "67df3e98a7f210170832e12129347d40739c55be82e6b5e50fc8b7638bb18ee6"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/package-0120.log",
+      "SHA256": "90847f45ad809da22838d407eda9168ba8caa3d0e6ffd888d909a45a51175128"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/verify-package-0120.log",
+      "SHA256": "f2f87c3987d1add4e3666b77f9d0f1d09e0802b5742dab853031e53ddb458e8d"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/production-host-0120.log",
+      "SHA256": "bfb44a02b0571174696ab8a0c26d8222497bcae129d9a88efafaa1ce1d29a4be"
+    },
+    {
+      "Path": "../.tools/temp/current/calls-0120-20261106/installer-build-0120.log",
+      "SHA256": "e0650c5ee41b5b4c802f1767544f54cb34c689d1f4ab9d2dbaab51434645d885"
+    }
+  ]
+}

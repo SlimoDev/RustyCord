@@ -587,10 +587,10 @@ pub(super) async fn run(
     let mut delivery = Delivery::new(events.clone());
     let mut sequence = None;
     let mut session_id: Option<String> = None;
-    // One automatic attempt per lost session. A first failed open has none, and
-    // only a session that stayed stable earns a new one: flapping cannot loop.
-    let mut recovery_available = false;
-    let mut established_once = false;
+    // One shared compound episode: Gateway, then only the retained voice and
+    // viewer intentions. A failed substep cannot mint another automatic budget.
+    recovery.budget.configure(policy.stable, policy.manual_cooldown);
+    let mut gateway_attempt: Option<RecoveryPermit> = None;
     let mut recovering = false;
     let mut status = initial_status
         .filter(|value| settings_proto::valid_presence(value))
@@ -603,6 +603,22 @@ pub(super) async fn run(
     let identify_window = Arc::new(IdentifyWindow::default());
     'connections: while !cancel.is_cancelled() && safety.state() == SafetyState::Allowed {
         drain_disconnected_clears(&mut commands, &mut status, &mut activity, &mut presence_requested,&game_policy);
+        // A positive power pause never opens a replacement while suspended.
+        // Continue draining only local privacy clears and bounded deliveries.
+        while recovery.power.paused() {
+            let output=delivery.output.clone(); let deadline=delivery.deadline();
+            let far=Instant::now()+Duration::from_secs(86_400);
+            tokio::select! {biased;
+                _=cancel.cancelled()=>break 'connections,
+                _=safety.wait_blocked()=>break 'connections,
+                _=sleep_until(deadline.unwrap_or(far)),if deadline.is_some()=>{safety.block(SafetyState::SynchronizationRequired);break 'connections;},
+                permit=output.reserve(),if !delivery.pending.is_empty()=>match permit{Ok(permit)=>delivery.send(permit),Err(_)=>break 'connections},
+                envelope=commands.recv()=>match envelope{Some(envelope)=>disconnected_command(envelope,&mut status,&mut activity,&mut presence_requested,&game_policy),None=>break 'connections},
+                _=game_policy.changed.notified()=>{synchronize_game_policy(&mut activity,&mut presence_requested,&game_policy);},
+                _=recovery.power.resumed()=>{},
+            }
+        }
+        let power_epoch=recovery.power.epoch();
         if !delivery.push(GatewayEvent::Status("Conectando".into()), &safety)
             || !delivery.push(connection_event(if recovering {ConnectionPhase::Recovering} else {ConnectionPhase::Connecting},Duration::ZERO,false), &safety)
         {
@@ -611,16 +627,17 @@ pub(super) async fn run(
         let config = WebSocketConfig::default()
             .max_message_size(Some(32 * 1024 * 1024))
             .max_frame_size(Some(32 * 1024 * 1024));
-        let connection = tokio::select! {biased;_=cancel.cancelled()=>break,_=safety.wait_blocked()=>break,result=tokio::time::timeout(policy.connect,connect_async_with_config(&url,Some(config),false))=>result};
-        let mut stable = false;
-        let mut established = false;
+        let connection = tokio::select! {biased;_=cancel.cancelled()=>break,_=safety.wait_blocked()=>break,
+            _=recovery.power.changed(power_epoch)=>None,
+            result=tokio::time::timeout(policy.connect,connect_async_with_config(&url,Some(config),false))=>Some(result)};
         let mut cooldown = Duration::ZERO;
         match connection {
-            Ok(Ok((socket, _))) => {
+            Some(Ok(Ok((socket, _)))) => {
                 let (sink, mut stream) = socket.split();
                 let (controls, control_rx) = mpsc::channel(CONTROL_QUEUE);
                 let (users, user_rx) = mpsc::channel(USER_QUEUE);
                 let writer_cancel = cancel.child_token();
+                recovery.power.register_writer(power_epoch,writer_cancel.clone());
                 let mut writer_task = tokio::spawn(writer(
                     sink,
                     control_rx,
@@ -632,10 +649,9 @@ pub(super) async fn run(
                     identify_window.clone(),
                     game_policy.clone(),
                 ));
+                let mut writer_joined = false;
                 let mut hello_at = Some(Instant::now() + policy.hello);
                 let mut ready_at = None;
-                let mut ready_since = None;
-                let mut acknowledged = false;
                 let mut resume_handshake = None;
                 let mut handshake_complete = false;
                 let mut prefer_command = false;
@@ -650,6 +666,7 @@ pub(super) async fn run(
                         biased;
                         _=cancel.cancelled()=>break,
                         _=safety.wait_blocked()=>break,
+                        _=recovery.power.changed(power_epoch)=>break,
                         _=game_policy.changed.notified()=>{
                             if synchronize_game_policy(&mut activity,&mut presence_requested,&game_policy) && ready.load(Ordering::Acquire) && settings_proto::valid_presence(&status) {
                                 if !user(&users,activity.envelope(&status,show_current_game,&game_policy),&safety){break;}
@@ -664,7 +681,7 @@ pub(super) async fn run(
                             if !control(&controls,json!({"op":1,"d":sequence}),&safety) {break;}
                             heartbeat_at=Some(Instant::now()+heartbeat_interval);
                         },
-                        _=&mut writer_task=>{break;},
+                        _=&mut writer_task=>{writer_joined=true;break;},
                         permit=output.reserve(),if !delivery.pending.is_empty()=>match permit {Ok(permit)=>delivery.send(permit),Err(_)=>{cancel.cancel();break;}},
                         received=stream.next(),if !prefer_command || commands.is_empty()=>{
                             prefer_command=true;
@@ -691,7 +708,7 @@ pub(super) async fn run(
                                     }
                                     if !authentication_control(&controls,token.as_str(),session_id.as_deref(),sequence,&status,&safety) {break;}
                                 },
-                                11=>{heartbeat_ack=true;acknowledged=true;},
+                                11=>{heartbeat_ack=true;recovery.budget.acknowledge();},
                                 1=>{if !control(&controls,json!({"op":1,"d":sequence}),&safety) {break;}},
                                 7=>break,
                                 9=>{if data.as_bool()!=Some(true) {session_id=None;sequence=None;url=initial_url.clone();}break;},
@@ -711,7 +728,9 @@ pub(super) async fn run(
                                     if matches!(kind.as_str(),"READY"|"RESUMED") {
                                         drain_disconnected_clears(&mut commands,&mut status,&mut activity,&mut presence_requested,&game_policy);
                                         handshake_complete=true;
-                                        ready_at=None;ready_since=Some(Instant::now());ready.store(true,Ordering::Release);
+                                        if !recovery.power.mark_ready(power_epoch,&ready) {break;}
+                                        ready_at=None;recovery.budget.gateway_ready(Instant::now());
+                                        if let Some(attempt)=gateway_attempt.take() {attempt.finish(true);}
                                         if !delivery.push(GatewayEvent::Status("En línea".into()),&safety) {break;}
                                         if !delivery.push(connection_event(ConnectionPhase::Synchronized,Duration::ZERO,kind=="RESUMED"),&safety) {break;}
                                         if let Some(command)=subscription.clone() {if !user(&users,Envelope{command,done:None,game_epoch:game_policy.current().0},&safety){break;}}
@@ -756,22 +775,20 @@ pub(super) async fn run(
                         },
                     }
                 }
-                stable = acknowledged
-                    && ready_since.is_some_and(|at: Instant| at.elapsed() >= policy.stable);
-                established = handshake_complete;
                 writer_cancel.cancel();
                 // The sink is independently owned, so cancellation closes it
                 // even when the reader is idle or the UI stopped consuming.
-                if !writer_task.is_finished() {
-                    let _ = tokio::time::timeout(
+                if !writer_joined && tokio::time::timeout(
                         policy.write + Duration::from_secs(1),
                         &mut writer_task,
-                    )
-                    .await;
+                    ).await.is_err() {
+                    writer_task.abort();
+                    // An abort request is not a completed writer. Observe its
+                    // termination before another connection can replace it.
+                    let _ = writer_task.await;
                 }
-                writer_task.abort();
             }
-            Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response)))
+            Some(Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response))))
                 if response.status().as_u16() == 401 =>
             {
                 safety.block(SafetyState::AuthenticationRequired);
@@ -779,6 +796,8 @@ pub(super) async fn run(
             _ => {}
         }
         ready.store(false, Ordering::Release);
+        if let Some(attempt) = gateway_attempt.take() { attempt.finish(false); }
+        recovery.budget.gateway_lost(Instant::now());
         while let Ok(envelope) = commands.try_recv() {
             if safety.state() == SafetyState::Allowed && !cancel.is_cancelled() {
                 disconnected_command(envelope,&mut status,&mut activity,&mut presence_requested,&game_policy);
@@ -787,14 +806,14 @@ pub(super) async fn run(
         if cancel.is_cancelled() || safety.state() != SafetyState::Allowed {
             break;
         }
-        recovery_available |= stable || established && !established_once;
-        established_once |= established;
-        let stopped = !std::mem::take(&mut recovery_available);
+        gateway_attempt = recovery.budget.try_part(RecoveryPart::Gateway, Instant::now());
+        let stopped = gateway_attempt.is_none();
         recovering = true;
         let mut until = Instant::now()
             + policy.backoff.mul_f64(2.)
             + policy.backoff.mul_f64(rand::random::<f64>());
         until = until.max(Instant::now() + cooldown);
+        until = until.max(Instant::now() + recovery.budget.wait(Instant::now()));
         if session_id.is_none()
             && let Some(at) = identify_window.until(policy.identify_gap)
         {
@@ -841,7 +860,11 @@ pub(super) async fn run(
                 permit=output.reserve(),if !delivery.pending.is_empty()=>match permit {Ok(permit)=>delivery.send(permit),Err(_)=>break 'connections},
                 _=game_policy.changed.notified()=>{synchronize_game_policy(&mut activity,&mut presence_requested,&game_policy);},
                 envelope=commands.recv()=>match envelope {Some(envelope)=>disconnected_command(envelope,&mut status,&mut activity,&mut presence_requested,&game_policy),None=>break 'connections},
-                _=recovery.wait(),if offered=>break,
+                _=recovery.wait(),if offered=>{
+                    if let Some(attempt)=recovery.budget.manual_gateway(Instant::now()) {
+                        gateway_attempt=Some(attempt);break;
+                    }
+                },
                 _=sleep_until(until),if waiting=>{},
             }
         }

@@ -15,3 +15,4 @@ t6-production-host-0110.json -text whitespace=blank-at-eol,blank-at-eof,space-be
 t6-source-cut-0.11.0.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 source-git-map-0.11.0.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 publication-0.11.0.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+*0.12.0*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

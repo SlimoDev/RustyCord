@@ -1751,6 +1751,11 @@ impl eframe::App for NotDiscordUi {
             self.draw_timestamp_picker(ctx,&state);
             self.draw_text_viewer(ctx,&state);
             crate::diagnostics::draw(ctx);
+            if let Some(kind)=crate::diagnostics::take_voice_action(ctx){
+                let mut action=UiAction::new(kind);
+                action.extra=serde_json::json!({"accountId":state.current_user.as_ref().map(|u|u.id.as_str()).unwrap_or(""),"generation":state.notification_generation,"voiceAttempt":state.call_instance_id}).to_string();
+                let _=self.command.send(action);
+            }
             self.flush_game_queries();
         }
         self.update_member_demand(ctx, &state);

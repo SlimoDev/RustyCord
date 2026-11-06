@@ -2049,7 +2049,14 @@ impl NotDiscordUi {
                             ui.spacing_mut().button_padding = egui::vec2(1., 0.);
                             let user = state.current_user.clone().unwrap_or_default();
                             let display_presence = self.visual_presence(state);
+                            let voice_ring=ui.painter().add(egui::Shape::Noop);
                             let avatar = self.avatar(ui, &user, &display_presence, 40.);
+                            if super::voice::self_speaking(state) {
+                                // Insert behind the avatar so its presence dot
+                                // and the existing menu remain unobscured.
+                                ui.painter().set(voice_ring,super::voice::speaking_ring(avatar.rect));
+                            }
+                            #[cfg(test)] ui.ctx().data_mut(|data|data.insert_temp(egui::Id::new("account-avatar"),avatar.rect));
                             if avatar.secondary_clicked() {super::menus::requested(ui.ctx(),egui::Popup::default_response_id(&avatar));}
                             avatar.context_menu(|ui| self.account_menu(ui, state));
                             egui::Popup::menu(&avatar)
@@ -2763,7 +2770,7 @@ impl NotDiscordUi {
         self.emoji_section(ui,"profile-emojis",|this,ui|this.draw_profile_inner(ui,state));
     }
     fn draw_profile_inner(&mut self, ui: &mut egui::Ui, state: &AppSnapshot) {
-        self.draw_chat_return_header(ui, "return-chat");
+        self.draw_chat_return_header(ui, "return-chat", state);
         let Some(person) = state.profile_user.as_ref() else {
             ui.label("Cargando perfil…");
             return;
@@ -2998,6 +3005,143 @@ fn role_color(color: i32, fallback: Color32) -> Color32 {
 #[cfg(test)]
 mod shell_tests {
     use super::*;
+    /// Use the same extraction boundary as NotDiscordUi::update: helpers must
+    /// consume the frame snapshot while self.state temporarily holds welcome.
+    fn extracted_frame(app:&mut NotDiscordUi,state:&AppSnapshot,events:Vec<egui::Event>)->egui::FullOutput {
+        app.state=state.clone();
+        let state=std::mem::replace(&mut app.state,AppSnapshot::welcome());
+        let ctx=app.ctx.clone();
+        let output=ctx.run(egui::RawInput {
+            screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1280.,900.))),events,..Default::default()
+        },|ctx| {
+            assert!(!app.state.signed_in);
+            assert!(app.state.selected_channel_id.is_empty());
+            app.draw_shell(ctx,&state);
+            assert!(app.state.selected_channel_id.is_empty());
+        });
+        app.state=state;
+        output
+    }
+    #[test]
+    fn profile_return_uses_the_extracted_frame_from_sidebar_member_and_history_origins() {
+        for origin in ["dm-sidebar","group-member","history-author","pins-author"] {
+            for offline in [false,true] {
+                let (mut app,mut commands)=harness();
+                app.ctx.style_mut(|style|style.animation_time=0.);
+                app.prefs.show_dm_profile=true;app.prefs.show_group_members=true;app.prefs.send_typing=false;
+                let peer=Person {id:"300".into(),name:"Frame peer".into(),username:"framepeer".into(),..Default::default()};
+                let mut state=AppSnapshot {signed_in:true,notification_generation:7,
+                    current_user:Some(Person {id:"100".into(),name:"Local user".into(),..Default::default()}),
+                    selected_channel_id:"200".into(),selected_channel_kind:"dm".into(),view:"chat".into(),
+                    channel_access:ChannelAccess::private(),self_presence:"online".into(),
+                    connection_phase:if offline {ConnectionPhase::RetryAvailable}else{ConnectionPhase::Synchronized},
+                    ..Default::default()};
+                state.direct_messages=vec![NavItem {id:"200".into(),kind:"dm".into(),name:"Synthetic DM".into(),recipient_id:peer.id.clone(),..Default::default()}];
+                app.dm_sidebar_user_id=peer.id.clone();
+                app.dm_sidebar_profile=Some(ProfileDetails {user:peer.clone(),..Default::default()});
+                if origin=="group-member" {
+                    state.selected_channel_kind="group".into();state.direct_messages[0].kind="group".into();
+                    state.group_members=vec![ChannelMember {user:peer.clone(),..Default::default()}];
+                }
+                if matches!(origin,"history-author"|"pins-author") {
+                    state.view=if origin=="history-author" {"history"}else{"pins"}.into();
+                    let message=ChatMessage {id:"400".into(),channel_id:"200".into(),author:peer.clone(),content:"Retained message".into(),..Default::default()};
+                    state.messages=vec![message.clone()].into();state.pinned_messages=vec![message];
+                }
+                app.drafts.insert("200".into(),Draft {text:"Retained frame draft".into(),..Default::default()});
+                let original_view=state.view.clone();
+                let mut output=extracted_frame(&mut app,&state,vec![]);
+                for _ in 0..3 {output=extracted_frame(&mut app,&state,vec![]);}
+                let entry=text(&output,if origin=="dm-sidebar" {"Ver perfil completo"}else{"Frame peer"}).expect("profile entry from the actual shell frame");
+                for pressed in [true,false] {extracted_frame(&mut app,&state,pointer(entry,egui::PointerButton::Primary,pressed));}
+                let opened=std::iter::from_fn(||commands.try_recv().ok()).find(|action|action.kind=="profile").expect("entry opens the requested profile");
+                assert_eq!((opened.id.as_str(),opened.channel_id.as_str()),("300","200"));
+                let position=app.positions.get("200").map(|position|position.offset);
+                state.view="profile".into();state.profile_user=Some(peer);
+                for _ in 0..3 {output=extracted_frame(&mut app,&state,vec![]);}
+                let back=text(&output,"← Volver al chat").expect("profile return button");
+                for _ in 0..2 {
+                    for pressed in [true,false] {extracted_frame(&mut app,&state,pointer(back,egui::PointerButton::Primary,pressed));}
+                }
+                let returned=std::iter::from_fn(||commands.try_recv().ok()).filter(|action|action.kind=="return-chat").collect::<Vec<_>>();
+                assert_eq!(returned.len(),2);
+                for action in returned {
+                    assert_eq!(action.channel_id,"200");
+                    assert_eq!(serde_json::from_str::<Value>(&action.extra).unwrap()["navigationContext"],
+                        serde_json::json!({"account":"100","generation":7,"guild":"","view":"profile"}));
+                }
+                state.view=original_view;state.profile_user=None;
+                extracted_frame(&mut app,&state,vec![]);
+                assert_eq!(app.drafts["200"].text,"Retained frame draft");
+                if let Some(position)=position {assert_eq!(app.positions["200"].offset,position);}
+            }
+        }
+    }
+    fn voice_rings(output:&egui::FullOutput)->Vec<(egui::Pos2,f32,egui::Rect)> {
+        fn collect(shape:&egui::Shape,clip:egui::Rect,rings:&mut Vec<(egui::Pos2,f32,egui::Rect)>) {
+            match shape {
+                egui::Shape::Circle(circle) if circle.stroke.width==3. && circle.stroke.color==presence_color("online")=>rings.push((circle.center,circle.radius,clip)),
+                egui::Shape::Vec(shapes)=>for shape in shapes {collect(shape,clip,rings);},
+                _=>{},
+            }
+        }
+        let mut rings=Vec::new();
+        for shape in &output.shapes {collect(&shape.shape,shape.clip_rect,&mut rings);}
+        rings
+    }
+    #[test]
+    fn account_and_call_voice_circles_share_the_same_frame_signal_and_silence_guards() {
+        let (mut app,mut commands)=harness();
+        // Area fades tint its Painter colors until animation_time elapses.
+        // This fixture compares the settled paint on both actual surfaces.
+        app.ctx.style_mut(|style|style.animation_time=0.);
+        app.prefs.show_dm_profile=false;app.prefs.show_group_members=false;app.prefs.send_typing=false;
+        let me=Person {id:"100".into(),name:"Speaking self".into(),..Default::default()};
+        let state=AppSnapshot {signed_in:true,current_user:Some(me.clone()),view:"chat".into(),
+            selected_channel_id:"200".into(),selected_channel_kind:"dm".into(),channel_access:ChannelAccess::private(),
+            voice_connected:true,voice_encryption_ready:true,call_channel_id:"200".into(),call_instance_id:42,
+            self_presence:"online".into(),call_participants:vec![CallParticipant {user:me,is_self:true,speaking:true,..Default::default()}],
+            ..Default::default()};
+        for cause in ["none","silent","mute","deaf","server-mute","server-deaf","self-mute","self-deaf","left","cipher","attempt","identity","participant-owner"] {
+            let mut snapshot=state.clone();
+            match cause {
+                "silent"=>snapshot.call_participants[0].speaking=false,
+                "mute"=>snapshot.call_participants[0].self_mute=true,
+                "deaf"=>snapshot.call_participants[0].self_deaf=true,
+                "server-mute"=>snapshot.call_participants[0].server_mute=true,
+                "server-deaf"=>snapshot.call_participants[0].server_deaf=true,
+                "self-mute"=>snapshot.self_mute=true,
+                "self-deaf"=>snapshot.self_deaf=true,
+                "left"=>snapshot.voice_connected=false,
+                "cipher"=>snapshot.voice_encryption_ready=false,
+                "attempt"=>snapshot.call_instance_id=0,
+                "identity"=>snapshot.current_user.as_mut().unwrap().id="101".into(),
+                "participant-owner"=>snapshot.call_participants[0].is_self=false,
+                _=>{},
+            }
+            for _ in 0..3 {extracted_frame(&mut app,&snapshot,vec![]);}
+            let output=extracted_frame(&mut app,&snapshot,vec![]);
+            let rings=voice_rings(&output);
+            assert_eq!(rings.len(),if cause=="none" {2}else{0},"both surfaces must agree for {cause}");
+            if cause=="none" {
+                let account=app.ctx.data(|data|data.get_temp::<egui::Rect>(egui::Id::new("account-avatar"))).expect("painted account avatar");
+                let gallery=app.ctx.data(|data|data.get_temp::<egui::Rect>(egui::Id::new(("participant-avatar","account:100:call:200:42","100")))).expect("painted call participant avatar");
+                assert!(account.center().distance(gallery.center())>54.,"the fixture must expose two distinct surfaces");
+                assert_eq!(rings.iter().filter(|(center,radius,_)|center.distance(account.center())<0.1&&*radius==22.).count(),1,"40-point account avatar has its own outer ring");
+                assert_eq!(rings.iter().filter(|(center,radius,_)|center.distance(gallery.center())<0.1&&*radius==29.).count(),1,"54-point gallery avatar has its own outer ring");
+                for (center,radius,clip) in rings {
+                    let bounds=egui::Rect::from_center_size(center,egui::Vec2::splat((radius+1.5)*2.));
+                    assert!(clip.contains_rect(bounds),"the full speaking stroke must be inside its visible clip");
+                }
+            }
+        }
+        let mut elsewhere=state.clone();elsewhere.selected_channel_id="201".into();
+        for _ in 0..3 {extracted_frame(&mut app,&elsewhere,vec![]);}
+        assert_eq!(voice_rings(&extracted_frame(&mut app,&elsewhere,vec![])).len(),1,
+            "the account signal remains visible when the call panel belongs to another conversation");
+        assert!(!super::super::voice::call_panel_visible(&elsewhere));
+        assert!(commands.try_recv().is_err(),"a speaking ring cannot start a detector, capture or network query");
+    }
     #[test]
     fn category_title_right_edge_toggles_children_in_the_same_frame_without_actions() {
         let (mut app,mut commands)=harness(); let ctx=app.ctx.clone();

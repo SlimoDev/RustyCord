@@ -16,6 +16,7 @@ pub(super) struct Sends {
 }
 impl Sends {
     pub(super) fn clear(&mut self) { *self = Self::default(); }
+    pub(super) fn retry_in_flight(&self) -> bool { self.retrying.is_some() }
     fn nonce_of(&self, submission: &str) -> Option<String> {
         self.entries.iter().find(|(_, entry)| entry.submission == submission).map(|(nonce, _)| nonce.clone())
     }

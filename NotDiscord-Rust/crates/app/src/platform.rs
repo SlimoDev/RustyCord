@@ -1,3 +1,4 @@
+pub mod power;
 use std::{
     borrow::Cow,
     collections::VecDeque,

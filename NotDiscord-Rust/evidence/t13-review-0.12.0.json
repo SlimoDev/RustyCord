@@ -1,0 +1,2744 @@
+{
+  "schema": 1,
+  "date": "2026-11-06",
+  "version": "0.12.0",
+  "base_revision": "3bee4c8c6a9e7442817302850286d170c56976ad",
+  "source_cut_sha256": "b953c4e22ef2384c5424917ac28f94479e7411910b25e7ecefaa1713fba4691e",
+  "method": "Revisión estática por entradas, salidas, propietarios, autoridad, errores, cancelación y límites; no certificación línea por línea ni auditoría de dependencias/vendor. Las huellas de entrega identifican el corte final; las huellas de revisión son snapshots independientes, cuando el revisor las proporcionó. Una huella actual no prueba por sí sola el alcance de lectura.",
+  "execution": {
+    "client": false,
+    "accounts": false,
+    "devices": false,
+    "real_suspend": false,
+    "third_party_engine": false,
+    "performance_measurements": false,
+    "remote_microphone_audibility_verified": false,
+    "integrated_test_results": "Registrados por separado en delivery-0.12.0-local.json y la nota de implementación; las notas de cada revisor conservan sus límites temporales."
+  },
+  "coverage": {
+    "current_rust_src_files": 174,
+    "covered": 174,
+    "missing": [],
+    "outside_inventory": [],
+    "shared_responsibilities": [
+      "crates/app/src/platform/power.rs",
+      "crates/media-addon/src/host/voice_resume.rs",
+      "crates/media-addon/src/host/voice_socket.rs"
+    ]
+  },
+  "reviews": [
+    {
+      "name": "ui",
+      "method": "Static review of ingress, egress, state ownership and bounded work. New synthetic fixtures are source changes; execution belongs to the integrating agent. This is not a complete security audit or a measured performance report.",
+      "findings": [],
+      "limitations": null
+    },
+    {
+      "name": "calls",
+      "method": "T13 revisión estática por responsabilidades de core y perímetros de conexión/red/persistencia/updates app, con implementación T9 de transporte/owner. No es certificación de ausencia de fallos ni auditoría de dependencias/vendor.",
+      "findings": [
+        "El presupuesto previo local de Gateway no coordinaba voz/view: cambiado a una sola Arc/lease de episodio compuesto.",
+        "Un AbortHandle sin Join no acredita fin: reemplazos observan terminación.",
+        "Integración de root debe incluir Sends.retrying/ACK/productores opcionales, preservar Api y no rearmar por GatewayHandle recreado.",
+        "No se modifican cuotas, entitlements, semántica de menciones, DPAPI, actualizador ni dependencias sin defecto adicional demostrado.",
+        "No hay métricas de rendimiento ni prueba de audibilidad/suspensión real; no afirmarlas.",
+        "Hold de tráfico opcional por voz/viewer se separa de pérdida de autoridad Gateway: no invalidar consultas ya emitidas sólo por error de receptor.",
+        "Corrección final T9: liberar capturas locales de Fresh no depende de admisión de recuperación de red ni de native_voice; el ACK de cierre de todos los propietarios antecede al único VoiceState de canal actual."
+      ],
+      "limitations": {
+        "client": false,
+        "engine": false,
+        "accounts": false,
+        "devices": false,
+        "suspend_real": false,
+        "workspace_build": false,
+        "tests_run": false,
+        "checks": "rustfmt parser; diff --check; rustc --test --emit metadata de shared_recovery real con Tokio rlib existente (typecheck, no ejecución)",
+        "integrated_validation_reported_by_root": {
+          "all_targets_check": "passed;27.21s",
+          "voice_focal_before_final_diagnostic_visual_patch": "115 passed;0 failed",
+          "current_full_suite": "pending;root runs it after final freeze",
+          "this_agent_reran_tests": false
+        }
+      }
+    },
+    {
+      "name": "app-rest",
+      "method": "Read-only review of production responsibility boundaries, ingress, egress, errors, owner context, cancellation, locks and bounds. Existing test modules were inspected for fixture responsibility; they were not executed. Large dispatch modules were reviewed through their action, completion, permission and resource boundaries rather than as a line-by-line security certification.",
+      "findings": [],
+      "limitations": "No account, real UI, network, media device, capture, native monitor, compilation, test suite or benchmark was executed for this pass. No p95, RAM or CPU result is claimed. No product edits were made as part of this remaining-files review."
+    },
+    {
+      "name": "media",
+      "method": "T13: revisión estática de todos los archivos Rust de media-addon/src por entradas, salidas, límites, propiedad y cancelación. Incluye cambios T8/T9/T7 y el defecto demostrado de solapamiento de preview. No certifica ausencia de otros fallos ni audita codecs/vendor.",
+      "findings": [
+        "C5: los 19 VoiceInputState descritos en el plan no correlacionan deseo VAD/PTT y paquetes de audio; no permiten localizar la causa física. Se instrumentó captura local voluntaria tipada de hasta 10 s, sin GET ni polling permanente.",
+        "Las estadísticas agregadas de transporte con vídeo no prueban paquetes de micrófono. Los nuevos deltas usan sólo outbound.audio de la conexión principal, no rellenan ausencias con cero y rebajan baseline tras rekey/reset.",
+        "Un timeout/cancelación no demuestra fin de consulta nativa. Los leases de estadísticas y preview sobreviven hasta callback exacto o destrucción de su dueño.",
+        "Preview: el timeout previo de 5 s limpiaba pending y rearmaba a 750 ms, pudiendo acumular consultas sin conclusión. Ahora expira esa selección, conserva la consulta pendiente y difiere la última selección nueva hasta su conclusión. Un callback antiguo libera su lease sin mostrar imagen antigua; duplicados no liberan reemplazos.",
+        "El cierre previo de sesiones confirmaba IPC antes del Join del socket. StopShare, StopWatchStream y Disconnect esperan una barrera asíncrona observada; un destroy rechazado conserva liberación desconocida.",
+        "Resume conserva conexión y DAVE en RAM, pero no abre transmisión antes de Hello/op9 y cifrado vigente. seq_ack sigue un prefijo aplicado contiguo, incluidos callbacks nativos pendientes. No hay reintento autónomo ni fallback Identify del host.",
+        "La suspensión de voz quiesce también su publicación GoLive y espera liberación; la selección explícita pertenece al actor. Cámara fallida no cierra la voz principal.",
+        "No se cambió streamParameters bajo la hipótesis descartada de sustitución total. No se promete ahorro de CPU/RAM ni solución audible del micrófono. No se buscó el diagnóstico original fuera de los adjuntos conocidos.",
+        "Reanudación del 6 de noviembre: E0425 de preview.rs provenía de construir width/height/callback dentro de la rama Promise y usar args fuera de su ámbito. Se movió a la rama callback y se comprueba ambas ABI con RGBA sintético.",
+        "Disconnect ya recorre todas las sesiones: incluye una publicación GoLive huérfana aun sin voice. Nuevo fixture fake exige ausencia de ACK antes de SocketJoined y un único ACK después de destroy/join. Los 64 ciclos StopWatch ahora bombean el runtime/mailbox de fakes para observar las barreras reales en vez de acumular waiters."
+      ],
+      "limitations": {
+        "client": false,
+        "engine": false,
+        "accounts": false,
+        "devices": false,
+        "suspend_real": false,
+        "workspace_build_by_this_agent": false,
+        "checks": "Parser rustfmt emit-stdout y git diff --check. Root confirmó check all-targets/native-probe y 53 unit tests antes de la corrección final del lease de preview.",
+        "pending": "Root debe compilar las fuentes integradas y ejecutar los drivers N-API con fakes, sin engine/cuentas/dispositivos.",
+        "performance_measurements": false,
+        "remote_audibility_verified": false
+      }
+    },
+    {
+      "name": "root",
+      "method": "Static review of responsibility boundaries, admissions, source authority, mandatory closes, completion identity, resource bounds and diagnostic schemas. Large voice.rs was reviewed through its production action, completion, dispatch, frame and teardown paths, plus source lifecycle fixtures; this is not a line-by-line security certification.",
+      "findings": [
+        "Confirmed T8 ownership defect: every primary bridge used video namespace zero as diagnostic owner. A replacement primary bridge could reuse capture token one, allowing an old primary bridge's late start/sample/end into the new capture before the actor's generation guard. Corrected with a monotonic, private diagnostic owner per bridge, separate from video namespace. Scope zero cannot authorize capture. The ID does not enter exported diagnostics.",
+        "New synthetic fixture creates two primary bridge fakes with reused capture token one. It checks distinct scope, clone identity, old start/sample/end rejection, preservation of replacement ownership and valid replacement completion. Execution is pending root's integrated suite.",
+        "Confirmed C1 wording and reason issues were corrected by actor_finish: receiver failure no longer advertises residual manual retry, and unexpected own STREAM_DELETE retains fixed bounded StreamFull/Unauthorized/Unknown cause, revokes selected share before cleanup and preserves main audio/camera. Three-reason actor fixture awaits root execution.",
+        "Source publication and viewer ownership remain distinct. Ended/unavailable phases cannot be revived by decoder callbacks; explicit publisher withdrawal retires screen intent without camera or voice teardown. Mandatory close jobs retain native and writer completion outside the actor.",
+        "No physical microphone cause, remote audibility, real suspend/resume or CPU/RAM/p95 improvement is established by this review. T8 remains instrumented with its audible acceptance case open. Existing quotas, private IPC, process capture gate and typed export were retained."
+      ],
+      "limitations": {
+        "client": false,
+        "engine": false,
+        "accounts": false,
+        "devices": false,
+        "suspend_real": false,
+        "build_or_tests_by_this_agent": false,
+        "checks": "git diff --check of media.rs and diagnostics.rs passed. Root must execute integrated checks after all source owners finish.",
+        "performance_measurements": false,
+        "remote_audibility_verified": false
+      }
+    }
+  ],
+  "files": [
+    {
+      "path": "crates/app/src/auth_job.rs",
+      "delivery_sha256": "59e988a308bd6cb0d321468cfbe7950536ed705c05f038398af1c2227d90032b",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/auth_job.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "JobObject privado kill-on-close y wait-empty acotado; sin escaneo de procesos externos.",
+          "sha256_review_snapshot": "59e988a308bd6cb0d321468cfbe7950536ed705c05f038398af1c2227d90032b",
+          "review_snapshot_sha256": "59e988a308bd6cb0d321468cfbe7950536ed705c05f038398af1c2227d90032b"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/auth_lifecycle.rs",
+      "delivery_sha256": "910e5f607e044a7da0d7a95e5ad7fee965b9c0a29ba3005ba0418f68f3a9ae63",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/auth_lifecycle.rs",
+          "status": "revisado-perimetro-sin-cambio",
+          "notes": "Jobs y perfiles propios con registros/leases; espera árbol vacío antes limpiar; límites de scan.",
+          "sha256_review_snapshot": "910e5f607e044a7da0d7a95e5ad7fee965b9c0a29ba3005ba0418f68f3a9ae63",
+          "review_snapshot_sha256": "910e5f607e044a7da0d7a95e5ad7fee965b9c0a29ba3005ba0418f68f3a9ae63"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/auth_webview_probe.rs",
+      "delivery_sha256": "bf1a5418b584ac127e433d047add03ed41de583bd1e022d90d91dff3d03dc440",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/auth_webview_probe.rs",
+          "status": "prueba-no-ejecutada",
+          "notes": "Probe de WebView fuera del alcance de ejecución actual; no se ejecutó login ni browser.",
+          "sha256_review_snapshot": "bf1a5418b584ac127e433d047add03ed41de583bd1e022d90d91dff3d03dc440",
+          "review_snapshot_sha256": "bf1a5418b584ac127e433d047add03ed41de583bd1e022d90d91dff3d03dc440"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/authentication.rs",
+      "delivery_sha256": "c7caf71af5da8b7bc0eae02dbef47f6bfc27c88a1f84306324760b1f59d3291a",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/authentication.rs",
+          "status": "revisado-perimetro-sin-cambio",
+          "notes": "WebView propio, origen y autorización aislados; Credential redacted/zeroizing; limpieza con owner independiente de cancelación.",
+          "sha256_review_snapshot": "c7caf71af5da8b7bc0eae02dbef47f6bfc27c88a1f84306324760b1f59d3291a",
+          "review_snapshot_sha256": "c7caf71af5da8b7bc0eae02dbef47f6bfc27c88a1f84306324760b1f59d3291a"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/backdrop.rs",
+      "delivery_sha256": "a92963a6a24f5c666d4f7694a8a7533342f280a701c2fe004f19dc1dd050252a",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/backdrop.rs",
+          "scope": "Native composition layer and root subclass ownership",
+          "evidence": "Finite clamped blur input, cached attempted HWND/level, recoverable error string; NativeBackdrop owns compositor/effect/window/subclass and removes/closes/destroys them in Drop; no network or media capture",
+          "decision": "Reviewed; no concrete new defect established",
+          "limitations": "Native composition lifecycle boundaries inspected; no window creation, visual test or GPU measurement.",
+          "review_snapshot_sha256": "a92963a6a24f5c666d4f7694a8a7533342f280a701c2fe004f19dc1dd050252a"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/brand.rs",
+      "delivery_sha256": "ec895d562f3884f73df99bf87f78557c0a78c8cdb18824ce4f2a7ae99f735efd",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/brand.rs",
+          "scope": "Edition desktop identity constants",
+          "evidence": "Static name, APP_ID, data and shortcut constants only",
+          "decision": "Reviewed; no change",
+          "limitations": "No runtime state, input processing or resource owner in this file.",
+          "review_snapshot_sha256": "ec895d562f3884f73df99bf87f78557c0a78c8cdb18824ce4f2a7ae99f735efd"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller.rs",
+      "delivery_sha256": "864b1ae2c0c49bb00c1be55b9908a8b3307327d1f73494d82c09544ed0f1d1bf",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/controller.rs",
+          "status": "revisado-integracion-root",
+          "notes": "Actor/generaciones, clon Api raíz, login y cleanup: recuperar no debe reconstruir Api ni borrar Operations/RateLimits; cancelaciones de root. Root añadió PowerMonitor y power_reported, hooks T9 y cierres poseídos.",
+          "sha256_review_snapshot": "864b1ae2c0c49bb00c1be55b9908a8b3307327d1f73494d82c09544ed0f1d1bf",
+          "review_snapshot_sha256": "864b1ae2c0c49bb00c1be55b9908a8b3307327d1f73494d82c09544ed0f1d1bf"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/attachments.rs",
+      "delivery_sha256": "aeb001a54325f569f35e244a8e98b8d8be3bb2f60d1f13b33f8f8bb1f05f566f",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/attachments.rs",
+          "scope": "One explicit expired-attachment metadata refresh",
+          "evidence": "Valid channel/message, transport suspension and known ACL revocation checks; get_once around known message; completion finds exact message and attachment ID, otherwise correlated error reply",
+          "decision": "Reviewed; no concrete new defect established",
+          "limitations": "Session completion acceptance belongs to parent actor; no download or endpoint request executed.",
+          "review_snapshot_sha256": "aeb001a54325f569f35e244a8e98b8d8be3bb2f60d1f13b33f8f8bb1f05f566f"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/channel_catalog.rs",
+      "delivery_sha256": "6c43378cfc62486d9547ffafe8d4bdc116fbbe28a144727cafe3c5cd0062be6a",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/channel_catalog.rs",
+          "scope": "Guild-load delta reconciliation and thread catalogs",
+          "evidence": "GuildLoad replays Gateway deltas before ACL projection, caps512/2MiB and rejects overflow; catalog bounds2000 channels/1000 roles; thread cache eight guilds/2000 entries/300s, pending8; completion request token prevents stale overwrite, then revoke_access reapplies ACL",
+          "decision": "Reviewed; no change",
+          "limitations": "Selected guild/thread synchronization contracts reviewed statically; no HTTP/Gateway traffic or race stress run.",
+          "review_snapshot_sha256": "6c43378cfc62486d9547ffafe8d4bdc116fbbe28a144727cafe3c5cd0062be6a"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/connection.rs",
+      "delivery_sha256": "e06503831f94a5fdc0e67505e403b9180823d972b184f98a4eec960be7b2a63c",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/controller/connection.rs",
+          "status": "revisado-integracion-root",
+          "notes": "Antes espejo Gateway con restart separado; root integra episodio voz y gate opcional. Reemplazo de GatewayHandle no debe renovar automático gastado. Hold opcional separado de autoridad Gateway; campos efímeros power_episode/power_suspended deduplican avisos.",
+          "sha256_review_snapshot": "e06503831f94a5fdc0e67505e403b9180823d972b184f98a4eec960be7b2a63c",
+          "review_snapshot_sha256": "e06503831f94a5fdc0e67505e403b9180823d972b184f98a4eec960be7b2a63c"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/deleted_logs.rs",
+      "delivery_sha256": "4a7e6d2356e83e7d7d823c382caaa9be8ca16348841fd33aabcf5c8a9f70cfec",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/deleted_logs.rs",
+          "scope": "Explicit forgetting of observed local tombstones",
+          "evidence": "Valid target, known-deleted/live checks; reserve bounded purge marker before mutation; filters cache/history/pins/pending deltas; successful correlated UI preview purge follows forced snapshot; no Discord request or arbitrary file deletion",
+          "decision": "Reviewed; no change",
+          "limitations": "No local journal mutation executed; storage internals are a separate review.",
+          "review_snapshot_sha256": "4a7e6d2356e83e7d7d823c382caaa9be8ca16348841fd33aabcf5c8a9f70cfec"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/emoji_policy.rs",
+      "delivery_sha256": "3a8e15525b748de03f1ccfcf572c86952524f2645b9f03a951f38ed9d4ef9394",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/emoji_policy.rs",
+          "scope": "Effective custom-emoji permission and entitlement",
+          "evidence": "Available/roles/guild membership/premium/destination external permission checks; unknown external role restrictions denied; catalog500, cache3 and 300s; send path rechecks usability; no background role lookup",
+          "decision": "Reviewed; no change",
+          "limitations": "No subscription/account used; entitlement semantics follow the repository's existing contract.",
+          "review_snapshot_sha256": "3a8e15525b748de03f1ccfcf572c86952524f2645b9f03a951f38ed9d4ef9394"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/game_activity.rs",
+      "delivery_sha256": "ad7f66469533ee303d9359357b764d274b3339425e10612ce4169c8883166152",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/game_activity.rs",
+          "scope": "Privacy-authorized game detection and presence publication",
+          "evidence": "Configured opt-in and confirmed visible presence plus ready safe Gateway; scanning uses one blocking task every5s and cannot publish stale suspended result; manual/RPC/process priority; metadata changes coalesced15s; privacy revokes cached/queued rich epoch before reconnect; pending status write blocks automatic publication",
+          "decision": "Reviewed; no change",
+          "limitations": "No process scan, pipe, Gateway or account used; no CPU/polling measurement. Transport recovery edits after this cut require their own integration checks.",
+          "review_snapshot_sha256": "ad7f66469533ee303d9359357b764d274b3339425e10612ce4169c8883166152"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/game_activity/detection.rs",
+      "delivery_sha256": "198cbd4c65637f9d5bc2624bf2493787d1ff5628dc953d6c26597d78f9d23fb8",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/game_activity/detection.rs",
+          "scope": "Pure exact executable and RPCS3 title recognition",
+          "evidence": "Fixed publisher-identified basenames, no launcher/argument substring matching; paths discarded after basename classification; RPCS3 four-field default-title/serial grammar and private-path/control rejection; choose bounded64 processes and stable foreground/previous priority",
+          "decision": "Reviewed; no change",
+          "limitations": "No live game recognition or external catalog research in this pass; pure fixture source is not observed runtime behavior.",
+          "review_snapshot_sha256": "198cbd4c65637f9d5bc2624bf2493787d1ff5628dc953d6c26597d78f9d23fb8"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/game_activity/rpc.rs",
+      "delivery_sha256": "0dd0440e235340de4bfdb42d184ab6a632b8ec04072cec43e1acfcba306cc410",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/game_activity/rpc.rs",
+          "scope": "Authorized IPC startup/stop and safe shared presence conversion",
+          "evidence": "Receiver owner(account,generation), cancellable starting task and awaited listener shutdown; 60s failure backoff; free RPC name/URLs/buttons/party/secrets not honored; verified executable supplies application identity; privacy stop clears activity and listener before publication",
+          "decision": "Reviewed; no concrete new defect established",
+          "limitations": "No IPC server or real game used; existing fake-listener fixture source inspected, not executed.",
+          "review_snapshot_sha256": "0dd0440e235340de4bfdb42d184ab6a632b8ec04072cec43e1acfcba306cc410"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/game_activity/windows.rs",
+      "delivery_sha256": "a40bba5fc36fd3b1c32f8c4ee7b6707d4afb98fbf1a1edfa5aa80186253bbeb9",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/game_activity/windows.rs",
+          "scope": "Limited-information same-session process/window scanner",
+          "evidence": "PROCESS_QUERY_LIMITED_INFORMATION only; no process memory; same Windows session; enum4096 PIDs, recognized64, visited8192/visible256 windows; RPCS3 title read only; handles closed before pure projection and full paths not retained",
+          "decision": "Reviewed; no change",
+          "limitations": "No process enumeration or window inspection executed; catalog correctness follows existing source evidence.",
+          "review_snapshot_sha256": "a40bba5fc36fd3b1c32f8c4ee7b6707d4afb98fbf1a1edfa5aa80186253bbeb9"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/game_mentions.rs",
+      "delivery_sha256": "ba773f3bfd11abd2fb323af23b407d56ee8a9f2f2b32d6ff8e0cb7594eaa4907",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/game_mentions.rs",
+          "scope": "Demand-driven game metadata query coalescing",
+          "evidence": "Owner/generation/editor/opening/request/revision stamp; queued8/jobs2/watchers8, 10s timeout; cache64 queries/256 IDs/1MiB/300s; cancel unobserved jobs and clear on account; restricted metadata filtered at delivery",
+          "decision": "Reviewed; no change",
+          "limitations": "No metadata requests or queue/latency benchmark.",
+          "review_snapshot_sha256": "ba773f3bfd11abd2fb323af23b407d56ee8a9f2f2b32d6ff8e0cb7594eaa4907"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/gifs.rs",
+      "delivery_sha256": "62d1abaf75b14d5bc48f619c28018836878319b2426eb623a8dbe19cccdc71b9",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/gifs.rs",
+          "scope": "Per-account catalog jobs and confirmed remote favorite removal",
+          "evidence": "Owner/generation/UUID stamps; jobs4/watchers8/cache8 or4MiB/60s; latest opening drops observers and cancellation; removal journal recorded before one PATCH, unknown outcome not repeated; canonical GET and favorite epoch prevent stale favorite restoration",
+          "decision": "Reviewed; no new defect established",
+          "limitations": "No GIF catalog or settings request executed; known paint-generation pending UI defect is covered by the separate UI review.",
+          "review_snapshot_sha256": "62d1abaf75b14d5bc48f619c28018836878319b2426eb623a8dbe19cccdc71b9"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/group_members.rs",
+      "delivery_sha256": "12b05fcd706e37ca3cc48017e4ae426c191776d543c2b7338cdfc1b9c46ec5c7",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/group_members.rs",
+          "scope": "Owner-only group-DM recipient removal and roster revisions",
+          "evidence": "Current owner/member/context checks; target cannot be self; fresh GET verifies exact group/owner/recipient before exact DELETE; pending target dedup; ACK scoped by actor/nav/token, raced membership revision triggers canonical reload, old roster reads invalidated",
+          "decision": "Reviewed; no change",
+          "limitations": "No group mutation or request executed; race fixtures inspected as source only.",
+          "review_snapshot_sha256": "12b05fcd706e37ca3cc48017e4ae426c191776d543c2b7338cdfc1b9c46ec5c7"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/guild_settings.rs",
+      "delivery_sha256": "e0ee8e8022c3d36cd2bb3701015963352d4bb0cdea210a701b866fedaea826d4",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/guild_settings.rs",
+          "scope": "Server editor authorization, canonical reload and nickname/voice projection",
+          "evidence": "Fresh guild/self/channel reads and prepare_write before mutation; 32KiB action body; confirmed-write/failed-reload distinction; completion request revision and guild guard; nickname cache3000 with explicit omission preservation and Gateway invalidation of actionable controls",
+          "decision": "Reviewed; no concrete new defect established",
+          "limitations": "Actor boundaries and identity projections inspected; core ACL/write policy and speculative UI editor-key hypothesis are outside this cut. No server edits performed.",
+          "review_snapshot_sha256": "e0ee8e8022c3d36cd2bb3701015963352d4bb0cdea210a701b866fedaea826d4"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/incoming.rs",
+      "delivery_sha256": "cc2666eecad1ffa41da25092ade186357abc655861e738611ee009c8b2d4ccb4",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/incoming.rs",
+          "scope": "Gateway dispatch, unread reconciliation, notifications, members and call projection",
+          "evidence": "Safety check before dispatch; sidebar256/512KiB and message256/1MiB load deltas; notification account/generation/epoch captured before two-slot blocking image preparation and rechecked after; revocation clears sensitive views; member binding/operations cap2000 slots; call rejection targets self and current instance",
+          "decision": "Reviewed responsibility and critical state boundaries; no new concrete defect established",
+          "limitations": "Large dispatch module: boundary review, not every-branch or complete protocol/security audit. No events, image downloads, client or devices executed; voice lifecycle is separately owned.",
+          "review_snapshot_sha256": "cc2666eecad1ffa41da25092ade186357abc655861e738611ee009c8b2d4ccb4"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/input_diagnostic.rs",
+      "delivery_sha256": "48af46157480a56fa470f60b13bf78ce75983f5d9579f57e22b7b5575520eb55",
+      "perspectives": [
+        {
+          "responsibility_review": "root",
+          "path": "crates/app/src/controller/input_diagnostic.rs",
+          "scope": "Voluntary local telemetry admission, cancellation and completion",
+          "evidence": "UI action must match account/generation/voice attempt. Connected native voice and unique bridge diagnostic scope authorize one capture. Cancel revokes observation without claiming native stats completion; failures revoke matching capture and never automatically replay. IPC operation carries capture token, while owner scope stays private.",
+          "decision": "Reviewed; unique scope defect corrected in bridge allocation and adapter instead of weakening actor guards",
+          "limitations": "No recording, real microphone, native stats query or audible outcome verified. Diagnostic sampling algorithm is owned by media/core review.",
+          "sha256_review_snapshot": "48af46157480a56fa470f60b13bf78ce75983f5d9579f57e22b7b5575520eb55",
+          "review_snapshot_sha256": "48af46157480a56fa470f60b13bf78ce75983f5d9579f57e22b7b5575520eb55"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/member_moderation.rs",
+      "delivery_sha256": "47b495595ac404031184f32924a568c7f3c849f97f5f1a903141969bcd9bc84a",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/member_moderation.rs",
+          "scope": "Explicit member mutation with fresh authorization and canonical result",
+          "evidence": "Fresh guild/actor/target reads and core prepare_write before write; UI revision/actor/guild/target/permitted action checked; navigation can retire reads but does not cancel already-sent write; confirmed-write/failed-reload distinguished; capabilities disabled on error",
+          "decision": "Reviewed; no change",
+          "limitations": "No moderation action performed; core policy implementation is outside this application's file boundary.",
+          "review_snapshot_sha256": "47b495595ac404031184f32924a568c7f3c849f97f5f1a903141969bcd9bc84a"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/network_safety_tests.rs",
+      "delivery_sha256": "b79efbf49734203e1d3117fc743a091917c1c4dbaba8c7e8024952dcda77b491",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/controller/network_safety_tests.rs",
+          "status": "revisado-tests-no-ejecutado",
+          "notes": "Cobertura existente de barreras por sesión/generación y carga; no se reejecutó en revisión.",
+          "sha256_review_snapshot": "b79efbf49734203e1d3117fc743a091917c1c4dbaba8c7e8024952dcda77b491",
+          "review_snapshot_sha256": "b79efbf49734203e1d3117fc743a091917c1c4dbaba8c7e8024952dcda77b491"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/notification_activation.rs",
+      "delivery_sha256": "85366d0ef254f1003f9e5958ccac436332e6d8819a3b07a75955b32105f4c477",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/notification_activation.rs",
+          "scope": "Correlated toast-to-window-to-navigation handshake",
+          "evidence": "Account/generation/nav/request-version validation before routing; unknown channel resolution is navigation-cancelled; returned channel/guild identity and membership checked; omitted thread object retained only after fresh ACL; superseded guild resolution discarded",
+          "decision": "Reviewed; no change",
+          "limitations": "No toast, native activation or HTTP request executed.",
+          "review_snapshot_sha256": "85366d0ef254f1003f9e5958ccac436332e6d8819a3b07a75955b32105f4c477"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/observed_calls.rs",
+      "delivery_sha256": "46875b49a71a854cd795c3c2fced631d722a2e5f813183b41c5d1f5020df254d",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/observed_calls.rs",
+          "scope": "Bounded private-call discovery authority and return context",
+          "evidence": "Admission history, query floor/ambiguity/tombstones retain authority; demand waits for synchronized ready Gateway, records bounded independently of admission history; cancellation does not rearm admitted reads; responses validate channel/token; navigationContext binds account/generation/guild/view/channel",
+          "decision": "Reviewed current boundary cut; no new defect established",
+          "limitations": "No discovery traffic or synthetic tests run; actor integration after this read is outside the cut. Existing tests are source evidence, not new execution results.",
+          "review_snapshot_sha256": "46875b49a71a854cd795c3c2fced631d722a2e5f813183b41c5d1f5020df254d"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/outgoing.rs",
+      "delivery_sha256": "8c0353106f88768d1c8afb7c846ee485624deaf58eb60388a29ae9cb84dbe432",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/controller/outgoing.rs",
+          "status": "revisado-integracion-root",
+          "notes": "Nonce concilia HTTP/Gateway una vez; reconciliation get_once explícita; Sends.retrying debe serializarse con recuperación voz/view sin perder confirmaciones.",
+          "sha256_review_snapshot": "8c0353106f88768d1c8afb7c846ee485624deaf58eb60388a29ae9cb84dbe432",
+          "review_snapshot_sha256": "8c0353106f88768d1c8afb7c846ee485624deaf58eb60388a29ae9cb84dbe432"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/presence.rs",
+      "delivery_sha256": "342d13ea569f743309bc0b20f05d136cf48316f1b15a80462e6bd6cb597c7193",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/presence.rs",
+          "scope": "Visual intent versus confirmed settings and notification policy",
+          "evidence": "Account/generation intent, one pending/latest queued write and correlated reconcile revision; typed not-sent/rejected/rate-limited/unknown outcomes; unknown not auto-retried; persisted PATCH survives failed Gateway flush; DND epoch barrier emitted from confirmed policy; external echo does not start polling",
+          "decision": "Reviewed; no new defect established",
+          "limitations": "No status mutation, reconciliation GET or live DND check. Initial Nov4 behavior and new synthetic tests are not live evidence.",
+          "review_snapshot_sha256": "342d13ea569f743309bc0b20f05d136cf48316f1b15a80462e6bd6cb597c7193"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/private_calls.rs",
+      "delivery_sha256": "9c9c2281f2332f16d8d4867700da36524b149b7b301bc229a4cd5414559537c5",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/private_calls.rs",
+          "scope": "Recipient-scoped invitation lifetimes and outgoing ownership",
+          "evidence": "Call channel/attempt scope, selected candidates cap25, per-recipient token/deadline/flight/closing and finished tombstones; explicit recipients only, no null broadcast; incoming32/outcomes64; service/acceptance beats late ACK; ten-second deadline and two-minute solo close use owned cancellation",
+          "decision": "Reviewed current boundary cut; no new defect established",
+          "limitations": "No invitation/call sent or timing experiment; current root voice integration and later edits are separately reviewed.",
+          "review_snapshot_sha256": "9c9c2281f2332f16d8d4867700da36524b149b7b301bc229a4cd5414559537c5"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/profile_editor.rs",
+      "delivery_sha256": "4a1015d18ffed8c85d73492b310a27997505b665fe860893fdc56632e5a03c23",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/profile_editor.rs",
+          "scope": "Explicit current-account biography and custom-status edits",
+          "evidence": "190 UTF-16 bio/128-character status/emoji validation; one pending write per field; PATCH partial response triggers canonical GET rather than form echo; owner/token carried to UI; successful save invalidates older profile reads and updates only self projections",
+          "decision": "Reviewed; no concrete new defect established",
+          "limitations": "Parent completion generation guard is relied upon; no profile write or remote confirmation performed.",
+          "review_snapshot_sha256": "4a1015d18ffed8c85d73492b310a27997505b665fe860893fdc56632e5a03c23"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/reaction_users.rs",
+      "delivery_sha256": "561b8c1b4b4a3cc2a69c61d65568b8930f6c6b8befcb3b2e18a9662eb85f9184",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/reaction_users.rs",
+          "scope": "On-demand read-only reaction tooltip lookup",
+          "evidence": "One pending and one latest queued action; UUID/known message/current reaction/ACL checks; escaped route limit100; 10s timeout; completion rechecks access and reaction, invalidation clears stale people before delivery",
+          "decision": "Reviewed; no change",
+          "limitations": "No reaction GET or UI hover executed; shared API rate behavior is outside this file.",
+          "review_snapshot_sha256": "561b8c1b4b4a3cc2a69c61d65568b8930f6c6b8befcb3b2e18a9662eb85f9184"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/read_index.rs",
+      "delivery_sha256": "1f74ac7e3bfb273b29e00f148e2bb96dc84cff503d3dc9f9afb55ed4c9de7639",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/read_index.rs",
+          "scope": "Bounded read-state authority outside selected guild",
+          "evidence": "64 guilds/4000 channels; ACL/catalog deltas invalidate completeness; newer foreign arrivals retained; unread=false only when coverage and every read watermark are known; unknown never manufactures read state",
+          "decision": "Reviewed; no change",
+          "limitations": "No bulk ACK sent; static monotonic-state review only.",
+          "review_snapshot_sha256": "1f74ac7e3bfb273b29e00f148e2bb96dc84cff503d3dc9f9afb55ed4c9de7639"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/request_policy_tests.rs",
+      "delivery_sha256": "fbe9a26b50151832b85579f41e55151d33125c9f66e39bd98e4812391aacd935",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/controller/request_policy_tests.rs",
+          "status": "revisado-tests-no-ejecutado",
+          "notes": "Cobertura existente de seed parcial y coalescing; no se reejecutó en revisión.",
+          "sha256_review_snapshot": "fbe9a26b50151832b85579f41e55151d33125c9f66e39bd98e4812391aacd935",
+          "review_snapshot_sha256": "fbe9a26b50151832b85579f41e55151d33125c9f66e39bd98e4812391aacd935"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/request_policy.rs",
+      "delivery_sha256": "922e4072b5ba09336a69c1b5ff0a7e6a10e1c14c38a700dfedf9305261d7d1c1",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/controller/request_policy.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Semilla READY/deltas y ACK coalescidos; conservar demanda visible antes clonar Api, no drenar ACK obsoleto, conservar in-flight.",
+          "sha256_review_snapshot": "922e4072b5ba09336a69c1b5ff0a7e6a10e1c14c38a700dfedf9305261d7d1c1",
+          "review_snapshot_sha256": "922e4072b5ba09336a69c1b5ff0a7e6a10e1c14c38a700dfedf9305261d7d1c1"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/social.rs",
+      "delivery_sha256": "26f3e778285036686746c209c5b30ecbc20c67fa81aed4bace54a965c255ed50",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/social.rs",
+          "scope": "Explicit profile, relationship, reaction, forwarding, notification and read actions",
+          "evidence": "Observed webhook profile avoids user endpoints; actions validate targets and current permission; forwarding checks all1-10 destinations before first POST and reports partial confirmed sends without retry; fixed origin native reference/allowed_mentions empty; completion tokens/nav and canonical reads; read watermarks monotonic; private local preferences account scoped",
+          "decision": "Reviewed action/completion and write boundaries; no concrete new defect established",
+          "limitations": "Large action dispatcher: no exhaustive endpoint/security certification. No relationships, messages, invites, reactions, reads or settings were changed; core/API semantics are separate reviews.",
+          "review_snapshot_sha256": "26f3e778285036686746c209c5b30ecbc20c67fa81aed4bace54a965c255ed50"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/source_lifecycle_tests.rs",
+      "delivery_sha256": "caae9a84cbf6fbb6016a72744de64d2f5340cbf7795cfade7e266347b504450e",
+      "perspectives": [
+        {
+          "responsibility_review": "root",
+          "path": "crates/app/src/controller/source_lifecycle_tests.rs",
+          "scope": "Actor-level source regression fixtures with fake media bridges and offline writer",
+          "evidence": "Six source fixtures cover publisher false before/after DELETE with/no decoder; stopWatch preserving publication; reused key versus late close/native callback; full/unauthorized quiet terminal view; exactly one selected receiver recovery; stopShare immediate snapshot and both completion/ACK orders. They assert voice/camera/participant preservation and absence of residual screen controls.",
+          "decision": "Reviewed fixtures and independent expected effects; no additional fixture required by this pass",
+          "limitations": "No native engine/process/device/network. Offline writer is not a live service acceptance test. Execution belongs to root's integrated suite.",
+          "sha256_review_snapshot": "caae9a84cbf6fbb6016a72744de64d2f5340cbf7795cfade7e266347b504450e",
+          "review_snapshot_sha256": "caae9a84cbf6fbb6016a72744de64d2f5340cbf7795cfade7e266347b504450e"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/source_lifecycle.rs",
+      "delivery_sha256": "4c0e9d699fc3d8f34740c04e947e18b784606ecd0deff2e604a6bbe4d002f728",
+      "perspectives": [
+        {
+          "responsibility_review": "root",
+          "path": "crates/app/src/controller/source_lifecycle.rs",
+          "scope": "Confirmed publication end, effective availability, bounded viewer recovery, receiver/share close ownership",
+          "evidence": "Semantic end emitted once per publication revision with account/generation/voice attempt; subscriber failure does not clear publisher metadata. Shared RecoveryPermit retained through stop ACK or observed receiver process exit. Recovery deadline45s; only selected current publication may consume viewer stage. ShareClose requires local completion, write and remote acknowledgement. Closing receiver sends stopWatch and shutdown before requesting process exit, and actual process result controls barrier release.",
+          "decision": "Reviewed; no additional code change justified",
+          "limitations": "Pure and synthetic fixture source inspected; no receiver process or remote subscription exercised. Unknown close intentionally retains barrier.",
+          "sha256_review_snapshot": "4c0e9d699fc3d8f34740c04e947e18b784606ecd0deff2e604a6bbe4d002f728",
+          "review_snapshot_sha256": "4c0e9d699fc3d8f34740c04e947e18b784606ecd0deff2e604a6bbe4d002f728"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/stream_sources.rs",
+      "delivery_sha256": "606497de97ba95c40fc670bf5271ba479b0ff80814e18f0d7aea0b44c139a728",
+      "perspectives": [
+        {
+          "responsibility_review": "root",
+          "path": "crates/app/src/controller/stream_sources.rs",
+          "scope": "Bounded publication authority and stable revision",
+          "evidence": "256 records and retained tombstones; first nonempty RTC identity enriches record, changed identity starts revision, duplicate same identity does not rearm unavailable. Decoder recovery must match revision. End is an idempotent semantic transition; overflow fails closed until call lifecycle clears.",
+          "decision": "Reviewed four pure fixture responsibilities; no extra change",
+          "limitations": "No model checking or exhaustive protocol payload fuzzing; publication identity ultimately depends on ordered authoritative metadata.",
+          "sha256_review_snapshot": "606497de97ba95c40fc670bf5271ba479b0ff80814e18f0d7aea0b44c139a728",
+          "review_snapshot_sha256": "606497de97ba95c40fc670bf5271ba479b0ff80814e18f0d7aea0b44c139a728"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/tests.rs",
+      "delivery_sha256": "7a4d0dd7df7389c647e0deaa6034911197d2dd2fd710ba784f7a1045c0f047c2",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/controller/tests.rs",
+          "scope": "Existing actor regression fixture responsibilities",
+          "evidence": "Controller::test_fixture boundaries and tests cover history/cache/deletion, navigation/session cancellation, monotonic reads, startup presence, stale profiles, pins and group projection; notification/media-specific suites remain in their modules",
+          "decision": "Reviewed existing fixture scope; no change",
+          "limitations": "No tests executed and no historical passing result imported as current evidence; tests are not a complete behavior matrix.",
+          "review_snapshot_sha256": "7a4d0dd7df7389c647e0deaa6034911197d2dd2fd710ba784f7a1045c0f047c2"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/voice_recovery.rs",
+      "delivery_sha256": "14ebef93628b171617fb2c33be51510c309688a6192668bbef54d4e9fea9eda8",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/controller/voice_recovery.rs",
+          "status": "nuevo-T9",
+          "notes": "Actor retiene identidad/controles, elige Resume/Fresh antes de emitir, conserva lease hasta ready cifrado o cierre real, espera Gateway y Sends, filtra generaciones, avisos power coalescidos;5fixtures preparados. Fresh cierra todos los propietarios locales antes de esperar Gateway/Sends; fresh_closed sólo avanza tras ACK disconnected, incluso main ya retirado y GoLive aparte. Fixture cubre Recovering sin frames/permisos y Sync con un op4; pendiente de ejecución integrada por root. Tras cierre confirmado se descartan callbacks del mediaSession antiguo también en Waiting; fixture incluye resumeEligible obsoleto antes de GatewaySync.",
+          "sha256_review_snapshot": "14ebef93628b171617fb2c33be51510c309688a6192668bbef54d4e9fea9eda8",
+          "review_snapshot_sha256": "14ebef93628b171617fb2c33be51510c309688a6192668bbef54d4e9fea9eda8"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/controller/voice.rs",
+      "delivery_sha256": "accd9621d7973a215c4137126cd5250dc8229ec6f57df0017311f256eb35f234",
+      "perspectives": [
+        {
+          "responsibility_review": "root",
+          "path": "crates/app/src/controller/voice.rs",
+          "scope": "Call, capture and receiver intents; scoped asynchronous completion; publisher and viewer dispatch; native process lifecycle",
+          "evidence": "VoiceLifecycle carries media/voice/source attempts, pending owned write barriers, separate publication book and receiver close. request_watch and share create retain actual writer completion; stop_watch waits local close plus remote writer/ack before replacement. stop_voice clears local projection immediately and retains closing process and leave completion. CALL_DELETE and explicit publisher false follow terminal paths; partial metadata remains unknown. Guild permissions are scoped to account/guild/channel/attempt and current authority.",
+          "decision": "Reviewed integration; actor owner corrected C1 receiver wording and preserved typed unexpected own source stop cause, with a three-reason synthetic fixture.",
+          "limitations": "No account, real Gateway, media process, device, call or runtime UI. Large dispatch module reviewed by responsibility paths, not asserted exhaustively free of errors. Integrated tests belong to root.",
+          "sha256_review_snapshot": "accd9621d7973a215c4137126cd5250dc8229ec6f57df0017311f256eb35f234",
+          "review_snapshot_sha256": "accd9621d7973a215c4137126cd5250dc8229ec6f57df0017311f256eb35f234"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/diagnostics.rs",
+      "delivery_sha256": "62a94c942a590a6e3ba692ca24f5814dd1d1245e84a4d921b107019fb63b5f0b",
+      "perspectives": [
+        {
+          "responsibility_review": "root",
+          "path": "crates/app/src/diagnostics.rs",
+          "scope": "Typed local diagnostic filtering, capture ownership, bounded display and explicit export",
+          "evidence": "Closed VoiceRecord schema validates before record; only exact current private scope/capture accepted, End revokes exact owner. Scope0 and capture0 rejected. New two-primary-bridge fixture proves reused capture IDs do not grant old host authority. No raw IPC object/device/account/endpoint/exception enters recorder. Panel snapshots once, unlocks before reveal/export, and closing observation emits cancel intent.",
+          "decision": "Corrected owner admission for unknown scope and added replacement regression fixture",
+          "limitations": "No filesystem export, native dialog, live sample, audio output or remote audibility exercised by this review. Logging scope stays in memory only.",
+          "sha256_review_snapshot": "62a94c942a590a6e3ba692ca24f5814dd1d1245e84a4d921b107019fb63b5f0b",
+          "review_snapshot_sha256": "62a94c942a590a6e3ba692ca24f5814dd1d1245e84a4d921b107019fb63b5f0b"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/feature_history.rs",
+      "delivery_sha256": "100158982dbf28a4b9de3a603873c8d97378c8b855f06efeea111ec06080aa75",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/feature_history.rs",
+          "status": "revisado-perimetro-sin-cambio",
+          "notes": "Registro RAM de sesión8MiB/4096, purgas acotadas; pins DPAPI persistentes separados; no adoptar legacy.",
+          "sha256_review_snapshot": "100158982dbf28a4b9de3a603873c8d97378c8b855f06efeea111ec06080aa75",
+          "review_snapshot_sha256": "100158982dbf28a4b9de3a603873c8d97378c8b855f06efeea111ec06080aa75"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/game_rpc.rs",
+      "delivery_sha256": "92289e3da86be6032b25b72aabfa28856d6c9e50dfcf1204b663c777fde2e26c",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/game_rpc.rs",
+          "scope": "Opt-in same-user local IPC listener and activity ownership",
+          "evidence": "start validates identity; FIRST_PIPE_INSTANCE skips occupied endpoints; eight clients, event queue 32 and latest-winner activity; cancellation plus JoinSet.shutdown releases pipes before shutdown completes; Listener Drop cancels/aborts owned task",
+          "decision": "Reviewed; no change",
+          "limitations": "No IPC endpoint started; local privacy authorization remains the controller caller's responsibility.",
+          "review_snapshot_sha256": "92289e3da86be6032b25b72aabfa28856d6c9e50dfcf1204b663c777fde2e26c"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/game_rpc/protocol.rs",
+      "delivery_sha256": "a23f37567b57070116ff5bc2c20dd06b2f36a900d918d04dfede3e45241cc35d",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/game_rpc/protocol.rs",
+          "scope": "Bounded IPC framing and SET_ACTIVITY validation",
+          "evidence": "16KiB frame; 5s partial-frame/handshake/write deadlines while idle clients remain idle; 32 frames/5s; PID bound to verified peer; text/type/time/party limits; only SET_ACTIVITY plus ping/close accepted, no launch/message/credential commands",
+          "decision": "Reviewed; no change",
+          "limitations": "No live RPC client or fuzz campaign; controller conversion applies separate publication policy.",
+          "review_snapshot_sha256": "a23f37567b57070116ff5bc2c20dd06b2f36a900d918d04dfede3e45241cc35d"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/game_rpc/security.rs",
+      "delivery_sha256": "353b2acced48f4388e4a4c4b1140c9ba69d853a77acd20e08b35d6712002a117",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/game_rpc/security.rs",
+          "scope": "Named-pipe ACL and client identity",
+          "evidence": "Same-user SID DACL, remote clients rejected, same Windows session, QUERY_LIMITED_INFORMATION handle, ephemeral executable basename only; SID/token allocations freed through OwnedHandle/LocalFree; identity buffer capped 64KiB",
+          "decision": "Reviewed; no concrete new defect established",
+          "limitations": "Static FFI/resource review only; no impersonation or hostile-process experiment.",
+          "review_snapshot_sha256": "353b2acced48f4388e4a4c4b1140c9ba69d853a77acd20e08b35d6712002a117"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/game_rpc/tests.rs",
+      "delivery_sha256": "59ff7e2bfe5cf03c796345791fe1e880f724f06380665a8e57c998cef0caee6d",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/game_rpc/tests.rs",
+          "scope": "IPC protocol, resource ownership and native local-pipe fixtures",
+          "evidence": "Duplex protocol fixtures test malformed/fragmented frames and quotas; private_pipe_skips_owned_indices verifies PID/session and awaited shutdown with unique NotDiscord.RpcFixture names",
+          "decision": "Reviewed existing fixture scope; no change",
+          "limitations": "Tests not run. One existing test uses actual local named pipes, not an account/socket/device; its source is not execution evidence.",
+          "review_snapshot_sha256": "59ff7e2bfe5cf03c796345791fe1e880f724f06380665a8e57c998cef0caee6d"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/instance.rs",
+      "delivery_sha256": "13539c5b9d21889e236dc4259fe33774db450234a2708bb4d126c6ffb984df41",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/instance.rs",
+          "scope": "Per-user cross-edition startup and shutdown ownership",
+          "evidence": "Named Admission/Owner mutexes and Close event use OwnedHandle; waits fail on unconfirmed status and offer retry; legacy WM_CLOSE targets verified executable basename and canonical installation roots; process handle retained until exit",
+          "decision": "Reviewed; no concrete new defect established",
+          "limitations": "No mutex/event/window/process operations executed; legacy root matching reviewed statically.",
+          "review_snapshot_sha256": "13539c5b9d21889e236dc4259fe33774db450234a2708bb4d126c6ffb984df41"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/lib.rs",
+      "delivery_sha256": "a66f184904b025f8dafa35db9be469fff842bc7519f073157d7e851e2bd4dec1",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/lib.rs",
+          "scope": "Application module exposure",
+          "evidence": "Only module declarations; no runtime work, locks or I/O",
+          "decision": "Reviewed; no change",
+          "limitations": "Module internals are represented by their separate inventory rows.",
+          "review_snapshot_sha256": "a66f184904b025f8dafa35db9be469fff842bc7519f073157d7e851e2bd4dec1"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/main.rs",
+      "delivery_sha256": "5489e34b89e95d79b25a0f429de61dd55c09eb59c3e7d71e57aac00064368037",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/main.rs",
+          "scope": "Startup, ownership, runtime and orderly desktop shutdown",
+          "evidence": "InstanceGuard acquired before shared-state initialization/controller startup; preview bypasses controller/account startup; runtime has three workers; shutdown command precedes 30s controller wait and runtime/instance destruction; readiness writes are explicit diagnostic option",
+          "decision": "Reviewed; no change",
+          "limitations": "No application startup, replacement handshake or native viewport executed; actor/media teardown internals are excluded.",
+          "review_snapshot_sha256": "5489e34b89e95d79b25a0f429de61dd55c09eb59c3e7d71e57aac00064368037"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/media.rs",
+      "delivery_sha256": "03372491c4448b81dd6815c023bb8e511308edbfd8d70467e2bd8f1582608417",
+      "perspectives": [
+        {
+          "responsibility_review": "root",
+          "path": "crates/app/src/media.rs",
+          "scope": "Private bounded JSON/video IPC, process owner, capture lease, diagnostic origin and scoped frame ownership",
+          "evidence": "Pipe ACL uses current user SID, remote clients rejected, client PID must match spawned process. JSON responses262144/request1MiB, command queue16, independent video validates header and allowed namespace/IDs. ProcessOwner retains capture permit until observed exit; unconfirmed teardown closes gate. Operational IPC rejection preserves healthy transport. Added unique diagnostic scope independent from namespace0, propagated through both idle and in-command event paths; all production/fake constructors carry scope and clones preserve it.",
+          "decision": "Corrected confirmed diagnostic owner collision; retained video namespaces and native capture semantics",
+          "limitations": "No native process or Windows device opened. Existing IPC tests may use loopback/private pipe in root's suite. No benchmark or security certification claimed.",
+          "sha256_review_snapshot": "03372491c4448b81dd6815c023bb8e511308edbfd8d70467e2bd8f1582608417",
+          "review_snapshot_sha256": "03372491c4448b81dd6815c023bb8e511308edbfd8d70467e2bd8f1582608417"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/message_cache.rs",
+      "delivery_sha256": "459fa845867c5990c23c90edd341d9f6ffc71d8c73357b8da9dfb32378665c31",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/message_cache.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "LRU3canales/200mensajes/4MiB estimados; ventana vacía válida; purgas no se reintroducen por caché.",
+          "sha256_review_snapshot": "459fa845867c5990c23c90edd341d9f6ffc71d8c73357b8da9dfb32378665c31",
+          "review_snapshot_sha256": "459fa845867c5990c23c90edd341d9f6ffc71d8c73357b8da9dfb32378665c31"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/network_safety.rs",
+      "delivery_sha256": "fe289dd0922aa71100622567fff2e6740fa2068141ac29893e81984e398dedd7",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/network_safety.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "DPAPI, lease exclusiva y marcador write-ahead; verificación por cuenta no se borra logout; registro acotado.",
+          "sha256_review_snapshot": "fe289dd0922aa71100622567fff2e6740fa2068141ac29893e81984e398dedd7",
+          "review_snapshot_sha256": "fe289dd0922aa71100622567fff2e6740fa2068141ac29893e81984e398dedd7"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/notification_identity.rs",
+      "delivery_sha256": "0b86d985c5f64cc8d3b4183965b8ecbd633cadd9381907a9fadc125fa7b3253e",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/notification_identity.rs",
+          "scope": "Toast image preparation and desktop registration",
+          "evidence": "Discord CDN origin/path allowlist, no redirects/credentials, 2MiB response, 2s connect/4s total deadline; decoded local PNG 64KiB, owned-file pruning 64/4MiB; IMAGE_IO lock covers local atomic write/prune, not HTTP; COM/property/registry cleanup reviewed",
+          "decision": "Reviewed; no concrete new defect established",
+          "limitations": "No download, registration, shortcut or registry action executed; synchronous preparation is called by bounded blocking workers in incoming.rs.",
+          "review_snapshot_sha256": "0b86d985c5f64cc8d3b4183965b8ecbd633cadd9381907a9fadc125fa7b3253e"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/notification_text.rs",
+      "delivery_sha256": "c4cb24a92ecf6a376da1551f48ad812e34d647f0cca44d2303153ee6350a3845",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/notification_text.rs",
+          "scope": "Pure origin-scoped toast text projection",
+          "evidence": "readable receives explicit user/role/channel/game maps; literal code and escapes preserved; ID validation and 128-character sanitized names; no implicit current-guild lookup or I/O",
+          "decision": "Reviewed; no change",
+          "limitations": "Caller limits final toast body; no exhaustive syntax or Unicode audit.",
+          "review_snapshot_sha256": "c4cb24a92ecf6a376da1551f48ad812e34d647f0cca44d2303153ee6350a3845"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/picker_history.rs",
+      "delivery_sha256": "7937af929b82fdc741df554d5784875e03a485a32d4b1e6803df8d08389daf87",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/picker_history.rs",
+          "status": "revisado-perimetro-sin-cambio",
+          "notes": "Historial por cuenta1MiB, validación/dedupe; corrupto read-only y commit posterior a persistencia; no wipe al recuperar.",
+          "sha256_review_snapshot": "7937af929b82fdc741df554d5784875e03a485a32d4b1e6803df8d08389daf87",
+          "review_snapshot_sha256": "7937af929b82fdc741df554d5784875e03a485a32d4b1e6803df8d08389daf87"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/pickers.rs",
+      "delivery_sha256": "f7a30cb7e7c724bc662e8b6466605f073c9812fb4b314ad5036ff46bca7c1b15",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/pickers.rs",
+          "scope": "GIF descriptors, provider URLs, favorite parsing and outgoing text transformation",
+          "evidence": "safe_link requires HTTPS/443 without credentials and provider allowlist; parse caps categories 50 and items 96; favorites bounds encoded input 1.4M, decoded 1MiB, fields 6000 and results 400; prepare_outgoing preserves code and signed URL parameters",
+          "decision": "Reviewed; no concrete new defect established",
+          "limitations": "Parser and transformation boundaries inspected; no provider requests or exhaustive Unicode/URL fuzzing.",
+          "review_snapshot_sha256": "f7a30cb7e7c724bc662e8b6466605f073c9812fb4b314ad5036ff46bca7c1b15"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/pickers/favorites_wire.rs",
+      "delivery_sha256": "9685e00317a4cd5a599795aec2a6e8e058a4dadfc2d38e7566af9661e39e88d8",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/pickers/favorites_wire.rs",
+          "scope": "Field-preserving remote favorite removal patch",
+          "evidence": "Bounded base64/protobuf decoder rejects ambiguous subtree/map/version fields; remove changes only matching map entries, preserves raw unknown fields and emits only favorite subtree plus required_data_version",
+          "decision": "Reviewed; no change",
+          "limitations": "No settings write performed; protocol evidence is the repository's existing documented contract.",
+          "review_snapshot_sha256": "9685e00317a4cd5a599795aec2a6e8e058a4dadfc2d38e7566af9661e39e88d8"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/platform.rs",
+      "delivery_sha256": "177450c8089e0a46a2f122bc90d1f2749160f108d0c835309b9d8379614b9b12",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/platform.rs",
+          "status": "revisado-perimetro-sin-cambio",
+          "notes": "Enlaces/invites limitados, operaciones COM fuera paint; energía delegada al nuevo owner dedicado.",
+          "sha256_review_snapshot": "177450c8089e0a46a2f122bc90d1f2749160f108d0c835309b9d8379614b9b12",
+          "review_snapshot_sha256": "177450c8089e0a46a2f122bc90d1f2749160f108d0c835309b9d8379614b9b12"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/platform/notification_activation.rs",
+      "delivery_sha256": "e73d7d42530a76b136aab3444700bcfe3c06357185817c2d3601e12fab5c1f43",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/platform/notification_activation.rs",
+          "scope": "Restore/focus only the existing owned root window",
+          "evidence": "notification_open_action validates channel/account; cached HWND is revalidated by current process and GA_ROOT before native focus; viewport commands keep winit state aligned; no thread attachment or topmost forcing",
+          "decision": "Reviewed; no change",
+          "limitations": "Only existing headless fixture source inspected; no native window activation executed.",
+          "review_snapshot_sha256": "e73d7d42530a76b136aab3444700bcfe3c06357185817c2d3601e12fab5c1f43"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/platform/power.rs",
+      "delivery_sha256": "cd8cf33acd7511480d87bdcf2917290cabbd1f527f8af39836f9445ef450ec51",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/platform/power.rs",
+          "scope": "Positive Windows power notifications and ownership",
+          "evidence": "parse/Episodes/next_event pure fixtures; hidden top-level window and native owner cleanup; suspend/resume coalesced per episode",
+          "decision": "Added PowerMonitor with new/take/failed and deterministic inert test constructor",
+          "limitations": "Four pure fixtures prepared; native monitor and PC sleep never executed. Native compile/integration belongs to root.",
+          "review_snapshot_sha256": null
+        },
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/platform/power.rs",
+          "status": "nuevo-de-otro-owner",
+          "notes": "Adaptador T9 revisado sólo en interfaz/avisos y tests de coalescing; implementación/validación detallada pertenece a su owner.",
+          "sha256_review_snapshot": "cd8cf33acd7511480d87bdcf2917290cabbd1f527f8af39836f9445ef450ec51",
+          "review_snapshot_sha256": "cd8cf33acd7511480d87bdcf2917290cabbd1f527f8af39836f9445ef450ec51"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/shared_state.rs",
+      "delivery_sha256": "5ea8d2e07d251b6610584bfa3bae6785a8beacca30b8c9e0ee3e5ffed30d18f4",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/shared_state.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Migración una vez con lease de instancia; conserva extensiones/campos; fuentes retenidas; sin tokens en backup preferencias.",
+          "sha256_review_snapshot": "5ea8d2e07d251b6610584bfa3bae6785a8beacca30b8c9e0ee3e5ffed30d18f4",
+          "review_snapshot_sha256": "5ea8d2e07d251b6610584bfa3bae6785a8beacca30b8c9e0ee3e5ffed30d18f4"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/sounds.rs",
+      "delivery_sha256": "c8c7489ed28b808a5f47db010f8f0957a4fb25596dec3528c9793a52584d9261",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/sounds.rs",
+          "scope": "Event preferences, bounded decoding/cache and lazy sound worker",
+          "evidence": "Finite normalized volume and source labels; local disk/file bounds; canonical long-ring cursor validation; 4MiB SoundBank budget; command queue16/errors4; event preferences checked before cfg(test) observer; Drop invalidates generations and joins output worker",
+          "decision": "Reviewed; no change",
+          "limitations": "No real sound output; native-driver and codec dependency internals were not audited. UI semantic StreamEnded review is recorded separately.",
+          "review_snapshot_sha256": "c8c7489ed28b808a5f47db010f8f0957a4fb25596dec3528c9793a52584d9261"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/sounds/clip_output.rs",
+      "delivery_sha256": "3aa655203bceb3fbb9ca0d3f52a7b02d4e2e0978bbd2920f8dedf2fd4c778a61",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/sounds/clip_output.rs",
+          "scope": "Stable PCM buffers and observable native driver release",
+          "evidence": "One complete bounded PCM clip; generation checked around open/prepare/write; heap allocations remain stable; Drop reset/unprepare proves release before free; failed release quarantines output and retains at most active effect/ring resources",
+          "decision": "Reviewed; no change",
+          "limitations": "No device or fake-driver suite executed; quarantine is deliberate fail-closed lifetime behavior, not measured leakage.",
+          "review_snapshot_sha256": "3aa655203bceb3fbb9ca0d3f52a7b02d4e2e0978bbd2920f8dedf2fd4c778a61"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/sounds/import.rs",
+      "delivery_sha256": "c8ab274c4c66e4e78d400ff8a826410470b7f9feb53b50ae10fe3770701c4b4b",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/sounds/import.rs",
+          "scope": "Explicit bounded local sound conversion and asset ownership",
+          "evidence": "One import job/channel1, cancellation checks and 20s work deadline; local disk paths; event-specific 2/8MiB and 5/60s bounds; owned hash WAV/temp files and 32MiB store; MP3/OGG preflight before decoder allocation; metadata16KiB, packets32768/256KiB and fixed audio format limits",
+          "decision": "Reviewed; no concrete new defect established",
+          "limitations": "Container/decoder boundary checks inspected; no real file imported, codec fuzzing or conversion benchmark.",
+          "review_snapshot_sha256": "c8ab274c4c66e4e78d400ff8a826410470b7f9feb53b50ae10fe3770701c4b4b"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/sounds/playback.rs",
+      "delivery_sha256": "a2bad480cc4d695c6b2edc52c0182155facca49d2c1b15cf9901178d0ab5a8c4",
+      "perspectives": [
+        {
+          "responsibility_review": "app-rest",
+          "path": "crates/app/src/sounds/playback.rs",
+          "scope": "Serial loading and two native playback lanes",
+          "evidence": "Latest-only ticketed effect/ring load slots; file I/O outside application locks; driver consumer checks generation before installation; bounded command drain 16; native completion events rather than refill polling; idle cache clear after 15s",
+          "decision": "Reviewed; no change",
+          "limitations": "No audio playback or timing measurement; native API failure behavior inspected statically.",
+          "review_snapshot_sha256": "a2bad480cc4d695c6b2edc52c0182155facca49d2c1b15cf9901178d0ab5a8c4"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/storage.rs",
+      "delivery_sha256": "ad399d4cd9e65cb496b12a56cfd5a488a1cb80332a309d09a4f6f29e8a29f87e",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/storage.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "DPAPI/zeroize y escritura atómica; lectura checked separa ausente/ilegible; forget sólo propios, ajustes normalizados.",
+          "sha256_review_snapshot": "ad399d4cd9e65cb496b12a56cfd5a488a1cb80332a309d09a4f6f29e8a29f87e",
+          "review_snapshot_sha256": "ad399d4cd9e65cb496b12a56cfd5a488a1cb80332a309d09a4f6f29e8a29f87e"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/appearance.rs",
+      "delivery_sha256": "64c7797dafc2e54c391ca1590249973b119c1f254f134d5efb8969609c8975ac",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/appearance.rs",
+          "scope": "Preferences transaction, cancel and scaling",
+          "evidence": "Appearance draft, apply and cancellation flow",
+          "decision": "Reviewed; no change",
+          "limitations": "No native window or preference interaction executed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/autoscroll.rs",
+      "delivery_sha256": "b7f963e6ff5663d702d34362c132a46d04ba916deea27fb7deceaa0254438582",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/autoscroll.rs",
+          "scope": "Viewport owner, cancellation and pointer gestures",
+          "evidence": "Frame identity and gesture lifecycle",
+          "decision": "Reviewed; no change",
+          "limitations": "Static review; no latency measurement.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/avatar_cache.rs",
+      "delivery_sha256": "ebb2da2c77141f2223a7e57dbdc370f5091391342d11b5fd0a52b2232f5125bc",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/avatar_cache.rs",
+          "scope": "Account namespace, lease, path, expiry and quota",
+          "evidence": "Cache ownership and bounded local opening",
+          "decision": "Reviewed; no change",
+          "limitations": "First-use synchronous opening is bounded; no measured bottleneck established.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/call_preferences.rs",
+      "delivery_sha256": "b86dddb868e942df92a933a48ce9720bb407e5fddf3d20a1a2a22ad386e6957d",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/call_preferences.rs",
+          "scope": "Account-scoped cached preferences and shared merge",
+          "evidence": "Explicit persistence and 128-account bound",
+          "decision": "Reviewed; no change",
+          "limitations": "No real account preferences used.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/chat.rs",
+      "delivery_sha256": "18bb4e59938de2b8e6cd1993cafe12afdc5c9dcbbbbf7135af2453660867a055",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/chat.rs",
+          "scope": "Frame-owned profile return and group removal semantics",
+          "evidence": "draw_chat_return_header receives AppSnapshot; group_removal and system_record_has_actor distinguish IDs and incomplete metadata",
+          "decision": "Changed for T10 and T11",
+          "limitations": "Synthetic coverage; no live Discord payload captured.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/chat/context_menu.rs",
+      "delivery_sha256": "c13ba461dbdf18f57cacd3a63f507aa6245aef0d2f79bf9a5899ba70c2405a06",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/chat/context_menu.rs",
+          "scope": "Fixed target and context ownership",
+          "evidence": "Generation/view scope and deleted-row actions retain target identity",
+          "decision": "Reviewed; no change",
+          "limitations": "No operating-system clipboard interaction executed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/chat/interaction_tests.rs",
+      "delivery_sha256": "a72ffec6106de8953ca2235feaf6c043212d233e9c2d036bddb10778aa0e7046",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/chat/interaction_tests.rs",
+          "scope": "Independent semantic fixtures and copy action",
+          "evidence": "Seven removal payloads across chat/search/pins/history; literal expected copied actor and target",
+          "decision": "Added T11 fixtures",
+          "limitations": "Tests were not executed by the reviewing subagent.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/chat/interaction.rs",
+      "delivery_sha256": "edc2d5cc2d55904d968436e04405618bd72959b46792a5e9462e1d5cab1bc2c6",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/chat/interaction.rs",
+          "scope": "Pointer owner and restart identity",
+          "evidence": "View identity invalidates interaction state",
+          "decision": "Reviewed; no change",
+          "limitations": "Static review of input paths.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/chat/markdown.rs",
+      "delivery_sha256": "0ba6660780d0d0374492e52622a4051e4b54b17160ad9f0a55f5b85080045206",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/chat/markdown.rs",
+          "scope": "Original ranges, spoilers, links and selection",
+          "evidence": "Source text ranges preserved across rendering",
+          "decision": "Reviewed; no change",
+          "limitations": "No exhaustive markdown grammar audit.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/chat/reaction_tooltip.rs",
+      "delivery_sha256": "e6629263ef7b26c6e0421165d464e379879e3bbcf27c587572a559a891fc10a0",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/chat/reaction_tooltip.rs",
+          "scope": "Scoped query, timeout and cache limits",
+          "evidence": "One query in flight and 32-entry/100-person bounds",
+          "decision": "Reviewed; no change",
+          "limitations": "No API or network requests performed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/chat/rich.rs",
+      "delivery_sha256": "653ae63910d13ab354795fc81196295b863f6efc57f661494b3e62bf95a2973f",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/chat/rich.rs",
+          "scope": "Component limits, explicit safe links and deleted previews",
+          "evidence": "Bounded rich presentation and frozen deleted previews",
+          "decision": "Reviewed; no change",
+          "limitations": "No complete external URL policy audit.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/chat/scroll_follow.rs",
+      "delivery_sha256": "4e25018ed163114b9fc309ed9b8938a9b990aa2615154b9f38f51e7be1df4db6",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/chat/scroll_follow.rs",
+          "scope": "Scroll anchor ownership",
+          "evidence": "Account/generation/channel/message-ID anchor rather than stale pixel context",
+          "decision": "Reviewed; no change",
+          "limitations": "No native scrolling experiment executed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/completion.rs",
+      "delivery_sha256": "30f6743010286021a8c7ae21ba6e7c5cc50f4991a74b4699466aa1ec6a6eaa89",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/completion.rs",
+          "scope": "Bounded completion and insertion ranges",
+          "evidence": "Eight results, signature cache and explicit replacement range",
+          "decision": "Reviewed; no change",
+          "limitations": "No typing-throughput measurement.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/custom_text.rs",
+      "delivery_sha256": "94de52a5feea9e0204ccbb7e9d0959af4fc775d8c0e5d90eef954b1efd983194",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/custom_text.rs",
+          "scope": "Identity and incomplete metadata",
+          "evidence": "ID-based lookup retains text for ambiguous metadata",
+          "decision": "Reviewed; no change",
+          "limitations": "Static metadata-path review.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/dialogs.rs",
+      "delivery_sha256": "d6fe213bbb64df79c6ba37b9198debc9009a5c347f61f3bbf6d2eaded97642a3",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/dialogs.rs",
+          "scope": "Dialog owners and GIF removal pending state",
+          "evidence": "gif_removal_pending now reads paint_scope.generation; extracted-frame fixture prevents duplicate command",
+          "decision": "Changed confirmed T13 GIF ownership defect",
+          "limitations": "Other dialogs reviewed without general refactoring; tests not executed here.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/font_files.rs",
+      "delivery_sha256": "f3c43a455ee93c15c9f8c5d8baf86cd89f320f62518194bf1e0c9bf7122ca219",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/font_files.rs",
+          "scope": "Read-only font allowlist and handle ownership",
+          "evidence": "Twelve-font allowlist and mapping lifetimes",
+          "decision": "Reviewed; no change",
+          "limitations": "No font installation or native scan executed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/game_mentions.rs",
+      "delivery_sha256": "32cb3a13819533eee2d6717e6663e665e6c6345f71231d2f3452cc7862fae30d",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/game_mentions.rs",
+          "scope": "Demand coalescing, cancellation and owner budgets",
+          "evidence": "Two pending requests, twenty IDs and 256-entry cache limits",
+          "decision": "Reviewed; no change",
+          "limitations": "No connected game service used.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/group_members.rs",
+      "delivery_sha256": "c5841b9de0aeb83ae46171eb9faf11d6de1384f6a184dced00ef597591174e1e",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/group_members.rs",
+          "scope": "Member context, permissions and pending removal",
+          "evidence": "Scoped owner and explicit mutation actions",
+          "decision": "Reviewed; no change",
+          "limitations": "No real group mutation performed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/group_members/tests.rs",
+      "delivery_sha256": "683281a78eebd30b3a4029e91273826be9e612ec356640262844d30720bc2ea3",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/group_members/tests.rs",
+          "scope": "Member identity, scope and role fixtures",
+          "evidence": "Existing fixture responsibility inspected",
+          "decision": "Reviewed; no change",
+          "limitations": "Existing tests not executed by this subagent.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/guild_settings.rs",
+      "delivery_sha256": "fcbb8aa5c9d9ab0f6dc025ab4e0d3b6c2b6539120fcd7024f6f3d15af5f801c6",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/guild_settings.rs",
+          "scope": "Revision and permission ownership",
+          "evidence": "Editor key uses guild/revision; no reproducible account-crossing defect established",
+          "decision": "Reviewed; no fix justified",
+          "limitations": "Key hypothesis retained for later evidence; no speculative optimization.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/icons.rs",
+      "delivery_sha256": "293daa3bb48ed1a96583acf5701fada79cd5bf9b8e1c82f87647b88e4fc3c794",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/icons.rs",
+          "scope": "Shared pure icon painting",
+          "evidence": "Call and pin icon drawing has no actor/network effects",
+          "decision": "Reviewed; no change",
+          "limitations": "No pixel-diff visual audit.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/image_spool.rs",
+      "delivery_sha256": "16a1981e0b1e9e8aff21614821a3a6b6e9cf3efbcf8056c726fbe5280190d3e2",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/image_spool.rs",
+          "scope": "Streaming limits, temporary ownership and decode permit",
+          "evidence": "256-MiB bound, UUID-owned temporary file and consumer-held permit",
+          "decision": "Reviewed; no change",
+          "limitations": "No large-file or memory measurement executed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/incoming.rs",
+      "delivery_sha256": "9fd1fe95c4f8acfa8efb8c079d768d38f163351f4ad6a78a77899f143e8ad149",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/incoming.rs",
+          "scope": "Invitation window identity and explicit decisions",
+          "evidence": "Single window per invitation, focus dedup, explicit accept/reject and local ignore",
+          "decision": "Reviewed; no change",
+          "limitations": "No live incoming call used.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/input_ownership.rs",
+      "delivery_sha256": "cfb72bffc80cca0389562107d575f72421682460aa199036b23f47ec1ed0ef56",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/input_ownership.rs",
+          "scope": "Modal editor and paste leases",
+          "evidence": "Eight-lease cap; account/generation/channel acceptance",
+          "decision": "Reviewed; no change",
+          "limitations": "No operating-system paste performed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/markdown_cache.rs",
+      "delivery_sha256": "1bcbf75e2059dd3f696a68bbd55ea46c4f48ee1c010747cbabe2fc6e03b45a04",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/markdown_cache.rs",
+          "scope": "Bounded parsing and lock ownership",
+          "evidence": "256 entries, 4-MiB cache, 256-KiB source; parsing outside locks",
+          "decision": "Reviewed; no change",
+          "limitations": "No cache hit-rate or frame-time measurement.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/media_limit.rs",
+      "delivery_sha256": "6187343c28fa8d50fca274a70dd8be17134dac53d312e93d70f7c1a559099941",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/media_limit.rs",
+          "scope": "Local download limits",
+          "evidence": "Download policy remains separate from upload limits",
+          "decision": "Reviewed; no change",
+          "limitations": "No real download executed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/member_demand.rs",
+      "delivery_sha256": "77711c581a9abb9b50b2697515be81d2bd5d4a3e1bf99dcae555b014eda69b29",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/member_demand.rs",
+          "scope": "Rendered-surface demand and request owner",
+          "evidence": "Only drawn surfaces create coalesced member demand",
+          "decision": "Reviewed; no change",
+          "limitations": "No API demand measurement.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/mentions.rs",
+      "delivery_sha256": "1b543178ea3be352d1158b7b177784dcc2ef739041b3b3749e9f352bfa231f98",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/mentions.rs",
+          "scope": "ID identity, ranges and bounded work",
+          "evidence": "Mention identity is not inferred by reverse matching display names",
+          "decision": "Reviewed; no change",
+          "limitations": "No exhaustive Unicode fuzzing.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/menus.rs",
+      "delivery_sha256": "e32470217dda19644c163c954449ced600572073a63ddad6cd148205d5f71f2e",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/menus.rs",
+          "scope": "Fixed targets and context metadata",
+          "evidence": "Metadata reads occur outside menu transaction mutations",
+          "decision": "Reviewed; no change",
+          "limitations": "Static action-path review.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/mod.rs",
+      "delivery_sha256": "ebefc4a491517f60f20800b8f3e7c2fb8770d52172abe762cd2b085252935045",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/mod.rs",
+          "scope": "Snapshot extraction, account clearing and metadata updates",
+          "evidence": "Production update extracts AppSnapshot, confirming T10 welcome-state boundary",
+          "decision": "Reviewed; changes owned by integrating agent",
+          "limitations": "No claim that root-owned stream-sound hooks were unchanged.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/moderation.rs",
+      "delivery_sha256": "4149d3483e91a3825eb6989736cef34bc4e20da9fc70475c80a054b6354e62c8",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/moderation.rs",
+          "scope": "Actor/guild/revision and explicit confirmation",
+          "evidence": "Permission-scoped load and mutation actions",
+          "decision": "Reviewed; no change",
+          "limitations": "No moderation action performed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/moderation/tests.rs",
+      "delivery_sha256": "b5a8cb23477038cec93012c146e4c0941c8ad43de7557282e5fe76ce87d31052",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/moderation/tests.rs",
+          "scope": "Permission and action fixtures",
+          "evidence": "Existing coverage boundaries inspected",
+          "decision": "Reviewed; no change",
+          "limitations": "Existing tests not executed here.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/notification_activation.rs",
+      "delivery_sha256": "a9421de2b046baa4b20541037cefafa87a13706ba885254375f9678c6e8d0a52",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/notification_activation.rs",
+          "scope": "Validated notification target",
+          "evidence": "Target routing remains followed by actor guards",
+          "decision": "Reviewed; no change",
+          "limitations": "No native notification activated.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/overlay.rs",
+      "delivery_sha256": "d8242269d66adeb473e29a2a14652b5d5a5e0e4cb3d65deaebd625ca16a4a6ca",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/overlay.rs",
+          "scope": "Cancel, restoration and pointer blocking",
+          "evidence": "Modal overlay prevents click-through and restores owned state",
+          "decision": "Reviewed; no change",
+          "limitations": "No complete native focus matrix executed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/profile_editor.rs",
+      "delivery_sha256": "3ef5024f590d0266b5e9d2486f6860af9ab5b3c172417cbf82cedef3d941e402",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/profile_editor.rs",
+          "scope": "Presence intent and profile drafts",
+          "evidence": "Dropdown uses visual_presence/choose_presence/presence_note with actual frame owner; significant synthetic click fixture",
+          "decision": "Changed confirmed T13 consistency defect",
+          "limitations": "Bio and custom-status drafts preserved; no real status mutation or test execution here.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/resources.rs",
+      "delivery_sha256": "998c1813d0584b5e5ee4a2c758c04c9c590948d55337875e0bf7e30c169215c6",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/resources.rs",
+          "scope": "Worker queues, decode ownership and texture budgets",
+          "evidence": "Three workers, queue 64, ready stream 1, generation cancellation and account purge",
+          "decision": "Reviewed; no change",
+          "limitations": "No RSS, CPU or p95 measurements collected.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/resources/animation_clock.rs",
+      "delivery_sha256": "e890a4ed692c890a28bf7a6afc7274abfd7105002ee9cb9175309d20aa714247",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/resources/animation_clock.rs",
+          "scope": "Animation source time and missed frames",
+          "evidence": "Source clock skips missed frames; caller limits repaint cadence",
+          "decision": "Reviewed; no change",
+          "limitations": "No animation timing benchmark.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/resources/custom_animation.rs",
+      "delivery_sha256": "23d4054038c058df1b06c7c508c81f3d2a9f024ed0ab45e3a389c93a15e0c192",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/resources/custom_animation.rs",
+          "scope": "Animation limits, cancellation and failed retry TTL",
+          "evidence": "32 items, 4-MiB total, 512-KiB decoded, 1-MiB encoded; retry may occur on hover after 60 seconds without credentials",
+          "decision": "Reviewed; incidental TTL retry documented, unchanged by explicit scope",
+          "limitations": "No measurement justified broader retry or cache refactoring.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/resources/deleted_preview.rs",
+      "delivery_sha256": "e5d1bf515c448ca6be8b71e00807041483fa07536f469cbe765304383ee133f1",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/resources/deleted_preview.rs",
+          "scope": "Previously seen GPU preview retention",
+          "evidence": "Only prior-seen previews, cap 64 and 8 MiB, purge without network retrieval",
+          "decision": "Reviewed; no change",
+          "limitations": "No GPU memory measurement.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/resources/gif_source.rs",
+      "delivery_sha256": "e52c14cef0820c453cd73be23d4185e01a0ead194aba8e26797fde51b3da4084",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/resources/gif_source.rs",
+          "scope": "Redirect validation and shared pending/cache bounds",
+          "evidence": "Each of four redirects validated; 2-MiB page and parser budgets; cache 128; no cookies or tokens",
+          "decision": "Reviewed; no change",
+          "limitations": "No live provider requests or comprehensive provider security audit.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/resources/p2_emoji_cold.rs",
+      "delivery_sha256": "680a38aeb31a1dccc4175194a4b7df72836c22d015f53a5432043d3aa31397e0",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/resources/p2_emoji_cold.rs",
+          "scope": "Opt-in ignored diagnostic",
+          "evidence": "Synthetic resource diagnostic boundaries; native fonts may be used",
+          "decision": "Reviewed; no change",
+          "limitations": "Diagnostic not run; no account or device evidence inferred.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/resources/p2_offline_soak.rs",
+      "delivery_sha256": "c72c525bb1e033f171c34193d44a752d2d0207510f2215653e4e7ccf4e4329ba",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/resources/p2_offline_soak.rs",
+          "scope": "Opt-in ignored offline soak",
+          "evidence": "Scoped artifact directories, fixture bytes and bounded progress",
+          "decision": "Reviewed; no change",
+          "limitations": "Not run; historical measurements not adopted as new evidence.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/resources/webp_animation.rs",
+      "delivery_sha256": "b8ab21be31c440271810aae01a6eafb4a2888b9690f2d1fe16d8e0e996418e7c",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/resources/webp_animation.rs",
+          "scope": "Chunk, frame, pixel and cancellation budgets",
+          "evidence": "Chunk 16, frame 400, canvas 1024, 64-Mpixel and 8-MiB limits",
+          "decision": "Reviewed; no change",
+          "limitations": "No adversarial decoder fuzzing or performance run.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/self_presence.rs",
+      "delivery_sha256": "fc8577d2b0e243c258723b97ca2509c27a1fd794565f316315bbcffde7a06379",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/self_presence.rs",
+          "scope": "Intent versus confirmed policy and owner revision",
+          "evidence": "Account/generation/revision guard and shared member-list projection cache",
+          "decision": "Reviewed; shared contract reused from profile editor",
+          "limitations": "No live presence update performed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/server_order.rs",
+      "delivery_sha256": "88a7eb70796498571e303c46d6578b59f8a586203ebef237b51a38a9ef7d5cae",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/server_order.rs",
+          "scope": "Account hash and shared preference merge",
+          "evidence": "Persistence only on explicit completed drag",
+          "decision": "Reviewed; no change",
+          "limitations": "No real server ordering modified.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/shell.rs",
+      "delivery_sha256": "90464a1dad5542e1620f4a2dcec67cbb0ef15af7a7d43a8a94d7961724aa8b60",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/shell.rs",
+          "scope": "Actual-frame profile return and account speaking circle",
+          "evidence": "Profile caller receives extracted frame; shared speaking predicate/ring and frame fixtures",
+          "decision": "Changed for T10 and T12",
+          "limitations": "Synthetic draw tests; no device or client interaction.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/sound_settings.rs",
+      "delivery_sha256": "818a8c1caba99e365e29b611c588982ae423785716fef66fe361aca04c3585e6",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/sound_settings.rs",
+          "scope": "Confirmed policy, semantic stream end, dedup and snapshot deltas",
+          "evidence": "Root semantic StreamEnded integration; five new UI fixtures cover duplicates, disabled/zero-volume settings, DND active-call policy, account/generation/attempt replacement, and participant departure producing only configurable UserLeft; accepted T13 fix rejects snapshot effects across relogin and scopes participant/source diffs to the same call attempt",
+          "decision": "Reviewed, fixed confirmed snapshot-owner defect and added T7 semantic-sound fixtures",
+          "limitations": "No audio output executed; fixtures not compiled or executed by this subagent.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/text_budget.rs",
+      "delivery_sha256": "aad0479cffaa6c6ff1250f3e1e655aa537c6d7a2078b3bf92544392f67958f43",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/text_budget.rs",
+          "scope": "Draft retention and rollback ownership",
+          "evidence": "256-KiB per draft, 8-MiB aggregate, cursor/undo rollback",
+          "decision": "Reviewed; no change",
+          "limitations": "No long typing or memory soak.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/text_viewer.rs",
+      "delivery_sha256": "2321b52864417fc31a61361f53785fdc7ac4a91014be3d41e6ff55fd48db125c",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/text_viewer.rs",
+          "scope": "Bounded asynchronous remote text and explicit refresh",
+          "evidence": "1-MiB input, 2-MiB output, HTTPS CDN without credentials, context cancellation and one explicit refresh",
+          "decision": "Reviewed; no change",
+          "limitations": "No network retrieval executed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/theme.rs",
+      "delivery_sha256": "fee9779781a1959d39368654f9e01db472627203c4cb4a21d1dcd63f110d9667",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/theme.rs",
+          "scope": "Finite clamps, persistence and contrast",
+          "evidence": "Bounded theme inputs and persistence flow",
+          "decision": "Reviewed; no change",
+          "limitations": "No exhaustive accessibility contrast matrix.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/timestamps.rs",
+      "delivery_sha256": "97c82fee7a8b08e5498d119281f35b5769ec5e7aa39956886378cbbf71cc1178",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/timestamps.rs",
+          "scope": "Locale cache and picker owner",
+          "evidence": "Windows locale, 256-entry cache, account/generation/channel/revision and DST handling",
+          "decision": "Reviewed; no change",
+          "limitations": "No native locale matrix executed.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/txt_import.rs",
+      "delivery_sha256": "e2620a62355ef7a5241e02255b6a03d8678554675dc1bd1ccadca2b48cc31f44",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/txt_import.rs",
+          "scope": "Bounded worker and import cancellation",
+          "evidence": "One worker, 256 KiB, 500 lines, 100 values, owner cancellation and no network",
+          "decision": "Reviewed; no change",
+          "limitations": "No real text imported.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/ui7_probe.rs",
+      "delivery_sha256": "a81ac328274e7b867d77f205148fd30f78632b1e131b49e487092cf96d7d813b",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/ui7_probe.rs",
+          "scope": "Synthetic bounded frame probe",
+          "evidence": "20k-frame bound and seeded media; directly fills app.state rather than production extraction",
+          "decision": "Reviewed; actual extraction boundary covered by new shell tests",
+          "limitations": "Probe not run; no new frame-time metrics reported.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/video.rs",
+      "delivery_sha256": "d813b6d1accc18dea5d969ec9ce2f7ded21eef75192b81a797d4d6404c02e7ed",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/video.rs",
+          "scope": "Latest-frame drain and texture ownership",
+          "evidence": "Latest frame and texture reuse; minimize clears; draw does not open receiver",
+          "decision": "Reviewed; no change",
+          "limitations": "No real decoder, GPU or frame measurement.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/voice.rs",
+      "delivery_sha256": "6a3328e4657098ac2abee21f1269e9bec0b74509a4e4320a2ae3eda36ac596c5",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/voice.rs",
+          "scope": "Speaking identity and terminal screen availability",
+          "evidence": "Shared participant_speaking/self_speaking/speaking_ring; source availability guards volume and expansion",
+          "decision": "Changed for T12 and T7 integration",
+          "limitations": "No detector added; no media devices or network used.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/ui/voice/invitation_tests.rs",
+      "delivery_sha256": "584288b76cdbe717912725d92320d12d1a6cf1b382e6383803bddafa34d9f20f",
+      "perspectives": [
+        {
+          "responsibility_review": "ui",
+          "path": "crates/app/src/ui/voice/invitation_tests.rs",
+          "scope": "Terminal screen control suppression",
+          "evidence": "Unavailable screen plus contradictory active decoder cannot expose show/retry/volume/expansion; camera survives",
+          "decision": "Added T7 UI regression fixture",
+          "limitations": "Tests not executed by this subagent.",
+          "review_snapshot_sha256": null
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/updates.rs",
+      "delivery_sha256": "6cc845a9a8825dd010756bf5816abdafb6e95ba6c3ebdb8c1f83ae4e10b87aca",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/updates.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Público sin tokenDiscord, busy único, branch/variante, allowlist redirect5, tamaños/SHA antes preparar; worker fuera UI.",
+          "sha256_review_snapshot": "6cc845a9a8825dd010756bf5816abdafb6e95ba6c3ebdb8c1f83ae4e10b87aca",
+          "review_snapshot_sha256": "6cc845a9a8825dd010756bf5816abdafb6e95ba6c3ebdb8c1f83ae4e10b87aca"
+        }
+      ]
+    },
+    {
+      "path": "crates/app/src/updates/staging.rs",
+      "delivery_sha256": "f9d7917ffa0aa07bb23684e8e0b561833cac4c71f315aaf6cfcaf7bc84c0f060",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/app/src/updates/staging.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Propietario, lease, allowlist plano, cuotas6dirs/2GiB/edad; sin recursive delete ni adoptar carpetas ajenas.",
+          "sha256_review_snapshot": "f9d7917ffa0aa07bb23684e8e0b561833cac4c71f315aaf6cfcaf7bc84c0f060",
+          "review_snapshot_sha256": "f9d7917ffa0aa07bb23684e8e0b561833cac4c71f315aaf6cfcaf7bc84c0f060"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/access.rs",
+      "delivery_sha256": "fffb3cf3934c3bd6874f4fa109cbdec6d68388973037c649f2a68c9c5f33c333",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/access.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "ACL por identidad; overwrites/roles acotados, desconocido deniega; permisos por canal e hilo.",
+          "sha256_review_snapshot": "fffb3cf3934c3bd6874f4fa109cbdec6d68388973037c649f2a68c9c5f33c333",
+          "review_snapshot_sha256": "fffb3cf3934c3bd6874f4fa109cbdec6d68388973037c649f2a68c9c5f33c333"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/api_operations.rs",
+      "delivery_sha256": "545feee8bd09a3d190c8722eb2c844d105cd0439d49b1e625c45b5c90201e909",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/api_operations.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "256 hashes de intención; Pending/Unknown sobreviven en Arc; Drop posterior a sending conserva Unknown.",
+          "sha256_review_snapshot": "545feee8bd09a3d190c8722eb2c844d105cd0439d49b1e625c45b5c90201e909",
+          "review_snapshot_sha256": "545feee8bd09a3d190c8722eb2c844d105cd0439d49b1e625c45b5c90201e909"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/api.rs",
+      "delivery_sha256": "aa3289620fb1a24244c18c0e8cb84e1413f57bd7b9fad17210abd6aa40283a5b",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/api.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Un gate HTTP, tickets antes de emitir y tras esperas; mantiene confirmación comenzada; GET común puede repetir hasta3 ante429; get_once para recovery.",
+          "sha256_review_snapshot": "aa3289620fb1a24244c18c0e8cb84e1413f57bd7b9fad17210abd6aa40283a5b",
+          "review_snapshot_sha256": "aa3289620fb1a24244c18c0e8cb84e1413f57bd7b9fad17210abd6aa40283a5b"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/catalog.rs",
+      "delivery_sha256": "d0118d52ded9484373264c938b70e78302ae97c5861742100a68c4516791c303",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/catalog.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "READY proyecta sólo campos mínimos; parcial=null y límites por componente, sin convertir ausencia en catálogo vacío.",
+          "sha256_review_snapshot": "d0118d52ded9484373264c938b70e78302ae97c5861742100a68c4516791c303",
+          "review_snapshot_sha256": "d0118d52ded9484373264c938b70e78302ae97c5861742100a68c4516791c303"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/diagnostics.rs",
+      "delivery_sha256": "94e7b95cea2d1e69f8ab290be1bba69d02448c4fd245e69b37e4777266131956",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/diagnostics.rs",
+          "status": "modificado-T9-y-audio_source",
+          "notes": "Ring/cola256, vocabulario tipado, exportación explícita y cuotas; ampliación de T8 pertenece a audio_source. T9 añade PowerSuspended/PowerResumed info y PowerObserverUnavailable warning; sólo correlación efímera de episodio/origen.",
+          "sha256_review_snapshot": "94e7b95cea2d1e69f8ab290be1bba69d02448c4fd245e69b37e4777266131956",
+          "review_snapshot_sha256": "94e7b95cea2d1e69f8ab290be1bba69d02448c4fd245e69b37e4777266131956"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/game_mentions.rs",
+      "delivery_sha256": "b9f17c65daaf5bf9fe9d3dfd9dd3676bd393e0ee810fd82dde8bc6f19c24d5f5",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/game_mentions.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Rutas codificadas y resolución20; catálogo sólo display, medios allowlist; no lookup en dibujo.",
+          "sha256_review_snapshot": "b9f17c65daaf5bf9fe9d3dfd9dd3676bd393e0ee810fd82dde8bc6f19c24d5f5",
+          "review_snapshot_sha256": "b9f17c65daaf5bf9fe9d3dfd9dd3676bd393e0ee810fd82dde8bc6f19c24d5f5"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/game_presence.rs",
+      "delivery_sha256": "93a0ed3753941346edac83d4d883bbd652fdcc66e2ae4c1a11269d51811d971b",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/game_presence.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "RPC valida identidad externa al payload; texto128, timestamps/activos validados; sin URLs/secrets del objeto RPC.",
+          "sha256_review_snapshot": "93a0ed3753941346edac83d4d883bbd652fdcc66e2ae4c1a11269d51811d971b",
+          "review_snapshot_sha256": "93a0ed3753941346edac83d4d883bbd652fdcc66e2ae4c1a11269d51811d971b"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/gateway_power.rs",
+      "delivery_sha256": "a61abf74ea0f88de774c2dd9e156281fa4707d2e0c40112233ba786d94cde21d",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/gateway_power.rs",
+          "status": "nuevo-T9",
+          "notes": "Epoch de suspensión invalida ready y writer reales incluso si wake se coalesce; sólo nuevo READY/RESUMED restaura admisión; test puro y loopback preparados.",
+          "sha256_review_snapshot": "a61abf74ea0f88de774c2dd9e156281fa4707d2e0c40112233ba786d94cde21d",
+          "review_snapshot_sha256": "a61abf74ea0f88de774c2dd9e156281fa4707d2e0c40112233ba786d94cde21d"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/gateway_runtime_tests.rs",
+      "delivery_sha256": "ae0d8752f587db5a4261a92fe3027faae9675d068343fbc2fde948db0890deed",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/gateway_runtime_tests.rs",
+          "status": "revisado-tests-no-ejecutado",
+          "notes": "Lectura de fixtures de flapping, primer open, cooldown/manual y expiración; suite integrada la ejecuta root.",
+          "sha256_review_snapshot": "ae0d8752f587db5a4261a92fe3027faae9675d068343fbc2fde948db0890deed",
+          "review_snapshot_sha256": "ae0d8752f587db5a4261a92fe3027faae9675d068343fbc2fde948db0890deed"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/gateway_runtime.rs",
+      "delivery_sha256": "c7118ba3ea0bf00358a82ff9b2e8d4c98be558c0ecccf56a100936901577b54a",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/gateway_runtime.rs",
+          "status": "modificado-T9",
+          "notes": "Gateway usa misma lease antes de backoff; READY/RESUMED termina etapa; fallo detiene serie; observa fin del writer abortado.",
+          "sha256_review_snapshot": "c7118ba3ea0bf00358a82ff9b2e8d4c98be558c0ecccf56a100936901577b54a",
+          "review_snapshot_sha256": "c7118ba3ea0bf00358a82ff9b2e8d4c98be558c0ecccf56a100936901577b54a"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/gateway.rs",
+      "delivery_sha256": "9e4f30b0b9a29ce2dec72d6484bf25c6ee79e949e4d4b6779b5c11b0c9384f02",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/gateway.rs",
+          "status": "modificado-T9",
+          "notes": "Arc de episodio compartido; try_voice_recovery/try_view_recovery, permisos por episodio y safety; offline_recorder coherente.",
+          "sha256_review_snapshot": "9e4f30b0b9a29ce2dec72d6484bf25c6ee79e949e4d4b6779b5c11b0c9384f02",
+          "review_snapshot_sha256": "9e4f30b0b9a29ce2dec72d6484bf25c6ee79e949e4d4b6779b5c11b0c9384f02"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/guild_settings.rs",
+      "delivery_sha256": "a65c4c9771f73d8a081229d178666f62420bad4c5843c7bae12a6e9ab4432f30",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/guild_settings.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Intento se valida con ACL recién leída y jerarquía; campos permitidos, límites de roles/canales, writers explícitos.",
+          "sha256_review_snapshot": "a65c4c9771f73d8a081229d178666f62420bad4c5843c7bae12a6e9ab4432f30",
+          "review_snapshot_sha256": "a65c4c9771f73d8a081229d178666f62420bad4c5843c7bae12a6e9ab4432f30"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/lib.rs",
+      "delivery_sha256": "ddae8877c05aa4e6dcf6e21acf4d3ef0eecd8425448c5a68a01d51cd88be7e68",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/lib.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Exportaciones del crate; nuevo RecoveryBudget anidado bajo gateway, no API paralela ni dependencia nueva.",
+          "sha256_review_snapshot": "ddae8877c05aa4e6dcf6e21acf4d3ef0eecd8425448c5a68a01d51cd88be7e68",
+          "review_snapshot_sha256": "ddae8877c05aa4e6dcf6e21acf4d3ef0eecd8425448c5a68a01d51cd88be7e68"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/markdown.rs",
+      "delivery_sha256": "33de1cc0ed7bb4442eb94954905ac6a2ace2e09ffa21136f5caaac42553712dd",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/markdown.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Parser puro con bytes64KiB, depth16, trabajo/spans/bloques acotados y rangos UTF8; cola no interpretada preservada.",
+          "sha256_review_snapshot": "33de1cc0ed7bb4442eb94954905ac6a2ace2e09ffa21136f5caaac42553712dd",
+          "review_snapshot_sha256": "33de1cc0ed7bb4442eb94954905ac6a2ace2e09ffa21136f5caaac42553712dd"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/member_moderation.rs",
+      "delivery_sha256": "b83fdb1d989c9ea9bb578d7232fd099232faef030e985d9f973bbe8ad3fbadff",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/member_moderation.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Membresía/roles actuales; igualdad de posición no concede; payload/reason y límites antes de preparar write.",
+          "sha256_review_snapshot": "b83fdb1d989c9ea9bb578d7232fd099232faef030e985d9f973bbe8ad3fbadff",
+          "review_snapshot_sha256": "b83fdb1d989c9ea9bb578d7232fd099232faef030e985d9f973bbe8ad3fbadff"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/mentions.rs",
+      "delivery_sha256": "1f0ee1841bcab60954b3564fbbbd9a53c82b27b55f7dd53c59eab0351ce05754",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/mentions.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Política de menciones compartida con ACL y cursor léxico; no interpreta texto recibido como ping confirmado.",
+          "sha256_review_snapshot": "1f0ee1841bcab60954b3564fbbbd9a53c82b27b55f7dd53c59eab0351ce05754",
+          "review_snapshot_sha256": "1f0ee1841bcab60954b3564fbbbd9a53c82b27b55f7dd53c59eab0351ce05754"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/message_atoms.rs",
+      "delivery_sha256": "4e385146fcc1e35b79ed051363c7a8ed0982f166d296b93212037db482ff32a2",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/message_atoms.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Átomos puros limitados a256/512 candidatos; no reloj ni consultas; conserva fuente/rangos.",
+          "sha256_review_snapshot": "4e385146fcc1e35b79ed051363c7a8ed0982f166d296b93212037db482ff32a2",
+          "review_snapshot_sha256": "4e385146fcc1e35b79ed051363c7a8ed0982f166d296b93212037db482ff32a2"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/models.rs",
+      "delivery_sha256": "319454e522a0aa3b5809a505b5f422e09a0c901d3485005b6624f50005b392de",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/models.rs",
+          "status": "revisado-sin-cambio-adicional",
+          "notes": "Perímetro de CallParticipant/IncomingCall/CallVideo y ConnectionPhase; autor/mentions ya disponibles para T11; T7 cambios de root.",
+          "sha256_review_snapshot": "319454e522a0aa3b5809a505b5f422e09a0c901d3485005b6624f50005b392de",
+          "review_snapshot_sha256": "319454e522a0aa3b5809a505b5f422e09a0c901d3485005b6624f50005b392de"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/notifications.rs",
+      "delivery_sha256": "29e260387c84fc1c8c2f9dc9b9f806e839c482b44804e5db3361dee0c3c07fbd",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/notifications.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "PATCH por servidor/ticket; autoridad de eventos posteriores incluso mismo valor; store/canales acotados.",
+          "sha256_review_snapshot": "29e260387c84fc1c8c2f9dc9b9f806e839c482b44804e5db3361dee0c3c07fbd",
+          "review_snapshot_sha256": "29e260387c84fc1c8c2f9dc9b9f806e839c482b44804e5db3361dee0c3c07fbd"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/parsing.rs",
+      "delivery_sha256": "8599c3a6be479282dd878bb8d66f155f8995d3ab39c4c7a5a5644b3c2d9a45be",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/parsing.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Perímetros persona/canal/media/message y deltas: autor/mentions preservados; ausencia parcial no borra metadatos; medios50.",
+          "sha256_review_snapshot": "8599c3a6be479282dd878bb8d66f155f8995d3ab39c4c7a5a5644b3c2d9a45be",
+          "review_snapshot_sha256": "8599c3a6be479282dd878bb8d66f155f8995d3ab39c4c7a5a5644b3c2d9a45be"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/parsing/gif_media.rs",
+      "delivery_sha256": "e0d07a207322c306b2fb011f3bf2e052308495953d44b4b74f4a7c495c65061f",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/parsing/gif_media.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Sólo metadatos de animación explícitos; no poster/MP4 como fallback; URLs trusted.",
+          "sha256_review_snapshot": "e0d07a207322c306b2fb011f3bf2e052308495953d44b4b74f4a7c495c65061f",
+          "review_snapshot_sha256": "e0d07a207322c306b2fb011f3bf2e052308495953d44b4b74f4a7c495c65061f"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/parsing/message_rich.rs",
+      "delivery_sha256": "2d7ff16dc5edcc7d65cd23d446e2a60247b7cb2a1ff3e30977e76bd49d753364",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/parsing/message_rich.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Texto/links/depth/nodos acotados; custom-ID no sale como acción ejecutable; parcial conserva componentes previos.",
+          "sha256_review_snapshot": "2d7ff16dc5edcc7d65cd23d446e2a60247b7cb2a1ff3e30977e76bd49d753364",
+          "review_snapshot_sha256": "2d7ff16dc5edcc7d65cd23d446e2a60247b7cb2a1ff3e30977e76bd49d753364"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/rate_limits.rs",
+      "delivery_sha256": "fb05e77f802aedfef0ddefbe6bdf630dc62c8419d88a9290ad028f685b1c9d45",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/rate_limits.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Plazos monotónicos compartidos; máximo Retry-After/reset;256 aliases/512 deadlines, overflow no evade espera.",
+          "sha256_review_snapshot": "fb05e77f802aedfef0ddefbe6bdf630dc62c8419d88a9290ad028f685b1c9d45",
+          "review_snapshot_sha256": "fb05e77f802aedfef0ddefbe6bdf630dc62c8419d88a9290ad028f685b1c9d45"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/safety.rs",
+      "delivery_sha256": "59c7944192bc2a72a88adb430ce8f098b3f55d7684559aad1d74b8ed569319a7",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/safety.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Estados monotónicos; observer serializado fuera de lock watch; Allowed no borra bloqueo.",
+          "sha256_review_snapshot": "59c7944192bc2a72a88adb430ce8f098b3f55d7684559aad1d74b8ed569319a7",
+          "review_snapshot_sha256": "59c7944192bc2a72a88adb430ce8f098b3f55d7684559aad1d74b8ed569319a7"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/search.rs",
+      "delivery_sha256": "640958bf6ac0e343b960093cbb35aea5751383aacd7f043b940902355b3416c9",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/search.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Entrada2000/filtros20; alias y UTF8, resolución ambigua rechaza; query codificada, sin I/O en parser.",
+          "sha256_review_snapshot": "640958bf6ac0e343b960093cbb35aea5751383aacd7f043b940902355b3416c9",
+          "review_snapshot_sha256": "640958bf6ac0e343b960093cbb35aea5751383aacd7f043b940902355b3416c9"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/settings_proto.rs",
+      "delivery_sha256": "81216c14f5bfcfe8eb87a6985d7894161f101502974ac81a92fbfaa050cc4f4f",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/settings_proto.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Lectura field11 acotada512KiB/10000 campos; omite desconocidos; write delta mínimo sin reescribir cuenta.",
+          "sha256_review_snapshot": "81216c14f5bfcfe8eb87a6985d7894161f101502974ac81a92fbfaa050cc4f4f",
+          "review_snapshot_sha256": "81216c14f5bfcfe8eb87a6985d7894161f101502974ac81a92fbfaa050cc4f4f"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/shared_list.rs",
+      "delivery_sha256": "a6cd94cf3c5a8d7265ff3998e5c6f93301c6ca7e8d37407919b6015c87816d93",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/shared_list.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Arc copy-on-write preserva snapshots; clear libera handle, igualdad por valores salvo API explícita de identidad.",
+          "sha256_review_snapshot": "a6cd94cf3c5a8d7265ff3998e5c6f93301c6ca7e8d37407919b6015c87816d93",
+          "review_snapshot_sha256": "a6cd94cf3c5a8d7265ff3998e5c6f93301c6ca7e8d37407919b6015c87816d93"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/shared_recovery.rs",
+      "delivery_sha256": "90bcbfcb7178184365fd9026499ff5629825ded4ce0ac4647e37449cbc638e2e",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/shared_recovery.rs",
+          "status": "nuevo-T9",
+          "notes": "Un episodio serial Gateway→Voice→Viewer,<=1 cada etapa; Drop/fallo detiene; lease inválida sigue retenida hasta completion; estabilidad60s y cooldown.",
+          "sha256_review_snapshot": "90bcbfcb7178184365fd9026499ff5629825ded4ce0ac4647e37449cbc638e2e",
+          "review_snapshot_sha256": "90bcbfcb7178184365fd9026499ff5629825ded4ce0ac4647e37449cbc638e2e"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/uploads.rs",
+      "delivery_sha256": "e2849e3109d8a3ed7519c8917f9b006c8720a8b747df8a17bd0bf204160e8576",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/uploads.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Límites de contenido/archivo/lote existentes y preservados; no se modificaron entitlements ni se hicieron subidas.",
+          "sha256_review_snapshot": "e2849e3109d8a3ed7519c8917f9b006c8720a8b747df8a17bd0bf204160e8576",
+          "review_snapshot_sha256": "e2849e3109d8a3ed7519c8917f9b006c8720a8b747df8a17bd0bf204160e8576"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/video.rs",
+      "delivery_sha256": "29934dba24b8d20a585ac1b4129e894747191e10a5306ebf01c9dadb39e4c819",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/video.rs",
+          "status": "revisado-sin-cambio",
+          "notes": "Cabecera valida antes de multiplicar;4streams/8MiB, latest-frame por secuencia; no pixeles en JSON/disk.",
+          "sha256_review_snapshot": "29934dba24b8d20a585ac1b4129e894747191e10a5306ebf01c9dadb39e4c819",
+          "review_snapshot_sha256": "29934dba24b8d20a585ac1b4129e894747191e10a5306ebf01c9dadb39e4c819"
+        }
+      ]
+    },
+    {
+      "path": "crates/core/src/voice_diagnostics.rs",
+      "delivery_sha256": "21f9cfd3a1f7e615b2efd10d608858f7aebe18fa911cf9125341ce496e8b35d1",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/core/src/voice_diagnostics.rs",
+          "status": "revisado-sin-cambio-adicional",
+          "notes": "Schema cerrado de muestras locales; capture/index/tiempos/contadores acotados; ampliación T8 de audio_source; no audibilidad inferida.",
+          "sha256_review_snapshot": "21f9cfd3a1f7e615b2efd10d608858f7aebe18fa911cf9125341ce496e8b35d1",
+          "review_snapshot_sha256": "21f9cfd3a1f7e615b2efd10d608858f7aebe18fa911cf9125341ce496e8b35d1"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/host.rs",
+      "delivery_sha256": "2b12aee31ddc01419cd2e0e849f6c5b5af30f3e0c33405a6b15b5fef9be071e4",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/host.rs",
+          "kind": "production-with-pure-tests",
+          "status": "revisado-cambiado-T7-T8-T9",
+          "notes": "Integra diagnóstico, contextos/generaciones, callbacks aplicados, gates y eventos; stop ACK diferido hasta Join, errores de liberación retenidos y backstop de reemplazo activo. No reconecta ni reintenta por su cuenta.",
+          "sha256": "2b12aee31ddc01419cd2e0e849f6c5b5af30f3e0c33405a6b15b5fef9be071e4",
+          "review_snapshot_sha256": "2b12aee31ddc01419cd2e0e849f6c5b5af30f3e0c33405a6b15b5fef9be071e4"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/host/applied_frames.rs",
+      "delivery_sha256": "17b47db10903243466d01c4e0dd5eb10a8803d7016c0fefc391d54d0b306edef",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/host/applied_frames.rs",
+          "kind": "production-with-pure-tests",
+          "status": "revisado-nuevo-T9",
+          "notes": "Ledger máximo 128 frames y dependencias acotadas. Sólo op/seq/tokens, sin payloads. Impide ACK de JSON posterior mientras un commit MLS anterior siga pendiente; suspensión no adelanta aplicación ni habilita gate.",
+          "sha256": "17b47db10903243466d01c4e0dd5eb10a8803d7016c0fefc391d54d0b306edef",
+          "review_snapshot_sha256": "17b47db10903243466d01c4e0dd5eb10a8803d7016c0fefc391d54d0b306edef"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/host/dispatch_queue.rs",
+      "delivery_sha256": "544bcf1a3329106913c4624c398c68a9b7451a6e1f288fd1d14caf9fd687ae65",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/host/dispatch_queue.rs",
+          "kind": "production-with-pure-tests",
+          "status": "revisado-adaptado",
+          "notes": "Control con reservas de mensajes/bytes, tick y mic coalescidos, turno de mic sin privar MLS. Tag Applied cuenta bytes de su tag interno para conservar el presupuesto previo.",
+          "sha256": "544bcf1a3329106913c4624c398c68a9b7451a6e1f288fd1d14caf9fd687ae65",
+          "review_snapshot_sha256": "544bcf1a3329106913c4624c398c68a9b7451a6e1f288fd1d14caf9fd687ae65"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/host/recovery_methods.rs",
+      "delivery_sha256": "357a055d7e803c3ed1c1d0a2e97770aae581de62059bd217f5da68f411c435ca",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/host/recovery_methods.rs",
+          "kind": "production",
+          "status": "revisado-nuevo-T7-T9",
+          "notes": "Dueño de sockets retenidos, quiesce y barreras de cierre; interrupción se emite antes de stop local y lleva recovering/generación. GoLive propio se cierra con el episodio principal. Resume sólo por comando con mediaSession vigente; readiness real posterior.",
+          "sha256": "357a055d7e803c3ed1c1d0a2e97770aae581de62059bd217f5da68f411c435ca",
+          "review_snapshot_sha256": "357a055d7e803c3ed1c1d0a2e97770aae581de62059bd217f5da68f411c435ca"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/host/voice_resume.rs",
+      "delivery_sha256": "6524c7fb8c1d7083341c07893079db0042e6a0231dc232a3a4d0aedb607f88c2",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/media-addon/src/host/voice_resume.rs",
+          "status": "nuevo-cedido-a-audio_source",
+          "notes": "Estado puro op7/seq_ack/op9; audio_source integra validate y ACK de prefijo aplicado con AppliedFrames.",
+          "sha256_review_snapshot": "6524c7fb8c1d7083341c07893079db0042e6a0231dc232a3a4d0aedb607f88c2",
+          "review_snapshot_sha256": "6524c7fb8c1d7083341c07893079db0042e6a0231dc232a3a4d0aedb607f88c2"
+        },
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/host/voice_resume.rs",
+          "kind": "production-with-pure-tests",
+          "status": "revisado-cambiado-T9",
+          "notes": "Máquina de protocolo sin dueño de reintento; op7 con seq_ack completo, validate antes de mutación y Hello/op9 obligatorio. Resumed no solicitado/duplicado no habilita transmisión. Secuencia binaria puede envolver, no se usa max.",
+          "sha256": "6524c7fb8c1d7083341c07893079db0042e6a0231dc232a3a4d0aedb607f88c2",
+          "review_snapshot_sha256": "6524c7fb8c1d7083341c07893079db0042e6a0231dc232a3a4d0aedb607f88c2"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/host/voice_socket.rs",
+      "delivery_sha256": "1aa05dccdb244c775862fc4143e502a0f57980c8ec82fd68288c224e6a04f9a5",
+      "perspectives": [
+        {
+          "responsibility_review": "calls",
+          "path": "crates/media-addon/src/host/voice_socket.rs",
+          "status": "modificado-T9",
+          "notes": "Generaciones, Failure/CloseCode numérico, una connect por spawn, stop+join previo a reemplazo, límites colas/watchdog conservados.",
+          "sha256_review_snapshot": "1aa05dccdb244c775862fc4143e502a0f57980c8ec82fd68288c224e6a04f9a5",
+          "review_snapshot_sha256": "1aa05dccdb244c775862fc4143e502a0f57980c8ec82fd68288c224e6a04f9a5"
+        },
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/host/voice_socket.rs",
+          "kind": "production-with-pure-tests",
+          "status": "revisado-cambio-coordinado-T9",
+          "notes": "Código numérico de cierre y Failure tipados; un intento, outbox/control acotados, deadlines y cancelación independiente del escritor. StoppedSocket espera Join antes de abrir reemplazo. Implementado por calls_final, revisado aquí.",
+          "sha256": "1aa05dccdb244c775862fc4143e502a0f57980c8ec82fd68288c224e6a04f9a5",
+          "review_snapshot_sha256": "1aa05dccdb244c775862fc4143e502a0f57980c8ec82fd68288c224e6a04f9a5"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/lib.rs",
+      "delivery_sha256": "1a0e62052facbfb56d23058e3b665cd102b4c87407e6302c814d27af8068c426",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/lib.rs",
+          "kind": "production-and-diagnostic-exports",
+          "status": "revisado-sin-cambio",
+          "notes": "Entradas Rust/N-API; run exige host Electron compatible. Probes separados por native-probe. No carga el motor desde los tests puros.",
+          "sha256": "1a0e62052facbfb56d23058e3b665cd102b4c87407e6302c814d27af8068c426",
+          "review_snapshot_sha256": "1a0e62052facbfb56d23058e3b665cd102b4c87407e6302c814d27af8068c426"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/native.rs",
+      "delivery_sha256": "464a78ab6df295990ac38adb14ee0a8c6e6c98a87a9bf5c3cfc491b7f3ba5214",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/native.rs",
+          "kind": "production",
+          "status": "revisado-sin-cambio",
+          "notes": "Referencias JS sólo en hilo apropiado; buffers MLS acotados y excepciones retiradas; construcción raw/moderna/legacy y ganancias de participante conservadas. Sin nuevo defecto alcanzable acreditado.",
+          "sha256": "464a78ab6df295990ac38adb14ee0a8c6e6c98a87a9bf5c3cfc491b7f3ba5214",
+          "review_snapshot_sha256": "464a78ab6df295990ac38adb14ee0a8c6e6c98a87a9bf5c3cfc491b7f3ba5214"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/preview.rs",
+      "delivery_sha256": "c848d19dc70a5355f5a21d2c0dcbdacbb360ad0eddbd5dc186d84baebacc0de3",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/preview.rs",
+          "kind": "production-with-pure-tests",
+          "status": "revisado-corregido-T13",
+          "notes": "Defecto alcanzable: timeout no acredita terminación y antes abría otra consulta. Pipeline conserva una consulta y última demanda, acepta sólo completion exacta, invalida imagen cancelada/expirada y no reintenta automáticamente una selección expirada. Refresco normal 750 ms se conserva tras callback realmente concluido. Decodificación embebida sigue acotada.",
+          "sha256": "c848d19dc70a5355f5a21d2c0dcbdacbb360ad0eddbd5dc186d84baebacc0de3",
+          "review_snapshot_sha256": "c848d19dc70a5355f5a21d2c0dcbdacbb360ad0eddbd5dc186d84baebacc0de3"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/probe_video.rs",
+      "delivery_sha256": "b774c068b5e24110207231d1621b36430b0bc3ed5c7732b9ceb110383acfbc0f",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/probe_video.rs",
+          "kind": "diagnostic-only",
+          "status": "revisado-sin-cambio",
+          "notes": "Limitación conservada: fake true elige Strobe y no prueba lectura Y4M; identificador de preview no acreditado. RGBA manual/sink ACK no prueban productor nativo ni explican el micrófono. Sin ejecución.",
+          "sha256": "b774c068b5e24110207231d1621b36430b0bc3ed5c7732b9ceb110383acfbc0f",
+          "review_snapshot_sha256": "b774c068b5e24110207231d1621b36430b0bc3ed5c7732b9ceb110383acfbc0f"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/probe_window.rs",
+      "delivery_sha256": "4db61abf21feee5f704f8dd0f9207ebd990cce1cf0dbcc67e39ca8e896e1b544",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/probe_window.rs",
+          "kind": "diagnostic-only",
+          "status": "revisado-sin-cambio",
+          "notes": "Modo explícito de fixture; HWND, PID y clase propios antes de autorizar captura. Sin captura de otras aplicaciones por esta revisión; no se ejecutó.",
+          "sha256": "4db61abf21feee5f704f8dd0f9207ebd990cce1cf0dbcc67e39ca8e896e1b544",
+          "review_snapshot_sha256": "4db61abf21feee5f704f8dd0f9207ebd990cce1cf0dbcc67e39ca8e896e1b544"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/probe.rs",
+      "delivery_sha256": "12f68764029d58c0f2a6d9386063a149352194b9870b51d6e6e974943a3369ea",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/probe.rs",
+          "kind": "diagnostic-only",
+          "status": "revisado-sin-cambio",
+          "notes": "Fixture privada local/UDP y selección fake ligada a hash; no audibilidad remota ni cuentas. Resultados anteriores son contraevidencia limitada, no prueba física. No se ejecutó en esta ronda.",
+          "sha256": "12f68764029d58c0f2a6d9386063a149352194b9870b51d6e6e974943a3369ea",
+          "review_snapshot_sha256": "12f68764029d58c0f2a6d9386063a149352194b9870b51d6e6e974943a3369ea"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/protocol.rs",
+      "delivery_sha256": "ccab6aabe0b78963336f1a641a4e4c95fa85f71ff71b2a86ba7d73aa5fc1f305",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/protocol.rs",
+          "kind": "production-with-pure-tests",
+          "status": "revisado-sin-cambio-propio",
+          "notes": "Validación de endpoint wss permitido, credenciales, tamaños y frames; sólo AEAD autenticado. Frame clonable para contratos de transporte; sin relajar validación ni cifrado.",
+          "sha256": "ccab6aabe0b78963336f1a641a4e4c95fa85f71ff71b2a86ba7d73aa5fc1f305",
+          "review_snapshot_sha256": "ccab6aabe0b78963336f1a641a4e4c95fa85f71ff71b2a86ba7d73aa5fc1f305"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/receive_probe.rs",
+      "delivery_sha256": "19585b9a32bd8013c5f89724e4884a87b710297794462194b7fdd6dd045fe964",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/receive_probe.rs",
+          "kind": "diagnostic-only-napi-fakes",
+          "status": "revisado-adaptado-y-extendido",
+          "notes": "Adapta campos/Event de Host y agrega el recorrido de preview real con thenable N-API diferido y PNG sintético: timeout sin reconsulta, nueva selección esperando, callback viejo/duplicado sin frame y frame vigente validado. No carga motor nativo ni abre cuenta/dispositivo/socket real.",
+          "sha256": "08afb2a6b325836110da914a27b1edad1895de0975084a9532c2e01f5b737012",
+          "review_snapshot_sha256": "08afb2a6b325836110da914a27b1edad1895de0975084a9532c2e01f5b737012"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/session.rs",
+      "delivery_sha256": "5a34f813ab2991ec9cf207b7b020a5298fc731cbdd2c295c732f217eb4196f74",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/session.rs",
+          "kind": "production-with-pure-tests",
+          "status": "revisado-cambiado-T8",
+          "notes": "Telemetría nueva separa detección VAD, deseo fresco por modo, petición/aplicación de puerta, elegibilidad y cifrado; callbacks/edad no acreditan recepción. Conserva comportamiento de audio; pruebas de stale/rekey/mute/PTT.",
+          "sha256": "5a34f813ab2991ec9cf207b7b020a5298fc731cbdd2c295c732f217eb4196f74",
+          "review_snapshot_sha256": "5a34f813ab2991ec9cf207b7b020a5298fc731cbdd2c295c732f217eb4196f74"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/settings.rs",
+      "delivery_sha256": "d2be0b048fa69b7ada2e2f985caca1cf11f8a681694ff960f92e5470805f6544",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/settings.rs",
+          "kind": "production-with-pure-tests",
+          "status": "revisado-sin-cambio",
+          "notes": "Rangos de ganancia/sensibilidad y switches validados; VAD manual y PTT comparten puerta nativa explícita. No se reconfigura audio al producir diagnóstico.",
+          "sha256": "d2be0b048fa69b7ada2e2f985caca1cf11f8a681694ff960f92e5470805f6544",
+          "review_snapshot_sha256": "d2be0b048fa69b7ada2e2f985caca1cf11f8a681694ff960f92e5470805f6544"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/stats.rs",
+      "delivery_sha256": "bddf573b7e26f1b42d2549a536d816282c062473ec37c25a635d49a39d990201",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/stats.rs",
+          "kind": "production-with-pure-tests",
+          "status": "revisado-cambiado-T8",
+          "notes": "Sanitizador por whitelist. Captura voluntaria 10 s/10 consultas/mínimo 1 s entre inicios, deadline 800 ms y lease no liberado por timeout/cancel/error incierto. Deltas exclusivamente AUDIO con generación; ausencia y reset no se convierten en progreso.",
+          "sha256": "bddf573b7e26f1b42d2549a536d816282c062473ec37c25a635d49a39d990201",
+          "review_snapshot_sha256": "bddf573b7e26f1b42d2549a536d816282c062473ec37c25a635d49a39d990201"
+        }
+      ]
+    },
+    {
+      "path": "crates/media-addon/src/video.rs",
+      "delivery_sha256": "3b3716923fb9df39c3397eda00a8b7ab09f01fdb2c43e90f9d3a485e8c8a71a7",
+      "perspectives": [
+        {
+          "responsibility_review": "media",
+          "path": "crates/media-addon/src/video.rs",
+          "kind": "production-with-pure-tests",
+          "status": "revisado-cambio-acotado-preview",
+          "notes": "Lane binario RGBA, límites de dimensiones/bytes/streams, ACK aun al descartar y alive al desmontar; errores de cámara contenidos. Único cambio de esta revisión: estado compartido del pipeline preview para conservar lease al cambiar selección.",
+          "sha256": "3b3716923fb9df39c3397eda00a8b7ab09f01fdb2c43e90f9d3a485e8c8a71a7",
+          "review_snapshot_sha256": "3b3716923fb9df39c3397eda00a8b7ab09f01fdb2c43e90f9d3a485e8c8a71a7"
+        }
+      ]
+    }
+  ],
+  "supporting_files": [
+    {
+      "responsibility_review": "media",
+      "path": "crates/core/src/voice_diagnostics.rs",
+      "status": "revisado-nuevo-T8",
+      "notes": "DTO cerrado, tipado, sin IDs privados, nombres de dispositivo, audio, URLs ni errores libres; límites y unknowns explícitos.",
+      "sha256": "21f9cfd3a1f7e615b2efd10d608858f7aebe18fa911cf9125341ce496e8b35d1"
+    },
+    {
+      "responsibility_review": "media",
+      "path": "crates/core/src/diagnostics.rs",
+      "status": "revisado-cambiado-T8",
+      "notes": "Payload opcional VoiceRecord validado en ring/export existentes, sin bundle adicional. No clasifica toda muestra de actividad como warning; deduplicación incluye payload tipado.",
+      "sha256": "38288f66763986bb19948b0d5fcc446fa8bbb094dd85b46c5f2eb397185b7947"
+    },
+    {
+      "responsibility_review": "media",
+      "path": "crates/app/src/diagnostics.rs",
+      "status": "revisado-cambiado-T8",
+      "notes": "Admisión por scope/capture efímeros, rechazo de eventos viejos y DTO inválidos; UI sólo emite intención Start/Cancel, sin GET ni consultas desde dibujo.",
+      "sha256": "6eb0256bda72495a74716fe49f239ed9da42bd6878ee0222ea3c255bdbc9d401"
+    },
+    {
+      "responsibility_review": "media",
+      "path": "crates/media-addon/tests/preview-pipeline.cjs",
+      "status": "fixture-preparada-sin-ejecutar",
+      "notes": "Driver externo de probeReceiveLifecycle con fakes exclusivamente; valida flags de ausencia de motor/cuentas/dispositivos/red y hashes de addon/fuentes.",
+      "sha256": "f62ffebb2c13d32c07716694056feabc4f2b6a1acaf4fd79126940816c27d6ca"
+    }
+  ]
+}

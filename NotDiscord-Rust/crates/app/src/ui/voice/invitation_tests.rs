@@ -22,6 +22,28 @@ fn voice_pointer(position:egui::Pos2,pressed:bool,button:egui::PointerButton)->V
     vec![egui::Event::PointerMoved(position),egui::Event::PointerButton {pos:position,button,pressed,modifiers:egui::Modifiers::NONE}]
 }
 #[test]
+fn an_unavailable_screen_cannot_leave_show_retry_volume_or_expansion_controls_behind() {
+    let (mut app,ctx,mut commands,mut state)=invitation_fixture();
+    let peer=Person {id:"300".into(),name:"Peer with a surviving camera".into(),..Default::default()};
+    state.call_participants.push(CallParticipant {user:peer.clone(),self_video:true,screen_sharing:true,
+        screen_view_unavailable:true,viewing:"screen".into(),view_error:"Synthetic reception budget exhausted".into(),..Default::default()});
+    // A contradictory decoder callback cannot override terminal presentation.
+    state.call_videos=vec![CallVideo {id:99,user_id:peer.id.clone(),kind:"screen".into(),active:true,view_requested:true,..Default::default()}];
+    ctx.data_mut(|data|data.insert_temp(egui::Id::new("call-expanded-video"),CallExpansion {
+        scope:"account:100:call:200:7".into(),id:99,zoom:2.,pan:egui::Vec2::ZERO,
+    }));
+    prune_expanded_video(&ctx,&state);
+    assert!(ctx.data(|data|data.get_temp::<CallExpansion>(egui::Id::new("call-expanded-video"))).is_none());
+    assert!(!stream_volume_applicable(&state.call_participants[1],&state));
+    for _ in 0..3 {invitation_frame(&mut app,&ctx,&state,vec![],420.,850.);}
+    let output=invitation_frame(&mut app,&ctx,&state,vec![],420.,850.);
+    voice_text_rect(&output,"Peer with a surviving camera");
+    voice_text_rect(&output,"Cámara · Mostrar");
+    assert!(!output.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(text)
+        if text.galley.job.text.starts_with("Pantalla · "))));
+    assert!(commands.try_recv().is_err(),"retiring presentation does not send stopWatch or reopen a receiver");
+}
+#[test]
 fn expanded_camera_and_screen_keep_members_fit_and_return_as_distinct_actions() {
     for kind in ["camera","screen"] {
         let (mut app,ctx,mut commands,mut state)=invitation_fixture();

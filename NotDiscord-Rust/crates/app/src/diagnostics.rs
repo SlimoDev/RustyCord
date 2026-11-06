@@ -3,7 +3,51 @@
 use eframe::egui;
 use notdiscord_core::diagnostics::{self as log, Component, Code, Phase};
 use serde_json::Value;
-use std::{path::PathBuf, sync::{Arc, Mutex}};
+use std::{path::PathBuf, sync::{Arc, Mutex, OnceLock}};
+
+#[derive(Default)]
+struct VoiceCaptureOwner { current: Option<(u64, u64)> }
+impl VoiceCaptureOwner {
+    fn begin(&mut self, scope: u64, capture: u64) -> bool {
+        if scope == 0 || capture == 0 || self.current.is_some() { return false; }
+        self.current = Some((scope, capture)); true
+    }
+    fn end(&mut self, scope: u64, capture: u64) {
+        if self.current == Some((scope, capture)) { self.current = None; }
+    }
+    fn accept(&mut self, scope: u64, record: &log::voice::VoiceRecord) -> bool {
+        if self.current != Some((scope, capture_of(record))) { return false; }
+        if matches!(record, log::voice::VoiceRecord::End { .. }) { self.current = None; }
+        true
+    }
+}
+static VOICE_CAPTURE: OnceLock<Mutex<VoiceCaptureOwner>> = OnceLock::new();
+fn voice_capture_owner() -> std::sync::MutexGuard<'static, VoiceCaptureOwner> {
+    VOICE_CAPTURE.get_or_init(Default::default).lock().unwrap_or_else(|error| error.into_inner())
+}
+/// Called by the owning controller before sending the optional IPC command.
+/// Scope is an ephemeral bridge/attempt identity and never enters the log.
+pub fn begin_voice_capture(scope: u64, capture: u64) -> bool {
+    voice_capture_owner().begin(scope, capture)
+}
+/// Revokes a rejected, cancelled or replaced intention; a late end event must
+/// not revoke its replacement. This does not assert native work completed.
+pub fn end_voice_capture(scope: u64, capture: u64) {
+    voice_capture_owner().end(scope, capture);
+}
+fn capture_of(record: &log::voice::VoiceRecord) -> u64 {
+    match record { log::voice::VoiceRecord::Start { capture } | log::voice::VoiceRecord::End { capture, .. } => *capture,
+        log::voice::VoiceRecord::Sample { sample } => sample.capture }
+}
+fn voice_record(value: &Value) -> Option<log::voice::VoiceRecord> {
+    let record: log::voice::VoiceRecord = serde_json::from_value(value.get("record")?.clone()).ok()?;
+    record.valid().then_some(record)
+}
+/// UI only enqueues a local intention. The controller validates account,
+/// current voice attempt and availability before making an IPC request.
+pub fn take_voice_action(ctx: &egui::Context) -> Option<&'static str> {
+    ctx.data_mut(|data| data.remove_temp::<&'static str>(egui::Id::new("voice-diagnostic-action")))
+}
 
 pub fn call_sources(ctx: &egui::Context, state: &notdiscord_core::models::AppSnapshot, panel_visible: bool) {
     let bits = log::call_sources_summary(state) | ((panel_visible as u64) << 63);
@@ -17,6 +61,17 @@ pub fn call_sources(ctx: &egui::Context, state: &notdiscord_core::models::AppSna
 }
 
 pub fn media_event(value: &Value) {
+    media_event_scoped(value, 0);
+}
+pub fn media_event_scoped(value: &Value, scope: u64) {
+    if value["event"] == "voiceDiagnostic" {
+        let Some(record) = voice_record(value) else { return; };
+        let mut owner = voice_capture_owner();
+        if !owner.accept(scope, &record) { return; }
+        drop(owner);
+        log::record_voice(record);
+        return;
+    }
     let correlation=value["mediaSession"].as_u64().unwrap_or(0);
     let phase=match value["phase"].as_str().unwrap_or_default() {
         "connect"=>Phase::Connect,"read"=>Phase::Read,"write"=>Phase::Write,
@@ -109,6 +164,73 @@ mod voice_input_tests {
         let no_sample=voice_input_summary(&value).unwrap();
         assert_eq!((no_sample>>13)&1,0);assert_eq!((no_sample>>40)&65535,65535);
     }
+    #[test]
+    fn new_capture_rejects_old_hosts_and_late_end_cannot_cancel_replacement() {
+        use log::voice::{EndReason, VoiceRecord};
+        let mut owner = VoiceCaptureOwner::default();
+        assert!(!owner.begin(10, 0)); assert!(owner.begin(10, 1));
+        assert!(!owner.begin(11, 2));
+        assert!(!owner.accept(11, &VoiceRecord::Start { capture: 1 }));
+        owner.end(10, 1); assert!(owner.begin(11, 2));
+        let late = VoiceRecord::End { capture: 1, reason: EndReason::Cancelled };
+        assert!(!owner.accept(10, &late)); assert_eq!(owner.current, Some((11, 2)));
+        assert!(!owner.accept(11, &late)); assert_eq!(owner.current, Some((11, 2)));
+        assert!(owner.accept(11, &VoiceRecord::End { capture: 2, reason: EndReason::Completed }));
+        assert_eq!(owner.current, None);
+    }
+    #[tokio::test]
+    async fn primary_bridge_replacement_with_reused_capture_rejects_old_start_sample_and_end() {
+        use log::voice::{AudioCounters, EndReason, InputMode, InputState, Observation, VoiceRecord, VoiceSample};
+        let (old, _) = crate::media::MediaBridge::fake(|_, _| Ok(json!({})));
+        let (current, _) = crate::media::MediaBridge::fake(|_, _| Ok(json!({})));
+        let old_scope = old.diagnostic_scope();
+        let current_scope = current.diagnostic_scope();
+        assert_ne!(old_scope, current_scope);
+        assert_eq!(current_scope, current.clone().diagnostic_scope());
+        let mut owner = VoiceCaptureOwner::default();
+        assert!(!owner.begin(0, 1));
+        assert!(owner.begin(old_scope, 1));
+        owner.end(old_scope, 1);
+        assert!(owner.begin(current_scope, 1));
+        let records = [
+            VoiceRecord::Start { capture: 1 },
+            VoiceRecord::Sample { sample: VoiceSample {
+                capture: 1, index: 1, elapsed_ms: 1, counter_generation: 1, interval_ms: None,
+                input: InputState {
+                    mode: InputMode::ManualVad, callbacks: 1, last_callback_age_ms: Some(1),
+                    sample_stale: false, vad_detected: true, ptt_held: false, desired: true,
+                    gate_requested: true, gate_open: true, input_eligible: true,
+                    transport_ready: true, encryption_ready: true, muted: false, deaf: false,
+                    local_test_active: false, input_gain_zero: false,
+                },
+                audio: AudioCounters { packets: Some(1), ..Default::default() },
+                delta: AudioCounters::default(), observation: Observation::CounterBaseline,
+            } },
+            VoiceRecord::End { capture: 1, reason: EndReason::Completed },
+        ];
+        for record in &records {
+            assert!(record.valid());
+            assert!(!owner.accept(old_scope, record));
+            assert_eq!(owner.current, Some((current_scope, 1)));
+        }
+        owner.end(old_scope, 1);
+        assert_eq!(owner.current, Some((current_scope, 1)));
+        assert!(owner.accept(current_scope, &records[0]));
+        assert!(owner.accept(current_scope, &records[1]));
+        assert!(owner.accept(current_scope, &records[2]));
+        assert_eq!(owner.current, None);
+    }
+    #[test]
+    fn typed_capture_never_copies_native_payload_or_unrecognized_fields() {
+        assert!(voice_record(&json!({"record":{"kind":"start","capture":1}})).is_some());
+        assert!(voice_record(&json!({"record":{"kind":"start","capture":1,"device":"private"}})).is_none());
+        assert!(voice_record(&json!({"record":{"kind":"end","capture":1,"reason":"arbitrary-error"}})).is_none());
+        assert!(voice_record(&json!({"record":{"kind":"start","capture":0}})).is_none());
+        // Extra outer IPC data is never carried into the typed record.
+        let value = json!({"record":{"kind":"start","capture":1},"token":"credential","userId":"private"});
+        let serialized = serde_json::to_string(&voice_record(&value).unwrap()).unwrap();
+        assert!(!serialized.contains("credential")); assert!(!serialized.contains("private"));
+    }
 }
 pub fn open(ctx: &egui::Context) {ctx.data_mut(|data|data.insert_temp(egui::Id::new("diagnostic-panel"),true));}
 pub fn close(ctx: &egui::Context) {ctx.data_mut(|data|data.insert_temp(egui::Id::new("diagnostic-panel"),false));}
@@ -193,6 +315,17 @@ pub fn draw(ctx: &egui::Context) {
     }
     egui::Window::new("Diagnóstico local").id(id).order(egui::Order::Foreground).open(&mut shown).default_width(680.).show(ctx,|ui|{
         ui.label("Registros locales acotados: clases de error y etapas. No incluyen mensajes, credenciales ni direcciones privadas. No se envían automáticamente.");
+        let capturing = voice_capture_owner().current.is_some();
+        ui.horizontal_wrapped(|ui| {
+            if ui.add_enabled(!capturing, egui::Button::new("Capturar micrófono (10 s)")).clicked() {
+                ctx.data_mut(|data| data.insert_temp(egui::Id::new("voice-diagnostic-action"), "start-input-diagnostic"));
+            }
+            if ui.add_enabled(capturing, egui::Button::new("Cancelar captura")).clicked() {
+                ctx.data_mut(|data| data.insert_temp(egui::Id::new("voice-diagnostic-action"), "cancel-input-diagnostic"));
+            }
+            if capturing { ui.label("Captura de diagnóstico en curso…"); }
+        });
+        ui.label(egui::RichText::new("Registra actividad y contadores de la llamada actual. No graba audio ni verifica que otra persona lo escuche.").small().weak());
         if log::disk_failed(){ui.colored_label(egui::Color32::LIGHT_RED,"No se pudo seguir escribiendo el registro local. El resumen en memoria sigue disponible para exportar.");}
         ui.horizontal_wrapped(|ui|{
             if ui.button("Abrir carpeta").clicked(){
@@ -243,5 +376,8 @@ pub fn draw(ctx: &egui::Context) {
     drop(state);
     if let Some(path)=reveal {panel.reveal(ctx,path);}
     if let Some(events)=export {panel.export(ctx,events);}
+    if !shown && voice_capture_owner().current.is_some() {
+        ctx.data_mut(|data| data.insert_temp(egui::Id::new("voice-diagnostic-action"), "cancel-input-diagnostic"));
+    }
     ctx.data_mut(|data|data.insert_temp(id,shown));
 }

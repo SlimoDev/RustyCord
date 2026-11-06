@@ -1,0 +1,756 @@
+{
+  "Schema": 1,
+  "Date": "2026-11-06",
+  "Variant": "standard",
+  "Version": "0.12.0",
+  "UpdateType": "Mediana",
+  "UpdateTypeOrigin": "Inferida y adoptada por el plan: correcciones funcionales y recuperación de voz",
+  "Branch": "NotDiscord",
+  "BaseRevision": "3bee4c8c6a9e7442817302850286d170c56976ad",
+  "Uncommitted": true,
+  "ByteIdentity": "SHA-256 de bytes de trabajo exactos; no equivale al hash de blobs normalizados por Git",
+  "Scope": "Inventario cerrado Rust de los tres crates, contratos Cargo/version y loader propio; dependencias/vendor/activos restantes conservados desde la base",
+  "ProductionFeatures": [],
+  "DiagnosticFeatures": [
+    "native-probe"
+  ],
+  "Sources": [
+    {
+      "Path": "Cargo.lock",
+      "SHA256": "6fd80e9e7d9a5ce8cd6bc38a64c56b57e766b9d949dd7315118d2e13a6390b33"
+    },
+    {
+      "Path": "Cargo.toml",
+      "SHA256": "a74c01b99547b307577034323724dbf301be3d271c59c9333b4ebf7a064c50a6"
+    },
+    {
+      "Path": "crates/app/Cargo.toml",
+      "SHA256": "403ff930dcc45a8434a037c9bb9b0437f47a58efbfd87319b9eca49dd8a5100f"
+    },
+    {
+      "Path": "crates/app/src/auth_job.rs",
+      "SHA256": "59e988a308bd6cb0d321468cfbe7950536ed705c05f038398af1c2227d90032b"
+    },
+    {
+      "Path": "crates/app/src/auth_lifecycle.rs",
+      "SHA256": "910e5f607e044a7da0d7a95e5ad7fee965b9c0a29ba3005ba0418f68f3a9ae63"
+    },
+    {
+      "Path": "crates/app/src/auth_webview_probe.rs",
+      "SHA256": "bf1a5418b584ac127e433d047add03ed41de583bd1e022d90d91dff3d03dc440"
+    },
+    {
+      "Path": "crates/app/src/authentication.rs",
+      "SHA256": "c7caf71af5da8b7bc0eae02dbef47f6bfc27c88a1f84306324760b1f59d3291a"
+    },
+    {
+      "Path": "crates/app/src/backdrop.rs",
+      "SHA256": "a92963a6a24f5c666d4f7694a8a7533342f280a701c2fe004f19dc1dd050252a"
+    },
+    {
+      "Path": "crates/app/src/brand.rs",
+      "SHA256": "ec895d562f3884f73df99bf87f78557c0a78c8cdb18824ce4f2a7ae99f735efd"
+    },
+    {
+      "Path": "crates/app/src/controller.rs",
+      "SHA256": "864b1ae2c0c49bb00c1be55b9908a8b3307327d1f73494d82c09544ed0f1d1bf"
+    },
+    {
+      "Path": "crates/app/src/controller/attachments.rs",
+      "SHA256": "aeb001a54325f569f35e244a8e98b8d8be3bb2f60d1f13b33f8f8bb1f05f566f"
+    },
+    {
+      "Path": "crates/app/src/controller/channel_catalog.rs",
+      "SHA256": "6c43378cfc62486d9547ffafe8d4bdc116fbbe28a144727cafe3c5cd0062be6a"
+    },
+    {
+      "Path": "crates/app/src/controller/connection.rs",
+      "SHA256": "e06503831f94a5fdc0e67505e403b9180823d972b184f98a4eec960be7b2a63c"
+    },
+    {
+      "Path": "crates/app/src/controller/deleted_logs.rs",
+      "SHA256": "4a7e6d2356e83e7d7d823c382caaa9be8ca16348841fd33aabcf5c8a9f70cfec"
+    },
+    {
+      "Path": "crates/app/src/controller/emoji_policy.rs",
+      "SHA256": "3a8e15525b748de03f1ccfcf572c86952524f2645b9f03a951f38ed9d4ef9394"
+    },
+    {
+      "Path": "crates/app/src/controller/game_activity.rs",
+      "SHA256": "ad7f66469533ee303d9359357b764d274b3339425e10612ce4169c8883166152"
+    },
+    {
+      "Path": "crates/app/src/controller/game_activity/detection.rs",
+      "SHA256": "198cbd4c65637f9d5bc2624bf2493787d1ff5628dc953d6c26597d78f9d23fb8"
+    },
+    {
+      "Path": "crates/app/src/controller/game_activity/rpc.rs",
+      "SHA256": "0dd0440e235340de4bfdb42d184ab6a632b8ec04072cec43e1acfcba306cc410"
+    },
+    {
+      "Path": "crates/app/src/controller/game_activity/windows.rs",
+      "SHA256": "a40bba5fc36fd3b1c32f8c4ee7b6707d4afb98fbf1a1edfa5aa80186253bbeb9"
+    },
+    {
+      "Path": "crates/app/src/controller/game_mentions.rs",
+      "SHA256": "ba773f3bfd11abd2fb323af23b407d56ee8a9f2f2b32d6ff8e0cb7594eaa4907"
+    },
+    {
+      "Path": "crates/app/src/controller/gifs.rs",
+      "SHA256": "62d1abaf75b14d5bc48f619c28018836878319b2426eb623a8dbe19cccdc71b9"
+    },
+    {
+      "Path": "crates/app/src/controller/group_members.rs",
+      "SHA256": "12b05fcd706e37ca3cc48017e4ae426c191776d543c2b7338cdfc1b9c46ec5c7"
+    },
+    {
+      "Path": "crates/app/src/controller/guild_settings.rs",
+      "SHA256": "e0ee8e8022c3d36cd2bb3701015963352d4bb0cdea210a701b866fedaea826d4"
+    },
+    {
+      "Path": "crates/app/src/controller/incoming.rs",
+      "SHA256": "cc2666eecad1ffa41da25092ade186357abc655861e738611ee009c8b2d4ccb4"
+    },
+    {
+      "Path": "crates/app/src/controller/input_diagnostic.rs",
+      "SHA256": "48af46157480a56fa470f60b13bf78ce75983f5d9579f57e22b7b5575520eb55"
+    },
+    {
+      "Path": "crates/app/src/controller/member_moderation.rs",
+      "SHA256": "47b495595ac404031184f32924a568c7f3c849f97f5f1a903141969bcd9bc84a"
+    },
+    {
+      "Path": "crates/app/src/controller/network_safety_tests.rs",
+      "SHA256": "b79efbf49734203e1d3117fc743a091917c1c4dbaba8c7e8024952dcda77b491"
+    },
+    {
+      "Path": "crates/app/src/controller/notification_activation.rs",
+      "SHA256": "85366d0ef254f1003f9e5958ccac436332e6d8819a3b07a75955b32105f4c477"
+    },
+    {
+      "Path": "crates/app/src/controller/observed_calls.rs",
+      "SHA256": "46875b49a71a854cd795c3c2fced631d722a2e5f813183b41c5d1f5020df254d"
+    },
+    {
+      "Path": "crates/app/src/controller/outgoing.rs",
+      "SHA256": "8c0353106f88768d1c8afb7c846ee485624deaf58eb60388a29ae9cb84dbe432"
+    },
+    {
+      "Path": "crates/app/src/controller/presence.rs",
+      "SHA256": "342d13ea569f743309bc0b20f05d136cf48316f1b15a80462e6bd6cb597c7193"
+    },
+    {
+      "Path": "crates/app/src/controller/private_calls.rs",
+      "SHA256": "9c9c2281f2332f16d8d4867700da36524b149b7b301bc229a4cd5414559537c5"
+    },
+    {
+      "Path": "crates/app/src/controller/profile_editor.rs",
+      "SHA256": "4a1015d18ffed8c85d73492b310a27997505b665fe860893fdc56632e5a03c23"
+    },
+    {
+      "Path": "crates/app/src/controller/reaction_users.rs",
+      "SHA256": "561b8c1b4b4a3cc2a69c61d65568b8930f6c6b8befcb3b2e18a9662eb85f9184"
+    },
+    {
+      "Path": "crates/app/src/controller/read_index.rs",
+      "SHA256": "1f74ac7e3bfb273b29e00f148e2bb96dc84cff503d3dc9f9afb55ed4c9de7639"
+    },
+    {
+      "Path": "crates/app/src/controller/request_policy_tests.rs",
+      "SHA256": "fbe9a26b50151832b85579f41e55151d33125c9f66e39bd98e4812391aacd935"
+    },
+    {
+      "Path": "crates/app/src/controller/request_policy.rs",
+      "SHA256": "922e4072b5ba09336a69c1b5ff0a7e6a10e1c14c38a700dfedf9305261d7d1c1"
+    },
+    {
+      "Path": "crates/app/src/controller/social.rs",
+      "SHA256": "26f3e778285036686746c209c5b30ecbc20c67fa81aed4bace54a965c255ed50"
+    },
+    {
+      "Path": "crates/app/src/controller/source_lifecycle_tests.rs",
+      "SHA256": "caae9a84cbf6fbb6016a72744de64d2f5340cbf7795cfade7e266347b504450e"
+    },
+    {
+      "Path": "crates/app/src/controller/source_lifecycle.rs",
+      "SHA256": "4c0e9d699fc3d8f34740c04e947e18b784606ecd0deff2e604a6bbe4d002f728"
+    },
+    {
+      "Path": "crates/app/src/controller/stream_sources.rs",
+      "SHA256": "606497de97ba95c40fc670bf5271ba479b0ff80814e18f0d7aea0b44c139a728"
+    },
+    {
+      "Path": "crates/app/src/controller/tests.rs",
+      "SHA256": "7a4d0dd7df7389c647e0deaa6034911197d2dd2fd710ba784f7a1045c0f047c2"
+    },
+    {
+      "Path": "crates/app/src/controller/voice_recovery.rs",
+      "SHA256": "14ebef93628b171617fb2c33be51510c309688a6192668bbef54d4e9fea9eda8"
+    },
+    {
+      "Path": "crates/app/src/controller/voice.rs",
+      "SHA256": "accd9621d7973a215c4137126cd5250dc8229ec6f57df0017311f256eb35f234"
+    },
+    {
+      "Path": "crates/app/src/diagnostics.rs",
+      "SHA256": "62a94c942a590a6e3ba692ca24f5814dd1d1245e84a4d921b107019fb63b5f0b"
+    },
+    {
+      "Path": "crates/app/src/feature_history.rs",
+      "SHA256": "100158982dbf28a4b9de3a603873c8d97378c8b855f06efeea111ec06080aa75"
+    },
+    {
+      "Path": "crates/app/src/game_rpc.rs",
+      "SHA256": "92289e3da86be6032b25b72aabfa28856d6c9e50dfcf1204b663c777fde2e26c"
+    },
+    {
+      "Path": "crates/app/src/game_rpc/protocol.rs",
+      "SHA256": "a23f37567b57070116ff5bc2c20dd06b2f36a900d918d04dfede3e45241cc35d"
+    },
+    {
+      "Path": "crates/app/src/game_rpc/security.rs",
+      "SHA256": "353b2acced48f4388e4a4c4b1140c9ba69d853a77acd20e08b35d6712002a117"
+    },
+    {
+      "Path": "crates/app/src/game_rpc/tests.rs",
+      "SHA256": "59ff7e2bfe5cf03c796345791fe1e880f724f06380665a8e57c998cef0caee6d"
+    },
+    {
+      "Path": "crates/app/src/instance.rs",
+      "SHA256": "13539c5b9d21889e236dc4259fe33774db450234a2708bb4d126c6ffb984df41"
+    },
+    {
+      "Path": "crates/app/src/lib.rs",
+      "SHA256": "a66f184904b025f8dafa35db9be469fff842bc7519f073157d7e851e2bd4dec1"
+    },
+    {
+      "Path": "crates/app/src/main.rs",
+      "SHA256": "5489e34b89e95d79b25a0f429de61dd55c09eb59c3e7d71e57aac00064368037"
+    },
+    {
+      "Path": "crates/app/src/media.rs",
+      "SHA256": "03372491c4448b81dd6815c023bb8e511308edbfd8d70467e2bd8f1582608417"
+    },
+    {
+      "Path": "crates/app/src/message_cache.rs",
+      "SHA256": "459fa845867c5990c23c90edd341d9f6ffc71d8c73357b8da9dfb32378665c31"
+    },
+    {
+      "Path": "crates/app/src/network_safety.rs",
+      "SHA256": "fe289dd0922aa71100622567fff2e6740fa2068141ac29893e81984e398dedd7"
+    },
+    {
+      "Path": "crates/app/src/notification_identity.rs",
+      "SHA256": "0b86d985c5f64cc8d3b4183965b8ecbd633cadd9381907a9fadc125fa7b3253e"
+    },
+    {
+      "Path": "crates/app/src/notification_text.rs",
+      "SHA256": "c4cb24a92ecf6a376da1551f48ad812e34d647f0cca44d2303153ee6350a3845"
+    },
+    {
+      "Path": "crates/app/src/picker_history.rs",
+      "SHA256": "7937af929b82fdc741df554d5784875e03a485a32d4b1e6803df8d08389daf87"
+    },
+    {
+      "Path": "crates/app/src/pickers.rs",
+      "SHA256": "f7a30cb7e7c724bc662e8b6466605f073c9812fb4b314ad5036ff46bca7c1b15"
+    },
+    {
+      "Path": "crates/app/src/pickers/favorites_wire.rs",
+      "SHA256": "9685e00317a4cd5a599795aec2a6e8e058a4dadfc2d38e7566af9661e39e88d8"
+    },
+    {
+      "Path": "crates/app/src/platform.rs",
+      "SHA256": "177450c8089e0a46a2f122bc90d1f2749160f108d0c835309b9d8379614b9b12"
+    },
+    {
+      "Path": "crates/app/src/platform/notification_activation.rs",
+      "SHA256": "e73d7d42530a76b136aab3444700bcfe3c06357185817c2d3601e12fab5c1f43"
+    },
+    {
+      "Path": "crates/app/src/platform/power.rs",
+      "SHA256": "cd8cf33acd7511480d87bdcf2917290cabbd1f527f8af39836f9445ef450ec51"
+    },
+    {
+      "Path": "crates/app/src/shared_state.rs",
+      "SHA256": "5ea8d2e07d251b6610584bfa3bae6785a8beacca30b8c9e0ee3e5ffed30d18f4"
+    },
+    {
+      "Path": "crates/app/src/sounds.rs",
+      "SHA256": "c8c7489ed28b808a5f47db010f8f0957a4fb25596dec3528c9793a52584d9261"
+    },
+    {
+      "Path": "crates/app/src/sounds/clip_output.rs",
+      "SHA256": "3aa655203bceb3fbb9ca0d3f52a7b02d4e2e0978bbd2920f8dedf2fd4c778a61"
+    },
+    {
+      "Path": "crates/app/src/sounds/import.rs",
+      "SHA256": "c8ab274c4c66e4e78d400ff8a826410470b7f9feb53b50ae10fe3770701c4b4b"
+    },
+    {
+      "Path": "crates/app/src/sounds/playback.rs",
+      "SHA256": "a2bad480cc4d695c6b2edc52c0182155facca49d2c1b15cf9901178d0ab5a8c4"
+    },
+    {
+      "Path": "crates/app/src/storage.rs",
+      "SHA256": "ad399d4cd9e65cb496b12a56cfd5a488a1cb80332a309d09a4f6f29e8a29f87e"
+    },
+    {
+      "Path": "crates/app/src/ui/appearance.rs",
+      "SHA256": "64c7797dafc2e54c391ca1590249973b119c1f254f134d5efb8969609c8975ac"
+    },
+    {
+      "Path": "crates/app/src/ui/autoscroll.rs",
+      "SHA256": "b7f963e6ff5663d702d34362c132a46d04ba916deea27fb7deceaa0254438582"
+    },
+    {
+      "Path": "crates/app/src/ui/avatar_cache.rs",
+      "SHA256": "ebb2da2c77141f2223a7e57dbdc370f5091391342d11b5fd0a52b2232f5125bc"
+    },
+    {
+      "Path": "crates/app/src/ui/call_preferences.rs",
+      "SHA256": "b86dddb868e942df92a933a48ce9720bb407e5fddf3d20a1a2a22ad386e6957d"
+    },
+    {
+      "Path": "crates/app/src/ui/chat.rs",
+      "SHA256": "18bb4e59938de2b8e6cd1993cafe12afdc5c9dcbbbbf7135af2453660867a055"
+    },
+    {
+      "Path": "crates/app/src/ui/chat/context_menu.rs",
+      "SHA256": "c13ba461dbdf18f57cacd3a63f507aa6245aef0d2f79bf9a5899ba70c2405a06"
+    },
+    {
+      "Path": "crates/app/src/ui/chat/interaction_tests.rs",
+      "SHA256": "a72ffec6106de8953ca2235feaf6c043212d233e9c2d036bddb10778aa0e7046"
+    },
+    {
+      "Path": "crates/app/src/ui/chat/interaction.rs",
+      "SHA256": "edc2d5cc2d55904d968436e04405618bd72959b46792a5e9462e1d5cab1bc2c6"
+    },
+    {
+      "Path": "crates/app/src/ui/chat/markdown.rs",
+      "SHA256": "0ba6660780d0d0374492e52622a4051e4b54b17160ad9f0a55f5b85080045206"
+    },
+    {
+      "Path": "crates/app/src/ui/chat/reaction_tooltip.rs",
+      "SHA256": "e6629263ef7b26c6e0421165d464e379879e3bbcf27c587572a559a891fc10a0"
+    },
+    {
+      "Path": "crates/app/src/ui/chat/rich.rs",
+      "SHA256": "653ae63910d13ab354795fc81196295b863f6efc57f661494b3e62bf95a2973f"
+    },
+    {
+      "Path": "crates/app/src/ui/chat/scroll_follow.rs",
+      "SHA256": "4e25018ed163114b9fc309ed9b8938a9b990aa2615154b9f38f51e7be1df4db6"
+    },
+    {
+      "Path": "crates/app/src/ui/completion.rs",
+      "SHA256": "30f6743010286021a8c7ae21ba6e7c5cc50f4991a74b4699466aa1ec6a6eaa89"
+    },
+    {
+      "Path": "crates/app/src/ui/custom_text.rs",
+      "SHA256": "94de52a5feea9e0204ccbb7e9d0959af4fc775d8c0e5d90eef954b1efd983194"
+    },
+    {
+      "Path": "crates/app/src/ui/dialogs.rs",
+      "SHA256": "d6fe213bbb64df79c6ba37b9198debc9009a5c347f61f3bbf6d2eaded97642a3"
+    },
+    {
+      "Path": "crates/app/src/ui/font_files.rs",
+      "SHA256": "f3c43a455ee93c15c9f8c5d8baf86cd89f320f62518194bf1e0c9bf7122ca219"
+    },
+    {
+      "Path": "crates/app/src/ui/game_mentions.rs",
+      "SHA256": "32cb3a13819533eee2d6717e6663e665e6c6345f71231d2f3452cc7862fae30d"
+    },
+    {
+      "Path": "crates/app/src/ui/group_members.rs",
+      "SHA256": "c5841b9de0aeb83ae46171eb9faf11d6de1384f6a184dced00ef597591174e1e"
+    },
+    {
+      "Path": "crates/app/src/ui/group_members/tests.rs",
+      "SHA256": "683281a78eebd30b3a4029e91273826be9e612ec356640262844d30720bc2ea3"
+    },
+    {
+      "Path": "crates/app/src/ui/guild_settings.rs",
+      "SHA256": "fcbb8aa5c9d9ab0f6dc025ab4e0d3b6c2b6539120fcd7024f6f3d15af5f801c6"
+    },
+    {
+      "Path": "crates/app/src/ui/icons.rs",
+      "SHA256": "293daa3bb48ed1a96583acf5701fada79cd5bf9b8e1c82f87647b88e4fc3c794"
+    },
+    {
+      "Path": "crates/app/src/ui/image_spool.rs",
+      "SHA256": "16a1981e0b1e9e8aff21614821a3a6b6e9cf3efbcf8056c726fbe5280190d3e2"
+    },
+    {
+      "Path": "crates/app/src/ui/incoming.rs",
+      "SHA256": "9fd1fe95c4f8acfa8efb8c079d768d38f163351f4ad6a78a77899f143e8ad149"
+    },
+    {
+      "Path": "crates/app/src/ui/input_ownership.rs",
+      "SHA256": "cfb72bffc80cca0389562107d575f72421682460aa199036b23f47ec1ed0ef56"
+    },
+    {
+      "Path": "crates/app/src/ui/markdown_cache.rs",
+      "SHA256": "1bcbf75e2059dd3f696a68bbd55ea46c4f48ee1c010747cbabe2fc6e03b45a04"
+    },
+    {
+      "Path": "crates/app/src/ui/media_limit.rs",
+      "SHA256": "6187343c28fa8d50fca274a70dd8be17134dac53d312e93d70f7c1a559099941"
+    },
+    {
+      "Path": "crates/app/src/ui/member_demand.rs",
+      "SHA256": "77711c581a9abb9b50b2697515be81d2bd5d4a3e1bf99dcae555b014eda69b29"
+    },
+    {
+      "Path": "crates/app/src/ui/mentions.rs",
+      "SHA256": "1b543178ea3be352d1158b7b177784dcc2ef739041b3b3749e9f352bfa231f98"
+    },
+    {
+      "Path": "crates/app/src/ui/menus.rs",
+      "SHA256": "e32470217dda19644c163c954449ced600572073a63ddad6cd148205d5f71f2e"
+    },
+    {
+      "Path": "crates/app/src/ui/mod.rs",
+      "SHA256": "ebefc4a491517f60f20800b8f3e7c2fb8770d52172abe762cd2b085252935045"
+    },
+    {
+      "Path": "crates/app/src/ui/moderation.rs",
+      "SHA256": "4149d3483e91a3825eb6989736cef34bc4e20da9fc70475c80a054b6354e62c8"
+    },
+    {
+      "Path": "crates/app/src/ui/moderation/tests.rs",
+      "SHA256": "b5a8cb23477038cec93012c146e4c0941c8ad43de7557282e5fe76ce87d31052"
+    },
+    {
+      "Path": "crates/app/src/ui/notification_activation.rs",
+      "SHA256": "a9421de2b046baa4b20541037cefafa87a13706ba885254375f9678c6e8d0a52"
+    },
+    {
+      "Path": "crates/app/src/ui/overlay.rs",
+      "SHA256": "d8242269d66adeb473e29a2a14652b5d5a5e0e4cb3d65deaebd625ca16a4a6ca"
+    },
+    {
+      "Path": "crates/app/src/ui/profile_editor.rs",
+      "SHA256": "3ef5024f590d0266b5e9d2486f6860af9ab5b3c172417cbf82cedef3d941e402"
+    },
+    {
+      "Path": "crates/app/src/ui/resources.rs",
+      "SHA256": "998c1813d0584b5e5ee4a2c758c04c9c590948d55337875e0bf7e30c169215c6"
+    },
+    {
+      "Path": "crates/app/src/ui/resources/animation_clock.rs",
+      "SHA256": "e890a4ed692c890a28bf7a6afc7274abfd7105002ee9cb9175309d20aa714247"
+    },
+    {
+      "Path": "crates/app/src/ui/resources/custom_animation.rs",
+      "SHA256": "23d4054038c058df1b06c7c508c81f3d2a9f024ed0ab45e3a389c93a15e0c192"
+    },
+    {
+      "Path": "crates/app/src/ui/resources/deleted_preview.rs",
+      "SHA256": "e5d1bf515c448ca6be8b71e00807041483fa07536f469cbe765304383ee133f1"
+    },
+    {
+      "Path": "crates/app/src/ui/resources/gif_source.rs",
+      "SHA256": "e52c14cef0820c453cd73be23d4185e01a0ead194aba8e26797fde51b3da4084"
+    },
+    {
+      "Path": "crates/app/src/ui/resources/p2_emoji_cold.rs",
+      "SHA256": "680a38aeb31a1dccc4175194a4b7df72836c22d015f53a5432043d3aa31397e0"
+    },
+    {
+      "Path": "crates/app/src/ui/resources/p2_offline_soak.rs",
+      "SHA256": "c72c525bb1e033f171c34193d44a752d2d0207510f2215653e4e7ccf4e4329ba"
+    },
+    {
+      "Path": "crates/app/src/ui/resources/webp_animation.rs",
+      "SHA256": "b8ab21be31c440271810aae01a6eafb4a2888b9690f2d1fe16d8e0e996418e7c"
+    },
+    {
+      "Path": "crates/app/src/ui/self_presence.rs",
+      "SHA256": "fc8577d2b0e243c258723b97ca2509c27a1fd794565f316315bbcffde7a06379"
+    },
+    {
+      "Path": "crates/app/src/ui/server_order.rs",
+      "SHA256": "88a7eb70796498571e303c46d6578b59f8a586203ebef237b51a38a9ef7d5cae"
+    },
+    {
+      "Path": "crates/app/src/ui/shell.rs",
+      "SHA256": "90464a1dad5542e1620f4a2dcec67cbb0ef15af7a7d43a8a94d7961724aa8b60"
+    },
+    {
+      "Path": "crates/app/src/ui/sound_settings.rs",
+      "SHA256": "818a8c1caba99e365e29b611c588982ae423785716fef66fe361aca04c3585e6"
+    },
+    {
+      "Path": "crates/app/src/ui/text_budget.rs",
+      "SHA256": "aad0479cffaa6c6ff1250f3e1e655aa537c6d7a2078b3bf92544392f67958f43"
+    },
+    {
+      "Path": "crates/app/src/ui/text_viewer.rs",
+      "SHA256": "2321b52864417fc31a61361f53785fdc7ac4a91014be3d41e6ff55fd48db125c"
+    },
+    {
+      "Path": "crates/app/src/ui/theme.rs",
+      "SHA256": "fee9779781a1959d39368654f9e01db472627203c4cb4a21d1dcd63f110d9667"
+    },
+    {
+      "Path": "crates/app/src/ui/timestamps.rs",
+      "SHA256": "97c82fee7a8b08e5498d119281f35b5769ec5e7aa39956886378cbbf71cc1178"
+    },
+    {
+      "Path": "crates/app/src/ui/txt_import.rs",
+      "SHA256": "e2620a62355ef7a5241e02255b6a03d8678554675dc1bd1ccadca2b48cc31f44"
+    },
+    {
+      "Path": "crates/app/src/ui/ui7_probe.rs",
+      "SHA256": "a81ac328274e7b867d77f205148fd30f78632b1e131b49e487092cf96d7d813b"
+    },
+    {
+      "Path": "crates/app/src/ui/video.rs",
+      "SHA256": "d813b6d1accc18dea5d969ec9ce2f7ded21eef75192b81a797d4d6404c02e7ed"
+    },
+    {
+      "Path": "crates/app/src/ui/voice.rs",
+      "SHA256": "6a3328e4657098ac2abee21f1269e9bec0b74509a4e4320a2ae3eda36ac596c5"
+    },
+    {
+      "Path": "crates/app/src/ui/voice/invitation_tests.rs",
+      "SHA256": "584288b76cdbe717912725d92320d12d1a6cf1b382e6383803bddafa34d9f20f"
+    },
+    {
+      "Path": "crates/app/src/updates.rs",
+      "SHA256": "6cc845a9a8825dd010756bf5816abdafb6e95ba6c3ebdb8c1f83ae4e10b87aca"
+    },
+    {
+      "Path": "crates/app/src/updates/staging.rs",
+      "SHA256": "f9d7917ffa0aa07bb23684e8e0b561833cac4c71f315aaf6cfcaf7bc84c0f060"
+    },
+    {
+      "Path": "crates/core/Cargo.toml",
+      "SHA256": "1afbb638098c4ca5545725e70c670ca17238cd168495009b4b388d286cfa7864"
+    },
+    {
+      "Path": "crates/core/src/access.rs",
+      "SHA256": "fffb3cf3934c3bd6874f4fa109cbdec6d68388973037c649f2a68c9c5f33c333"
+    },
+    {
+      "Path": "crates/core/src/api_operations.rs",
+      "SHA256": "545feee8bd09a3d190c8722eb2c844d105cd0439d49b1e625c45b5c90201e909"
+    },
+    {
+      "Path": "crates/core/src/api.rs",
+      "SHA256": "aa3289620fb1a24244c18c0e8cb84e1413f57bd7b9fad17210abd6aa40283a5b"
+    },
+    {
+      "Path": "crates/core/src/catalog.rs",
+      "SHA256": "d0118d52ded9484373264c938b70e78302ae97c5861742100a68c4516791c303"
+    },
+    {
+      "Path": "crates/core/src/diagnostics.rs",
+      "SHA256": "94e7b95cea2d1e69f8ab290be1bba69d02448c4fd245e69b37e4777266131956"
+    },
+    {
+      "Path": "crates/core/src/game_mentions.rs",
+      "SHA256": "b9f17c65daaf5bf9fe9d3dfd9dd3676bd393e0ee810fd82dde8bc6f19c24d5f5"
+    },
+    {
+      "Path": "crates/core/src/game_presence.rs",
+      "SHA256": "93a0ed3753941346edac83d4d883bbd652fdcc66e2ae4c1a11269d51811d971b"
+    },
+    {
+      "Path": "crates/core/src/gateway_power.rs",
+      "SHA256": "a61abf74ea0f88de774c2dd9e156281fa4707d2e0c40112233ba786d94cde21d"
+    },
+    {
+      "Path": "crates/core/src/gateway_runtime_tests.rs",
+      "SHA256": "ae0d8752f587db5a4261a92fe3027faae9675d068343fbc2fde948db0890deed"
+    },
+    {
+      "Path": "crates/core/src/gateway_runtime.rs",
+      "SHA256": "c7118ba3ea0bf00358a82ff9b2e8d4c98be558c0ecccf56a100936901577b54a"
+    },
+    {
+      "Path": "crates/core/src/gateway.rs",
+      "SHA256": "9e4f30b0b9a29ce2dec72d6484bf25c6ee79e949e4d4b6779b5c11b0c9384f02"
+    },
+    {
+      "Path": "crates/core/src/guild_settings.rs",
+      "SHA256": "a65c4c9771f73d8a081229d178666f62420bad4c5843c7bae12a6e9ab4432f30"
+    },
+    {
+      "Path": "crates/core/src/lib.rs",
+      "SHA256": "ddae8877c05aa4e6dcf6e21acf4d3ef0eecd8425448c5a68a01d51cd88be7e68"
+    },
+    {
+      "Path": "crates/core/src/markdown.rs",
+      "SHA256": "33de1cc0ed7bb4442eb94954905ac6a2ace2e09ffa21136f5caaac42553712dd"
+    },
+    {
+      "Path": "crates/core/src/member_moderation.rs",
+      "SHA256": "b83fdb1d989c9ea9bb578d7232fd099232faef030e985d9f973bbe8ad3fbadff"
+    },
+    {
+      "Path": "crates/core/src/mentions.rs",
+      "SHA256": "1f0ee1841bcab60954b3564fbbbd9a53c82b27b55f7dd53c59eab0351ce05754"
+    },
+    {
+      "Path": "crates/core/src/message_atoms.rs",
+      "SHA256": "4e385146fcc1e35b79ed051363c7a8ed0982f166d296b93212037db482ff32a2"
+    },
+    {
+      "Path": "crates/core/src/models.rs",
+      "SHA256": "319454e522a0aa3b5809a505b5f422e09a0c901d3485005b6624f50005b392de"
+    },
+    {
+      "Path": "crates/core/src/notifications.rs",
+      "SHA256": "29e260387c84fc1c8c2f9dc9b9f806e839c482b44804e5db3361dee0c3c07fbd"
+    },
+    {
+      "Path": "crates/core/src/parsing.rs",
+      "SHA256": "8599c3a6be479282dd878bb8d66f155f8995d3ab39c4c7a5a5644b3c2d9a45be"
+    },
+    {
+      "Path": "crates/core/src/parsing/gif_media.rs",
+      "SHA256": "e0d07a207322c306b2fb011f3bf2e052308495953d44b4b74f4a7c495c65061f"
+    },
+    {
+      "Path": "crates/core/src/parsing/message_rich.rs",
+      "SHA256": "2d7ff16dc5edcc7d65cd23d446e2a60247b7cb2a1ff3e30977e76bd49d753364"
+    },
+    {
+      "Path": "crates/core/src/rate_limits.rs",
+      "SHA256": "fb05e77f802aedfef0ddefbe6bdf630dc62c8419d88a9290ad028f685b1c9d45"
+    },
+    {
+      "Path": "crates/core/src/safety.rs",
+      "SHA256": "59c7944192bc2a72a88adb430ce8f098b3f55d7684559aad1d74b8ed569319a7"
+    },
+    {
+      "Path": "crates/core/src/search.rs",
+      "SHA256": "640958bf6ac0e343b960093cbb35aea5751383aacd7f043b940902355b3416c9"
+    },
+    {
+      "Path": "crates/core/src/settings_proto.rs",
+      "SHA256": "81216c14f5bfcfe8eb87a6985d7894161f101502974ac81a92fbfaa050cc4f4f"
+    },
+    {
+      "Path": "crates/core/src/shared_list.rs",
+      "SHA256": "a6cd94cf3c5a8d7265ff3998e5c6f93301c6ca7e8d37407919b6015c87816d93"
+    },
+    {
+      "Path": "crates/core/src/shared_recovery.rs",
+      "SHA256": "90bcbfcb7178184365fd9026499ff5629825ded4ce0ac4647e37449cbc638e2e"
+    },
+    {
+      "Path": "crates/core/src/uploads.rs",
+      "SHA256": "e2849e3109d8a3ed7519c8917f9b006c8720a8b747df8a17bd0bf204160e8576"
+    },
+    {
+      "Path": "crates/core/src/video.rs",
+      "SHA256": "29934dba24b8d20a585ac1b4129e894747191e10a5306ebf01c9dadb39e4c819"
+    },
+    {
+      "Path": "crates/core/src/voice_diagnostics.rs",
+      "SHA256": "21f9cfd3a1f7e615b2efd10d608858f7aebe18fa911cf9125341ce496e8b35d1"
+    },
+    {
+      "Path": "crates/media-addon/build.rs",
+      "SHA256": "fcbd1ff3f627a7553fa1704dc6f558998daff8bc256015c37aace62cc49ce584"
+    },
+    {
+      "Path": "crates/media-addon/Cargo.toml",
+      "SHA256": "cbbdf98e52ea5d3fd3f33dfdbad85fd5acaa72d42b79d8c304a35af144df8b09"
+    },
+    {
+      "Path": "crates/media-addon/host/main.cjs",
+      "SHA256": "1b3caba52c2c538800f697a9c947be8f716babe6a7de4048438dffa1625b7bb2"
+    },
+    {
+      "Path": "crates/media-addon/host/package.json",
+      "SHA256": "41d39db8a5f2956619b99983017aae00d56657732386bfcbd8a90dafe82ffb08"
+    },
+    {
+      "Path": "crates/media-addon/src/host.rs",
+      "SHA256": "2b12aee31ddc01419cd2e0e849f6c5b5af30f3e0c33405a6b15b5fef9be071e4"
+    },
+    {
+      "Path": "crates/media-addon/src/host/applied_frames.rs",
+      "SHA256": "17b47db10903243466d01c4e0dd5eb10a8803d7016c0fefc391d54d0b306edef"
+    },
+    {
+      "Path": "crates/media-addon/src/host/dispatch_queue.rs",
+      "SHA256": "544bcf1a3329106913c4624c398c68a9b7451a6e1f288fd1d14caf9fd687ae65"
+    },
+    {
+      "Path": "crates/media-addon/src/host/recovery_methods.rs",
+      "SHA256": "357a055d7e803c3ed1c1d0a2e97770aae581de62059bd217f5da68f411c435ca"
+    },
+    {
+      "Path": "crates/media-addon/src/host/voice_resume.rs",
+      "SHA256": "6524c7fb8c1d7083341c07893079db0042e6a0231dc232a3a4d0aedb607f88c2"
+    },
+    {
+      "Path": "crates/media-addon/src/host/voice_socket.rs",
+      "SHA256": "1aa05dccdb244c775862fc4143e502a0f57980c8ec82fd68288c224e6a04f9a5"
+    },
+    {
+      "Path": "crates/media-addon/src/lib.rs",
+      "SHA256": "1a0e62052facbfb56d23058e3b665cd102b4c87407e6302c814d27af8068c426"
+    },
+    {
+      "Path": "crates/media-addon/src/native.rs",
+      "SHA256": "464a78ab6df295990ac38adb14ee0a8c6e6c98a87a9bf5c3cfc491b7f3ba5214"
+    },
+    {
+      "Path": "crates/media-addon/src/preview.rs",
+      "SHA256": "c848d19dc70a5355f5a21d2c0dcbdacbb360ad0eddbd5dc186d84baebacc0de3"
+    },
+    {
+      "Path": "crates/media-addon/src/probe_video.rs",
+      "SHA256": "b774c068b5e24110207231d1621b36430b0bc3ed5c7732b9ceb110383acfbc0f"
+    },
+    {
+      "Path": "crates/media-addon/src/probe_window.rs",
+      "SHA256": "4db61abf21feee5f704f8dd0f9207ebd990cce1cf0dbcc67e39ca8e896e1b544"
+    },
+    {
+      "Path": "crates/media-addon/src/probe.rs",
+      "SHA256": "12f68764029d58c0f2a6d9386063a149352194b9870b51d6e6e974943a3369ea"
+    },
+    {
+      "Path": "crates/media-addon/src/protocol.rs",
+      "SHA256": "ccab6aabe0b78963336f1a641a4e4c95fa85f71ff71b2a86ba7d73aa5fc1f305"
+    },
+    {
+      "Path": "crates/media-addon/src/receive_probe.rs",
+      "SHA256": "19585b9a32bd8013c5f89724e4884a87b710297794462194b7fdd6dd045fe964"
+    },
+    {
+      "Path": "crates/media-addon/src/session.rs",
+      "SHA256": "5a34f813ab2991ec9cf207b7b020a5298fc731cbdd2c295c732f217eb4196f74"
+    },
+    {
+      "Path": "crates/media-addon/src/settings.rs",
+      "SHA256": "d2be0b048fa69b7ada2e2f985caca1cf11f8a681694ff960f92e5470805f6544"
+    },
+    {
+      "Path": "crates/media-addon/src/stats.rs",
+      "SHA256": "bddf573b7e26f1b42d2549a536d816282c062473ec37c25a635d49a39d990201"
+    },
+    {
+      "Path": "crates/media-addon/src/video.rs",
+      "SHA256": "3b3716923fb9df39c3397eda00a8b7ab09f01fdb2c43e90f9d3a485e8c8a71a7"
+    },
+    {
+      "Path": "crates/media-addon/tests/preview-pipeline.cjs",
+      "SHA256": "f62ffebb2c13d32c07716694056feabc4f2b6a1acaf4fd79126940816c27d6ca"
+    },
+    {
+      "Path": "version.json",
+      "SHA256": "f02a2d8714dc2d12252ceaa7dac98f1c0f1094f5426f48df74905dc5b019d775"
+    }
+  ],
+  "PostWorkspaceSuiteChange": "Sólo receive_probe.rs, excluido de producción por cfg(native-probe): renombrar sesión fake que ocultaba el receptor mpsc. Después pasaron 55 tests de esa feature y ambos drivers N-API."
+}

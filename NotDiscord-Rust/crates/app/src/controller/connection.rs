@@ -16,23 +16,34 @@ pub(super) struct Recovery {
     restart: bool,
     /// A visible page could not load while the transport was down.
     deferred_view: bool,
+    /// Positive monitor events, deduplicated independently of call lifetime.
+    pub(super) power_episode: u64,
+    pub(super) power_suspended: bool,
 }
 impl Recovery {
     pub(super) fn defer_view(&mut self) { self.deferred_view = true; }
 }
 impl Controller {
     pub(super) fn transport_suspended(&self) -> bool {
-        self.state.connection_phase.suspended()
+        self.state.connection_phase.suspended() || self.voice_lifecycle.recovery_pending()
     }
     pub(super) fn sync_transport_gate(&mut self) {
         let suspended = self.transport_suspended();
         if let Some(api) = &self.api { api.set_transport_available(!suspended); }
-        if suspended { self.suspend_presence_changes(); self.suspend_call_discovery(); self.read_acks.discard_pending(); }
+        // A voice/viewer lease holds optional admission without pretending that
+        // valid Gateway authority or already emitted reads were lost.
+        if self.state.connection_phase.suspended() { self.suspend_presence_changes(); self.suspend_call_discovery(); }
+        if suspended { self.read_acks.discard_pending(); }
     }
     pub(super) fn connection_changed(&mut self, change: ConnectionChange) {
         let previous = self.state.connection_phase;
         // A replacement task opens normally; the session is still recovering.
-        let phase = if change.phase == ConnectionPhase::Connecting && previous.lost() {
+        let phase = if change.phase == ConnectionPhase::Synchronized
+            && self.gateway.as_ref().is_some_and(|gateway| !gateway.is_ready()) {
+            // A queued pre-sleep notification cannot reopen HTTP/voice after
+            // the actual Gateway owner invalidated that transport generation.
+            ConnectionPhase::Recovering
+        } else if change.phase == ConnectionPhase::Connecting && previous.lost() {
             ConnectionPhase::Recovering
         } else {
             change.phase
@@ -57,6 +68,7 @@ impl Controller {
         self.publish();
     }
     pub(super) fn reload_deferred_view(&mut self) {
+        if self.transport_suspended() { return; }
         if self.state.view != "chat" || self.state.selected_channel_id.is_empty()
             || !std::mem::take(&mut self.recovery.deferred_view) { return; }
         let channel = self.state.selected_channel_id.clone();
@@ -65,6 +77,9 @@ impl Controller {
     /// Logout and safety stops release the receiver themselves, so a closed
     /// channel here means the task ended on its own. Never show a stale online.
     pub(super) fn gateway_ended(&mut self) {
+        // A new handle owns a new Core budget. Never let it re-admit the old
+        // call's already interrupted recovery as a new automatic episode.
+        self.gateway_voice_owner_ended();
         self.gateway = None;
         if !self.state.signed_in
             || self.api.as_ref().is_none_or(|api| api.safety().state() != SafetyState::Allowed) { return; }

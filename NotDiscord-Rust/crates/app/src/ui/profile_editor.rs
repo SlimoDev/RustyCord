@@ -162,6 +162,7 @@ impl NotDiscordUi {
         else {
             return;
         };
+        let display_presence=self.visual_presence(state);
         egui::Frame::new()
             .fill(self.theme.surface)
             .corner_radius(8)
@@ -172,7 +173,7 @@ impl NotDiscordUi {
                     ui.label("Disponibilidad");
                     ui.add_enabled_ui(!state.demo, |ui| {
                         egui::ComboBox::from_id_salt("profile-presence")
-                            .selected_text(if state.self_presence=="invisible" {"Invisible"} else {presence_label(&state.self_presence)})
+                            .selected_text(if display_presence=="invisible" {"Invisible"} else {presence_label(&display_presence)})
                             .show_ui(ui, |ui| {
                                 for (value, label) in [
                                     ("online", "En línea"),
@@ -181,18 +182,16 @@ impl NotDiscordUi {
                                     ("invisible", "Invisible"),
                                 ] {
                                     if ui
-                                        .selectable_label(state.self_presence == value, label)
+                                        .selectable_label(display_presence == value, label)
                                         .clicked()
                                     {
-                                        self.send("status", "", value, "", "");
+                                        self.choose_presence(state,value);
                                     }
                                 }
                             });
                     });
                 });
-                ui.small(
-                    "La disponibilidad mostrada cambia cuando el servicio confirma el ajuste.",
-                );
+                self.presence_note(ui,state);
                 if editor.loading {
                     ui.label("Cargando biografía y estado actuales…");
                 }
@@ -367,6 +366,40 @@ impl NotDiscordUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn availability_clicked_in_the_profile_projects_immediately_with_the_real_frame_owner() {
+        let (mut app,_,mut commands)=super::super::tests::harness();
+        let me=Person {id:"100".into(),name:"Profile owner".into(),..Default::default()};
+        let state=AppSnapshot {signed_in:true,current_user:Some(me.clone()),notification_generation:7,
+            self_presence:"online".into(),view:"profile".into(),selected_channel_id:"200".into(),..Default::default()};
+        let mut editor=Editor::new(me.id.clone());editor.loading=false;editor.ready=true;
+        editor.bio="Unsaved bio".into();editor.status="Unsaved custom status".into();app.profile_editor=Some(editor);
+        app.state=AppSnapshot::welcome();
+        let ctx=app.ctx.clone();ctx.style_mut(|style|style.animation_time=0.);
+        let draw=|app:&mut NotDiscordUi,events|ctx.run(egui::RawInput {
+            screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(800.,750.))),events,..Default::default()
+        },|ctx| {egui::CentralPanel::default().show(ctx,|ui|app.draw_profile_editor(ui,&state,&me));});
+        let text=|output:&egui::FullOutput,label:&str|output.shapes.iter().find_map(|shape|match &shape.shape {
+            egui::Shape::Text(text) if text.galley.job.text==label=>Some(text.pos+text.galley.size()/2.),_=>None,
+        }).unwrap_or_else(||panic!("Missing profile text {label}"));
+        let pointer=|point,pressed|vec![egui::Event::PointerMoved(point),egui::Event::PointerButton {
+            pos:point,button:egui::PointerButton::Primary,pressed,modifiers:egui::Modifiers::NONE}];
+        let mut output=draw(&mut app,vec![]);for _ in 0..3 {output=draw(&mut app,vec![]);}
+        let combo=text(&output,"En línea");
+        for pressed in [true,false] {draw(&mut app,pointer(combo,pressed));}
+        for _ in 0..3 {output=draw(&mut app,vec![]);}
+        let dnd=text(&output,"No molestar");
+        for pressed in [true,false] {draw(&mut app,pointer(dnd,pressed));}
+        let action=commands.try_recv().unwrap();assert_eq!((action.kind.as_str(),action.text.as_str()),("status","dnd"));
+        assert!(!action.id.is_empty());
+        assert_eq!(serde_json::from_str::<Value>(&action.extra).unwrap(),serde_json::json!({"account_id":"100","generation":7}));
+        assert_eq!(app.visual_presence(&state),"dnd");assert_eq!(state.self_presence,"online");
+        assert!(!app.state.signed_in,"drawing still owns the extracted frame snapshot");
+        output=draw(&mut app,vec![]);text(&output,"No molestar");text(&output,"Cambiando estado…");
+        let editor=app.profile_editor.as_ref().unwrap();
+        assert_eq!(editor.bio,"Unsaved bio");assert_eq!(editor.status,"Unsaved custom status");
+        app.choose_presence(&state,"dnd");assert!(commands.try_recv().is_err(),"an identical pending choice is coalesced");
+    }
     #[test]
     fn only_own_profile_exposes_editing_and_drafts_survive_failed_saves() {
         let (mut app, _, mut commands) = super::super::tests::harness();

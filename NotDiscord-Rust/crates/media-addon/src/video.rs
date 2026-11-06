@@ -197,6 +197,7 @@ pub(super) struct VideoState {
     pub(super) preview: Option<String>,
     preview_token: u64,
     screen_preview: Option<preview::ScreenPreview>,
+    preview_pipeline: Rc<RefCell<preview::Pipeline>>,
 }
 impl VideoState {
     pub(super) fn new(closing: Arc<AtomicBool>) -> Self {
@@ -209,6 +210,7 @@ impl VideoState {
             preview: None,
             preview_token: 0,
             screen_preview: None,
+            preview_pipeline: Rc::new(RefCell::new(preview::Pipeline::default())),
         }
     }
 }

@@ -1,6 +1,25 @@
 use super::*;
 use eframe::egui::{self, Color32, RichText};
 use serde_json::json;
+fn participant_speaking(state:&AppSnapshot,participant:&CallParticipant,channel:&str,attempt:u64,incoming:bool)->bool {
+    let own=state.current_user.as_ref().is_some_and(|user|user.id==participant.user.id);
+    !incoming && state.signed_in && state.voice_connected && state.voice_encryption_ready
+        && !channel.is_empty() && state.call_channel_id==channel
+        && attempt!=0 && state.call_instance_id==attempt
+        && participant.speaking && !participant.self_mute && !participant.self_deaf
+        && !participant.server_mute && !participant.server_deaf
+        && (!participant.is_self || own)
+        && (!own || participant.is_self && !state.self_mute && !state.self_deaf)
+}
+pub(super) fn self_speaking(state:&AppSnapshot)->bool {
+    state.call_participants.iter().any(|participant|participant.is_self
+        && state.current_user.as_ref().is_some_and(|user|user.id==participant.user.id)
+        && participant_speaking(state,participant,&state.call_channel_id,state.call_instance_id,false))
+}
+pub(super) fn speaking_ring(avatar:egui::Rect)->egui::Shape {
+    egui::Shape::circle_stroke(avatar.center(),avatar.width()/2.+2.,
+        egui::Stroke::new(3_f32,presence_color("online")))
+}
 pub(super) fn call_panel_visible(state:&AppSnapshot)->bool {
     if !(state.voice_connected||state.voice_connecting) || state.call_channel_id.is_empty() {return false;}
     if state.call_guild_id.is_empty() {
@@ -944,7 +963,7 @@ impl NotDiscordUi {
                     .call_participants
                     .iter()
                     .map(|person| {
-                        usize::from(person.self_video) + usize::from(person.screen_sharing)
+                        usize::from(person.source_available("camera")) + usize::from(person.source_available("screen"))
                     })
                     .max()
                     .unwrap_or(0);
@@ -1320,8 +1339,9 @@ impl NotDiscordUi {
                     let retained = |video: &CallVideo| running(video) || video.status=="error";
                     let camera_available = call_source_available(Some(participant),&participant.user.id,"camera",videos) || participant.is_self
                         && camera.as_ref().is_some_and(|video|retained(video)&&video.local);
-                    let screen_available = call_source_available(Some(participant),&participant.user.id,"screen",videos) || participant.is_self
-                        && screen.as_ref().is_some_and(|video|retained(video)&&video.local);
+                    let screen_available = !participant.screen_view_unavailable
+                        && (call_source_available(Some(participant),&participant.user.id,"screen",videos) || participant.is_self
+                            && screen.as_ref().is_some_and(|video|retained(video)&&video.local));
                     let requested = |video: &CallVideo| video.view_requested && retained(video);
                     let automatic = if participant.viewing=="camera"&&camera_available||participant.viewing=="screen"&&screen_available {
                         participant.viewing.as_str()
@@ -1451,17 +1471,8 @@ impl NotDiscordUi {
                                     egui::Vec2::splat(height.min(54.)),
                                 );
                                 self.pictures.paint_avatar(ui, avatar, &participant.user);
-                                if participant.speaking
-                                    && !participant.self_mute
-                                    && !participant.self_deaf
-                                    && !participant.server_mute
-                                    && !participant.server_deaf
-                                {
-                                    ui.painter().circle_stroke(
-                                        avatar.center(),
-                                        avatar.width() / 2. + 2.,
-                                        egui::Stroke::new(3_f32, presence_color("online")),
-                                    );
+                                if participant_speaking(state,participant,channel_id,instance_id,incoming) {
+                                    ui.painter().add(speaking_ring(avatar));
                                 }
                             }
                             if selected=="avatar" || selected=="screen" {
@@ -1674,9 +1685,7 @@ pub(super) struct CallExpansion {
 fn stream_volume_applicable(participant: &CallParticipant, state: &AppSnapshot) -> bool {
     !participant.is_self
         && state.current_user.as_ref().is_none_or(|user| user.id != participant.user.id)
-        && (participant.screen_sharing || state.call_videos.iter().any(|video|
-            video.user_id == participant.user.id && video.kind == "screen" && !video.local && !video.preview
-                && video.view_requested && !matches!(video.status.as_str(), "ended" | "removed")))
+        && call_source_available(Some(participant),&participant.user.id,"screen",&state.call_videos)
 }
 fn call_gallery_columns(_width:f32,_gap:f32,count:usize,_incoming:bool)->usize {
     // The cell width adapts to zoom and available space; the requested count
@@ -1720,6 +1729,8 @@ impl CallExpansion {
     fn matches(&self, state: &AppSnapshot, video: &CallVideo) -> bool {
         self.scope==format!("account:{}:call:{}:{}",state.current_user.as_ref().map(|user|user.id.as_str()).unwrap_or(""),state.call_channel_id,state.call_instance_id)
             && self.id==video.id && video.active && !video.preview
+            && call_source_available(state.call_participants.iter().find(|person|person.user.id==video.user_id),
+                &video.user_id,&video.kind,&state.call_videos)
             && (video.user_id.is_empty() || state.call_participants.iter().any(|person|person.user.id==video.user_id))
     }
 }

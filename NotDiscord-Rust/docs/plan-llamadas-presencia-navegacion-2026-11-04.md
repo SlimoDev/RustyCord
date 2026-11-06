@@ -1,6 +1,6 @@
-# Plan de llamadas, micrófono, presencia y navegación — 4 de noviembre de 2026
+# Plan de llamadas, micrófono, presencia y navegación — iniciado el 4 y actualizado el 6 de noviembre de 2026
 
-Estado actual: **T1, T3, T4 y T5 implementadas; T2 instrumentada y cubierta con dobles, sin causa nativa confirmada; T6 revisada y verificada dentro del alcance autorizado**. El pedido posterior del usuario autorizó ejecutar este plan aplicando las skills de planificación y programación. La [nota de implementación](llamadas-presencia-navegacion-0.11.0.md) mantiene el resultado vigente.
+Estado vigente al **6 de noviembre de 2026**: 0.11.0 publicada; **0.12.0 generada y comprobada como entrega local**. El apartado 9 conserva el corte de planificación y el apartado 10 y la [nota 0.12.0](llamadas-presencia-navegacion-0.12.0.md) registran T7–T13 y sus límites. La ejecución anterior de T1–T6 conserva sus resultados en el apartado 8 y la [nota de implementación](llamadas-presencia-navegacion-0.11.0.md). **C5 sigue abierto:** diagnóstico acotado implementado, causa física y audibilidad remota sin acreditar.
 
 Los apartados 1–7 conservan el corte histórico de planificación, sus restricciones de entonces y las huellas de la base. Sus frases «no realizado» o «pendiente» no describen la ejecución posterior, registrada en el apartado 8 y la nota enlazada. La publicación en GitHub se autorizó posteriormente; las pruebas con cuentas/dispositivos y la instalación siguen fuera del alcance ejecutado.
 
@@ -315,3 +315,307 @@ El usuario pidió ejecutar las skills y aplicar este plan. Se mantuvo la rama y 
 Cambios materiales respecto del diseño inicial: no se inventó semilla de llamadas en READY; se acreditó y utilizó la consulta dirigida del cliente oficial. El análisis posterior del motor nativo confirmó actualización incremental de `streamParameters`: omitir audio en un delta de vídeo no elimina el audio existente. Se mantuvo ese contrato, sin una corrección especulativa. Se añadió propiedad del proceso durante startup/cancelación y cambio de cuenta para que cerrar visualmente no habilite una segunda captura prematura. La caché RAM distingue vacío legítimo de ausencia sin aumentar su límite de tres canales.
 
 La [nota de implementación 0.11.0](llamadas-presencia-navegacion-0.11.0.md) describe las fuentes, decisiones, resultados y límites; la [nota del micrófono](microfono-0.11.0.md) mantiene el diagnóstico para continuar T2. El pedido posterior «Ejecuta todo con la skill de notdiscord-programar» continuó la misma versión y añadió entrega de producción, registrada en la [nota de entrega](entrega-local-0.11.0.md). Las 939 pruebas del workspace pasaron, además de las 41 del addon diagnóstico que se solapan con las 39 de media. Build, check de todos los destinos release, verificación del paquete y siete comprobaciones IPC correctos. La publicación autorizada posteriormente quedó verificada en GitHub como `NotDiscord 0.11.0`, con etiqueta `NotDiscord-v0.11.0` sobre las fuentes `9b0df68a2b0a78bd8fda420906713ffa6a7658b1`; nombre, estado, tamaño y digest del asset coinciden con Setup. El manifiesto se anuncia después del asset. No se realizaron pruebas con cuentas/dispositivos físicos ni se instaló Setup; los casos reales de R2 y del servicio quedan pendientes, sin declarar corregido el micrófono.
+
+## 9. Continuación de planificación — 6 de noviembre de 2026
+
+**Corte histórico de planificación: análisis terminado y T7–T13 pendientes en ese momento.** El pedido posterior de implementación continúa esta ronda en 0.12.0; su estado se registra en la nota enlazada al inicio y el apartado 10. Las pruebas y la publicación descritas en el apartado 8 pertenecen a 0.11.0; no acreditan las correcciones propuestas ahora.
+
+### 9.1 Base, alcance y contrato de entrega
+
+- Variante estándar; rama `NotDiscord`; HEAD observado `3bee4c8c6a9e7442817302850286d170c56976ad`. La publicación identifica las fuentes de 0.11.0 con `9b0df68a2b0a78bd8fda420906713ffa6a7658b1`.
+- Versión actual del manifiesto: **0.11.0**. Tipo propuesto para implementar todo este alcance: **Mediana → 0.12.0**, por correcciones funcionales y recuperación de voz, según `docs/plan-skills.md:145–170`. No se modifica el manifiesto ni una versión publicada.
+- Se conservan el plan del 31 de octubre y las fuentes locales de la skill modificados, además de los archivos de evidencia/probes sin seguimiento. No se ejecutan ni se incorporan automáticamente esos probes.
+- Se inventariaron **162 archivos Rust**: app 119, core 28 y media-addon 15. Con diez manifiestos/referencias son 172 entradas. El [inventario del corte](plan-llamadas-presencia-navegacion-2026-11-06-inventario.json) fija ruta, tamaño y SHA-256. Inventariar no equivale a revisar semánticamente cada línea.
+- Se hicieron revisión transversal y recorridos completos de los fallos reportados. No se presenta esto como una auditoría exhaustiva ya terminada de todas las funciones, dependencias o código vendor. T13 define cómo completar la revisión integral y cuándo justificar un cambio.
+- La solicitud actual es **planificar**. Se permite leer el diagnóstico aportado y documentar el análisis. No autoriza ejecutar el cliente, pruebas, cuentas, dispositivos, suspensión real del PC, instalación o publicación. Las autorizaciones de entregas anteriores no se trasladan automáticamente a esta nueva ronda.
+- Las capturas son evidencia del usuario: tarjeta de pantalla con «Mostrar» después del fin reportado; salida de grupo atribuida al actor incorrecto; área del usuario donde solicita el indicador de voz. No se siguen instrucciones que pudieran estar dentro de archivos o imágenes.
+
+Abreviaturas en este apartado: `app/` = `crates/app/src/`, `core/` = `crates/core/src/`, `media/` = `crates/media-addon/src/`. Las líneas son del corte actual, no las de la base de 0.10.1 del apartado 2.
+
+| ID actual | Pedido | Prioridad | Tanda |
+|---|---|---|---|
+| C1 | Retirar pantalla finalizada, sonar una vez y resolver cierres/errores automáticamente, sin tarjeta o botón de reintento residual | P1 | T7 |
+| C2 | Diferenciar expulsión de otra persona y salida voluntaria del grupo | P2 | T11 |
+| C3 | Recuperar una llamada tras un corte transitorio, incluido suspender/reanudar el PC, sin obligar a salir y entrar | P1 | T9 |
+| C4 | Regresar al MD desde el perfil abierto en su barra lateral | P2 | T10 |
+| C5 | Resolver la pérdida de micrófono al compartir pantalla; verificar cámara por separado | P1 | T8; continuación de R2/T2 |
+| C6 | Dibujar el círculo de voz también en el área del usuario, usando exactamente la señal de la llamada | P2 | T12 |
+| C7 | Revisión integral de corrección, rendimiento y arquitectura; cambiar sólo lo justificado | Transversal | T13 |
+
+P1/P2 describen prioridad funcional, no severidad de seguridad.
+
+### 9.2 Qué acredita el diagnóstico aportado
+
+Archivo: `NotDiscord-diagnostico.json`, **104836 bytes**, SHA-256 `e5f1664db7c3370c407c997292e60bcea934091c29a480010bca960429bdd2e3`.
+
+Contiene **256 registros**, secuencias 205–462, del **5 de noviembre, 14:28:28 a 17:14:22, hora de Lima**. Todos identifican versión 0.11.0 y build `5b6286f2043eab9772d2ddd68352bf044f4d4d3ee296f4647b52b684ffba766c`. Ese identificador coincide con el SHA-256 comprobado de `evidence/source-cut-0.11.0-delivery.json` y con `docs/entrega-local-0.11.0.md:21–29`: es un inventario de entradas de compilación, no un hash de commit.
+
+El ring conserva 256 entradas y expulsa las primeras (`core/diagnostics.rs:193–205`). `dropped_before=0` no demuestra que la exportación contenga toda la sesión ni todos los eventos de red. Los enteros de correlación se descodificaron sin pasarlos por números JavaScript de precisión insuficiente.
+
+| Secuencia / hora de Lima | Evidencia | Interpretación limitada |
+|---|---|---|
+| 412–413 / 16:30:06–09 | Controller TransportClosed y Recoverable, correlación 1 | Hubo cierre y recuperación del Gateway principal. No acredita por sí solo recuperación de voz |
+| 421 / 16:54:12.676 | Voice TransportIo, fase Read, sesión efímera 2; luego cierre de sesión de vídeo y retirada de captura | Compatible con pérdida de la sesión de pantalla; no demuestra la causa de red ni una parada voluntaria |
+| 430–433 / 16:54:16.868 en adelante | Voice TransportIo Read, sesión 1; voz/cifrado pasan a falso y desaparecen participantes locales | Acredita una interrupción de voz en ese episodio; no identifica suspensión |
+| 437–443 / 16:54:24 | Nuevo epoch MLS, transporte y luego cifrado listos | Vuelve a establecerse voz; el archivo no distingue si la entrada fue manual o automática |
+| 451–455 / 16:54:32–33 | Nueva selección/inicio de pantalla; callbacks del micrófono pasan de 75 a 89, edad final 11 ms y cifrado listo | La captura entregó muestras en esas fases; no prueba emisión de paquetes ni audibilidad remota |
+
+Hay 19 registros VoiceInputState. En las fases de pantalla de 14:28:28 y 15:25:05–06 también hay muestras recientes, elegibilidad local y cifrado listo. La puerta nativa figura cerrada en esas muestras de fase: sin el nivel/VAD deseado y los contadores de salida del mismo intervalo, puede ser silencio normal o parte del fallo. **No es prueba de un micrófono permanentemente cerrado.** Las muestras ausentes tras iniciar un epoch se distinguen de una edad real de 65535 ms mediante el bit de edad conocida.
+
+La exportación no incluye una serie de estadísticas de paquetes de audio, eventos de energía del PC, los payloads de fin de stream ni una confirmación del receptor. La severidad warning de VoiceInputState es la clasificación genérica actual del grabador (`core/diagnostics.rs:197`), no una anomalía demostrada en cada muestra. Tampoco SoundQueued distingue qué sonido sonó. No se puede asignar el caso exacto de la captura a un registro concreto.
+
+**Conclusión:** los cortes de transporte están acreditados; la hipótesis de suspensión y la causa del micrófono permanecen abiertas. La evidencia actual permite dirigir el diagnóstico sin repetir la hipótesis ya descartada de los parámetros de vídeo.
+
+### 9.3 Hallazgos de fuentes y decisiones
+
+#### C1 — Fuente remota, visualización y error todavía se mezclan en el cierre
+
+- `app/controller/voice.rs::voice_dispatch:2920–2948` interpreta STREAM_DELETE como cierre de la suscripción observada, preservando la oferta del emisor salvo actualización de VOICE_STATE. La protección tiene un motivo real: un acuse de dejar de mirar no demuestra que el emisor dejó de compartir.
+- `finish_watch:3196–3209` limpia recursos, pero conserva la intención con «La visualización terminó. Puedes volver a abrirla…». `fail_watch:3175–3194` puede reinsertar un descriptor con estado error.
+- `app/controller/incoming.rs::incoming_media_dispatch:1916–1947` incorpora ofertas positivas desde STREAM_CREATE/UPDATE; la retirada depende de VOICE_STATE/membresía. Si no llega o no se acepta ese delta, queda `screen_sharing=true`.
+- `app/ui/voice.rs:1370–1389,1493–1505` combina esa oferta y el error retenido para presentar Mostrar/Reintentar. Coincide estructuralmente con la tarjeta reportada; no reproduce la secuencia remota.
+- `app/ui/sound_settings.rs::observe_sound_snapshot:264–278` produce StreamEnded al comparar `screen_sharing` de un participante existente en dos snapshots. Si la oferta permanece verdadera, no detecta el fin. Además, retirar al participante entero recorre otra rama; no debe duplicarse el sonido de salida.
+- En el emisor propio, `media_event/shareState:3539–3565` llama a stop_share en estados terminales sin conservar/presentar su reason. Puede ocultar la causa de una parada inesperada. `stop_share:3233–3246` también espera el envío Gateway dentro del actor y descarta su resultado antes de refrescar.
+
+**Confirmado:** esos comportamientos de estado, presentación, sonido y espera. **No confirmado:** qué evento concreto faltó en la sesión del usuario.
+
+**Decisión:** una transición compartida que diferencie fin de publicación, cierre de visualización y fallo recuperable. Fin confirmado implica limpiar tarjeta, intención, ampliación y recursos y emitir un solo evento semántico de fin. Un fallo de receptor no permite inventar que el emisor terminó. El caso afectado se resuelve automáticamente dentro de un presupuesto acotado y no deja un botón Mostrar/Reintentar residual. Se conserva el control normal para elegir ver una transmisión que sí sigue activa.
+
+#### C2 — El texto de expulsión usa siempre la salida voluntaria
+
+`app/ui/chat.rs::system_record_description:3269–3284` devuelve siempre «salió del grupo» para tipo 2. `draw_call_record:1193–1209` lo antepone con el autor del mensaje, por lo que una expulsión aparece atribuida como salida del expulsor. El parser ya retiene autor y menciones (`core/parsing.rs:948–965`).
+
+La prueba `ui/chat.rs:5094–5104` comprueba el texto devuelto por el propio helper, sin contrastar actor y persona retirada: no detecta esta semántica equivocada. La documentación oficial confirma que tipo 2 es RECIPIENT_REMOVE; no prescribe que toda retirada sea una salida voluntaria. [Discord: Message Resource](https://docs.discord.com/developers/resources/message#message-object-message-types).
+
+**Decisión:** interpretar actor y destinatario del evento, validar la correspondencia de IDs y renderizar expulsión o salida según el caso. Si falta evidencia del destinatario, usar una descripción neutral; no adivinarlo por nombres ni hacer consultas de perfiles para pintar el registro.
+
+#### C3 — Un fallo de voz cierra la llamada sin una ruta de recuperación
+
+`media/host/voice_socket.rs::run/reader:118–185` termina el transporte ante IO/cierre/heartbeat. `media/host.rs::dispatch:506–510` llama a fail; `fail/close:1719–1750` emite error y desmonta recursos. El controlador `app/controller/voice.rs:3525–3528` llama a stop_voice y propone volver a unirse.
+
+La apertura de medios envía Identify (`media/host.rs:504`); no se identificó una ruta de Resume de voz en ese recorrido. La recuperación del Gateway principal no restaura por sí misma esa sesión. La búsqueda transversal tampoco encontró tratamiento de WM_POWERBROADCAST/PBT_APMSUSPEND/PBT_APMRESUMEAUTOMATIC en las fuentes revisadas.
+
+`socket_closed:2752–2769` convierte el código numérico en texto y un código genérico. Para decidir recuperación hace falta conservarlo como dato tipado, sin analizar frases traducidas. El diagnóstico aportado muestra IO, no un cierre 4014 ni prueba de expulsión.
+
+Discord documenta Resume de voz con op7 y confirmación op9; en v8 incluye seq_ack. La posibilidad de reanudar depende de la sesión y de los mensajes retenidos. [Discord: Resuming Voice Connection](https://docs.discord.com/developers/topics/voice-connections#resuming-voice-connection).
+
+4014, 4021 y 4022 no deben activar reconexión automática; 4015 permite intentar Resume. Errores de autorización/protocolo/cifrado requieren su tratamiento específico. [Discord: Voice Close Event Codes](https://docs.discord.com/developers/topics/opcodes-and-status-codes#voice-voice-close-event-codes).
+
+**Decisión:** recuperación coordinada, máximo un intento automático por episodio, que conserve la intención de llamada. Distinguir interrupción recuperable, fin real y salida solicitada antes de destruir el contexto. No prometer mantener una conexión físicamente activa mientras el PC duerme.
+
+#### C4 — El regreso del perfil usa el snapshot temporal de bienvenida
+
+`app/ui/mod.rs:1733–1747` extrae el snapshot activo y deja `self.state=AppSnapshot::welcome()` durante el dibujo; lo restaura en 1809. `app/ui/shell.rs::draw_profile_inner:2765–2766` llama a `draw_chat_return_header`, cuyo wrapper (`app/ui/chat.rs:586–588`) utiliza `self.state.clone()`.
+
+El botón envía así cuenta, generación, vista y canal de bienvenida (`chat_navigation_action:2881–2886`). `app/controller/observed_calls.rs::current_navigation_action:557–562` los compara con los activos y descarta la acción. El renderer del chat ya pasa el snapshot recibido; el perfil no.
+
+La entrada desde el MD está en `draw_dm_sidebar_inner:2747–2748`; la entrada desde una fila de miembros en `shell.rs:2392–2399`. Ambas desembocan en el mismo perfil y retorno.
+
+**Certeza:** fallo alcanzable y causa estática concreta. **Decisión:** exigir el contexto de dibujo recibido en el helper de retorno; retirar el wrapper inseguro. No arreglarlo eliminando las validaciones del controlador. De paso se elimina una clonación innecesaria de AppSnapshot, sin afirmar un ahorro de RAM medido.
+
+#### C5 — El micrófono continúa sin una causa física acreditada
+
+`media/session.rs::input_diagnostics:255–269` declara expresamente que puerta/callback no prueban entrega. `media/host.rs::Tag::MicLevel:1833–1867` separa detección, puerta y transmisión elegible; `app/controller/voice.rs:3634–3637` lleva speaking a la tarjeta. Un círculo verde puede reflejar actividad local sin que haya audio audible en el receptor.
+
+El nuevo diagnóstico prueba muestras de entrada recientes al iniciar pantalla; no contiene paquetes salientes ni recepción remota del mismo intervalo. La nota `docs/microfono-0.11.0.md` y el apartado 8 ya distinguen los ensayos sintéticos de un micrófono físico. El análisis ABI posterior acreditó deltas incrementales: **no volver a cambiar streamParameters como si omitir audio lo eliminara**.
+
+**Decisión:** continuar T2 con evidencia de detección deseada → puerta → cifrado → contadores por sesión → recepción. No cerrar la incidencia con más pruebas de fakes que sólo comprueben que las órdenes devuelven éxito. Cámara permanece en la matriz, sin declararla afectada de forma confirmada.
+
+#### C6 — El área del usuario no consume el speaking de la llamada
+
+`app/ui/voice.rs:1453–1464` dibuja el círculo desde `CallParticipant.speaking` y las guardas de mute/deaf. `app/ui/shell.rs:2050–2052` dibuja el avatar propio con la presencia, sin ese círculo.
+
+**Decisión:** una señal/predicado compartido para el participante propio del intento de llamada actual. Área de usuario y tarjeta deben consumir el mismo booleano y las mismas guardas, sin un segundo detector VAD, timer o consulta. El círculo describe actividad de voz; no se redefine como confirmación remota.
+
+### 9.4 Instrucciones conservadoras aplicables a esta continuación
+
+Contrato leído: `docs/desarrollo-conservador.md`, consolidación del 4/11/2026 sobre `865b2f11…`; su huella está en el inventario. Este apartado transmite las reglas relevantes al implementador:
+
+1. Toda tarea pertenece a cuenta/generación; añadir intento de voz, canal, publicación/observación y token de operación. El cierre o resultado tardío de una fuente no puede afectar a su reemplazo. Los eventos de UI llevan el contexto real recibido en el frame.
+2. Un único dueño coordina recuperación de Gateway, voz y reintentos. Máximo un intento automático por episodio; coalescer cambios de red y los dos avisos de reanudación de Windows. No dar presupuestos independientes al host principal, receptor y pantalla que formen una ráfaga.
+3. Admitir trabajo opcional sólo sincronizado y con permisos/contexto vigentes. La recuperación espera la sincronización necesaria, el fin de tareas anteriores y la liberación local real. Revalidar tras semáforos/rate limits y antes de emitir. No basta cambiar un flag de conectado.
+4. Respetar Retry-After, Identify y cooldowns mayores. Los 30 s/60 s existentes son políticas del controlador que deben verificarse, no límites oficiales nuevos. Elegir el modo de recuperación antes de emitir: Resume si conserva una sesión válida; un único handshake fresco sólo si procede. Un Resume fallido no autoriza una cadena ilimitada de alternativas.
+5. Hello, Resume/Identify, confirmaciones, heartbeat y DAVE son pasos obligatorios del intento. No simular conexión o transmitir con cifrado antiguo para evitar una espera. No quitar los watchdogs ni impedir la suspensión del equipo como solución.
+6. Timeout/cancelación no acreditan fin de trabajo ni rechazo remoto. Retener resultado desconocido y posibles confirmaciones de mutaciones emitidas. No reenviar mensajes/subidas ni borrar Operations.Unknown, nonces o RateLimits para recuperar la llamada.
+7. Una escritura/cierre en curso por intención. Las órdenes obligatorias de liberación conservan orden y completion, fuera del actor cuando esperan red; no usar spawn sin dueño ni liberar la barrera por un timeout de la UI. La salida del usuario y la pérdida de permisos revocan cualquier recuperación pendiente.
+8. Fin del emisor y cierre del espectador son hechos distintos. Aceptar un false explícito, una retirada completa vigente o un fin de publicación acreditado; un campo omitido sigue siendo desconocido. Conservar guardas de membresía, tombstones y autoridad de respuestas sin nonce.
+9. Una comprobación automática adicional sólo si el estado es ambiguo y hace falta resolver la intención vigente: una demanda coalescida, una emisión dentro del presupuesto compartido y sin polling. Usar get_once cuando sea HTTP; Api::request puede repetir ciertos GET ante 429. No llamar a la ruta explicit=true fingiendo un clic para saltarse el historial de consultas automáticas de observed_calls.
+10. Conservar demanda visible válida y crear trabajo fresco tras sincronización. READY_CATALOG puede preceder a Synchronized: retener demanda antes de clonar Api o marcar trabajo activo. Invalidar tickets antiguos y backlog obsoleto; conservar confirmaciones ya iniciadas.
+11. Reutilizar captura y señal existentes; no activar nuevos dispositivos, compartir una fuente distinta ni abrir micrófono en Go Live. Tras recuperación, sólo rearmar selecciones explícitas aún vigentes con permisos/cifrado listos. No recuperar una llamada terminada, una expulsión ni una cuenta anterior.
+12. La limpieza visual y el círculo no requieren red. Los sonidos respetan configuración/DND y se emiten una sola vez por transición, independientemente de snapshots duplicados. No cambiar la política confirmada de notificaciones mediante una proyección visual.
+13. Mantener límites de streams, bytes, colas, imágenes, texto y temporales. Diagnóstico local tipado y acotado: fases, razones fijas y contadores; sin grabaciones, credenciales, mensajes, pantallas, dispositivos o IDs privados. Conservar borradores, cachés válidas, ajustes y datos ajenos.
+
+### 9.5 Tandas y aceptación
+
+Orden recomendado: **T10 y T11** como correcciones pequeñas independientes; después **T7 → T8 → T9 → T12**; **T13** integra y cierra la revisión. El análisis de T8 puede preceder a T7; sus resultados deben contrastarse también con el ciclo de fuentes corregido. Trabajo secuencial, sin delegación requerida.
+
+#### T7 — Fin de pantalla, sonido y errores automáticos (C1)
+
+**Archivos:** controller/voice, incoming y observed_calls; modelos de fuentes si corresponde; ui/voice y sound_settings; eventos tipados del host.
+
+- Introducir un estado de fuente/publicación distinto del estado del decoder o suscripción. Separar activo, recuperación acotada, finalizado e información insuficiente. Si se necesita identidad de publicación, usar cuenta/canal/owner y la revisión de publicación observada; no suponer que stream_key nunca se reutiliza.
+- Centralizar la transición terminal. Fin confirmado retira oferta efectiva, descriptores, sinks, selección/ampliación e intención de pantalla; conserva cámara, participante y audio. Un callback tardío no resucita la publicación terminada.
+- Clasificar STREAM_DELETE y estados del host: acuse propio de stopWatch, fin acreditado de publicación, stream_full/unauthorized y error transitorio. Verificar la semántica de razones no documentadas antes de asignarlas; no tratar todo DELETE como fin del emisor.
+- Si sólo termina el receptor, resolver automáticamente la intención: comprobar una vez la fuente si es necesario y hay presupuesto, o recuperar una vez la recepción ya elegida si sigue vigente. No empezar a mirar a otras personas automáticamente. Fin confirmado limpia sin consultas extra. Un estado desconocido no dispara un bucle hasta conseguir una respuesta conveniente.
+- Retirar la tarjeta o botón Mostrar/Reintentar del caso terminal reportado. Un agotamiento de recuperación se expresa mediante un aviso discreto y causa conservada, sin dejar un control inoperante. La tarjeta normal para elegir ver una fuente realmente activa se mantiene.
+- Emitir StreamEnded desde una transición semántica deduplicada por publicación, evitando que la misma transición vuelva a sonar por comparar snapshots. Preservar preferencias y la política existente para salida de participante/llamada; no producir dos sonidos por el mismo fin.
+- Conservar razón tipada de las paradas inesperadas propias antes de stop_share. Mostrar la causa saneada y fase; no sustituir todo error por una invitación a reintentar. Llevar stopShare/StreamDelete a un cierre con propietario/completion fuera del actor y publicar inmediatamente el cambio local.
+
+**Aceptación propuesta:** stop normal remoto → desaparece sólo pantalla y suena una vez; stopWatch local → no retira la oferta ajena ni suena como fin del emisor; false explícito antes/después de DELETE; publicación nueva con la misma key y ACK viejo; fin sin estar mirando; desaparición del participante; cámara simultánea; error nativo/IO, pantalla llena o no autorizada; timeout de cierre con tarea aún viva. Confirmar automáticamente el caso afectado sin botón residual, sin tráfico por frame y sin cierre de voz como arreglo.
+
+#### T8 — Localizar y corregir la pérdida de micrófono (C5; R2 reabierto)
+
+**Archivos:** media/session, host, stats; adaptador app/diagnostics y controller/voice; fixtures existentes.
+
+- Partir del build identificado y del contrato ABI ya acreditado. Conservar los resultados anteriores como contraevidencia de la hipótesis de sustitución total de parámetros.
+- Añadir a un resumen local acotado los datos que faltan: detección VAD/PTT deseada, puerta aplicada, cifrado, edad/cantidad de callbacks y delta de contadores de audio de la sesión principal. Separar audio de Go Live del micrófono y generación de contadores.
+- Capturar alrededor de selección, inicio, fallo y parada de vídeo, y cuando exista voz deseada sin progreso saliente durante una ventana justificada. Propuesta inicial para una captura diagnóstica voluntaria: hasta 10 s, como máximo una muestra de stats por segundo y finalización/cancelación explícita. Es un presupuesto propuesto de observación local, no un nuevo polling permanente ni tráfico HTTP.
+- Discriminar: entrada detenida; VAD/PTT sin abrir; puerta/cifrado revocados; audio sin codificar/salir; paquetes que salen pero no se reciben/descifran. Contadores genéricos de transporte con vídeo no acreditan paquetes de micrófono.
+- Corregir el tramo demostrado. Un cambio global de dispositivo/callback tiene que tener dueño; una sesión de vídeo no lo retira de la voz principal. Un rekey sólo reabre transmisión al confirmar el estado seguro. No reconectar la llamada completa o forzar mute/unmute periódicamente como parche.
+- Conservar sin cambios de significado la señal de actividad visual mientras se arregla el transporte; impedir que una señal vieja quede encendida tras cierre/reemplazo.
+
+**Aceptación propuesta:** voz base y conversación bidireccional; iniciar/parar/cambiar pantalla con sonido de aplicación sí/no; cámara sola y combinada en ambos órdenes; VAD/PTT, mute/deaf, ganancia cero/restaurada y rekey. Dobles verifican propiedad y secuencias; un ensayo autorizado con receptor verifica audibilidad sostenida. Si sólo hay muestras locales o fakes, registrar la mejora/instrumentación y mantener la causa física pendiente: no declarar C5 resuelto.
+
+#### T9 — Recuperación de voz y suspensión del PC (C3)
+
+**Archivos:** adaptador de energía en app/platform o módulo dedicado, coordinador de conexión/voz, protocolo de medios y voice_socket. No poner lógica de recuperación en el dibujo.
+
+- Añadir eventos tipados de suspensión/reanudación y procesarlos fuera de WndProc; sin bloquear ese callback con red. Windows diferencia aviso de reanudación automática y actividad de usuario posterior: coalescerlos por episodio. [Microsoft: PBT_APMRESUMEAUTOMATIC](https://learn.microsoft.com/en-us/windows/win32/power/pbt-apmresumeautomatic).
+- Conservar intención de llamada y estado de controles por cuenta/intento; al suspender cerrar transmisión y descartar timers/frames obsoletos sin enviarlos en lote al despertar. Un salto de reloj o un periodo sin frames, por sí solo, no prueba suspensión; registrar el origen del evento.
+- Conservar tipo de transporte y código de cierre numérico en MediaError/IPC. Definir tabla pura de recuperación: IO/heartbeat/4015 pueden ser candidatos; autorización, protocolo, expulsión, fin de llamada y límites terminales detienen la recuperación.
+- Separar Recovering de salida definitiva. Esperar Gateway y contexto válidos, seleccionar un modo y ejecutar un único intento. Resume v8 conserva seq_ack y espera op9; si el contexto anterior ya no es utilizable, preparar un único handshake fresco permitido, con credenciales de voz nuevas en RAM. No persistir tokens de voz ni extraerlos de una cuenta ajena.
+- Invalidar el socket viejo y observar fin/cancelación antes de reemplazarlo; conservar o reconstruir transporte nativo/DAVE según la validez real. No abrir dos capturas. Las confirmaciones retrasadas o mensajes DAVE repetidos no reactivan un epoch viejo.
+- No enviar VoiceState(channel=null) de salida voluntaria sólo por el fallo transitorio que se intenta recuperar. La salida real del usuario sí cancela todo; cambio de canal/cuenta/permisos también invalida la intención.
+- Audio/selecciones existentes sólo se rearman cuando el nuevo estado y cifrado se confirman. Si falla el intento, detenerse y conservar una explicación real. No prometer recuperación si el servidor finalizó la llamada.
+
+**Aceptación propuesta:** fixture de sleep/wake; avisos de reanudación duplicados; caída de IO sin suspensión; heartbeat sin ACK; Gateway aún recuperándose; op9 correcto; sesión inválida; 4014/4021/4022; salir/cambiar cuenta durante espera; timers vencidos, socket viejo bloqueado y callbacks tardíos. La caída transitoria recuperable no exige volver a entrar manualmente y usa como máximo el presupuesto acordado. Una prueba real de suspensión se realiza sólo dentro de un pedido que autorice ese efecto en el PC.
+
+#### T10 — Retorno de perfil con el contexto real (C4)
+
+**Archivos:** ui/chat, shell; validadores de navegación y sus pruebas.
+
+- Un único helper exige `&AppSnapshot` del frame. Pasarlo desde draw_profile_inner y revisar todos los callers de retorno. Retirar el wrapper que consulta/clona self.state durante el dibujo.
+- Mantener cuenta, generación, canal/vista de origen y validación de resultados tardíos. No quitar current_navigation_action ni el chequeo de permisos para conseguir que funcione.
+- Conservar borrador, scroll y caché; si el chat ya no está disponible, ofrecer una salida coherente con el estado vigente.
+
+**Aceptación propuesta:** recorrer el frame real de la aplicación, donde self.state está temporalmente en welcome: MD → barra lateral → perfil completo → volver al MD. Incluir clic desde fila de miembros, retorno a history/pins cuando corresponda, sin conexión, cambio de cuenta/canal y doble clic. La prueba no debe prellenar artificialmente self.state de modo que esconda el defecto.
+
+#### T11 — Actor y persona retirada en registros de grupo (C2)
+
+**Archivos:** ui/chat y helper compartido del registro; parser/modelo sólo si la evidencia muestra que falta un dato.
+
+- Fixture tipo 2 con autor A y destinatario B → «A eliminó a B del grupo».
+- Fixture de salida voluntaria de B → «B salió del grupo», según identidad acreditada.
+- Destinatario ausente/incompleto → texto neutral, sin inventar expulsor o persona expulsada.
+- Reutilizar datos de author/mentions disponibles y nombres visibles; comparar IDs, no texto. Mantener selección/copiar/enlaces y la misma semántica en chat, búsquedas, pins y registro RAM.
+
+**Aceptación propuesta:** nombres iguales con IDs distintos, nombres cambiados, múltiples menciones inesperadas, payload parcial y mensaje histórico. Aserciones de texto esperado independientes del helper, no el resultado del mismo helper usado como oráculo. No hacer red para renderizar.
+
+#### T12 — Círculo propio compartido (C6)
+
+**Archivos:** ui/voice, shell y helper de presentación de voz.
+
+- Factorizar el predicado ya utilizado por la llamada: participante propio del intento activo, speaking y guardas de mute/deaf/servidor. Consumirlo en ambas superficies usando el snapshot del frame.
+- Dibujar el mismo círculo alrededor del avatar del área de usuario, conservando el punto de presencia, menú y controles de la captura.
+- La señal se apaga en silencio, salida, pérdida de sesión/cifrado o reemplazo según el contrato común. No iniciar captura, detector o temporizador de audio adicional.
+
+**Aceptación propuesta:** dos círculos coinciden en el mismo snapshot, VAD/PTT, controles de silencio, navegar a otra conversación y minimizar/restaurar. Sin llamada no hay círculo de voz. La visibilidad del panel de llamada no gobierna la señal del área de usuario.
+
+#### T13 — Revisión integral con cambios condicionados (C7)
+
+**Objetivo:** completar la revisión del inventario por responsabilidades y cerrar las regresiones; optimizar sólo donde se demuestre necesidad. No es una autorización para una reescritura general.
+
+1. Recorrer entradas/salidas y propietarios de cada área de la matriz siguiente. Registrar por archivo: revisado, hallazgo, sin cambio justificado o pendiente, con evidencia. Separar tests/probes y vendor; no evaluar arquitectura por tamaño de archivo contando pruebas.
+2. Para cada refactor exigir un fallo alcanzable, trabajo duplicado significativo o una frontera de propiedad que impida corregir/verificar el caso. Las extracciones de ciclo de fuente, recuperación y contexto de navegación están justificadas por C1/C3/C4; no migrar todo UiAction/JSON a otro framework por uniformidad.
+3. Para cada optimización exigir escenario comparable, métrica, referencia antes/después y límite de regresión. Medir tiempo del actor/UI, p95 de frame, contadores de trabajo, colas, working set/comprometida y proceso de medios por separado. Ninguno se midió en esta planificación; no prometer ahorro de CPU/RAM.
+4. Revisar errores ignorados, esperas dentro del actor, I/O y locks de UI, cancelación y autoridad de snapshots. Priorizar stop_share, errores terminales y el contexto falso ya identificados; un unwrap o una cola por sí solos no son un fallo.
+5. Conservar límites/cachés y eliminar trabajo repetido antes de aumentar capacidad. Revisar dependencias según Cargo.lock/target/features; no actualizar paquetes ni alegar CVE por antigüedad. Una auditoría de avisos vigente requerirá fuentes primarias y alcance explícito.
+6. En una continuación de programación autorizada, usar comprobaciones proporcionales: formato de lo cambiado, check de todos los destinos, tests de la cadena UI→actor y de transiciones de medios/recuperación. Clippy o formato global no convierten cambios masivos en necesarios. No reejecutar suites que ya pasen sin cambios o dudas que lo justifiquen.
+7. Cerrar cada requisito con resultado y limitaciones; el micrófono exige evidencia de entrega real si se afirma solución audible. Mantener pendientes honestos si sólo se pudo instrumentar.
+
+### 9.6 Matriz transversal y criterio de intervención
+
+Esta matriz registra lo observado en la revisión de planificación y dirige T13. «Conservar» no certifica ausencia de todos los fallos.
+
+| Área | Evidencia revisada / controles existentes | Decisión actual |
+|---|---|---|
+| Estado/UI/navegación | Extracción temporal del snapshot, guardas de cuenta/generación; SharedList copy-on-write | Corregir la lectura de welcome y retirar clonación innecesaria; revisar callers. No reemplazar egui ni el modelo de snapshots |
+| Llamadas/fuentes/sonidos | Anuncio, intención y decoder repartidos; cierres con error retenido; sonidos por diferencia de snapshots | Centralizar transición terminal y su evento deduplicado; necesaria por C1 |
+| Audio/IPC/transporte | Puertas VAD/PTT/DAVE, sockets y colas acotados, diagnóstico saneado | Diagnóstico dirigido y recuperación con dueño; no relajar cifrado, mute ni límites |
+| Red y envíos | api.rs:211–237,463–523; outgoing.rs:1–61; Operations/RateLimits y nonce | Preservar tickets, confirmación e incertidumbre. Revisar integración de recuperación; sin cambio general de política |
+| Catálogos/presencia/miembros | observed_calls acotado; demanda visible; intención visual separada de política | Reutilizar y coordinar comprobación de fuente; no consultas por repintado ni backlog |
+| Texto/registros/Markdown | Tipo 2 ignora destinatario; markdown_cache con límites; presupuestos de borradores | Corregir semántica del registro. Mantener cachés/parser salvo medición o defecto adicional |
+| Imágenes/vídeo/memoria | resources: colas limitadas; ui/video.rs:5–29 usa último frame y reutiliza textura; core/video limita streams/bytes; MessageCache LRU acotada | No hay medición que justifique cambiar cuotas o prometer ahorro. Medir sólo un escenario relevante y preservar liberación/leases |
+| Adjuntos/subidas | Validación local de archivos/lotes y refresh dirigido get_once | Conservar borradores, permisos y límites. Revalidar límites del servicio si una implementación los modifica |
+| Autenticación/datos/RPC | storage DPAPI y escritura atómica; auth_job posee procesos; shared_state conserva campos; RPC verifica usuario/sesión | Mantener aislamiento y cancelación; ningún cambio general justificado por estos incidentes. No se declara auditoría de seguridad completa |
+| Actualizador/distribución | Staging con propietario, lease, allowlist y cuotas; manifiesto/asset verificados en entrega anterior | Mantener flujo y separación de variantes; publicar sólo si se solicita |
+| Pruebas/diagnóstico | Pruebas de registro comparan contra su propio helper; exportación de 256 entradas no contiene contadores de emisión | Añadir casos de actor/destinatario y frame real; mejorar evidencia útil, no cantidad de logs |
+
+### 9.7 Comprobaciones, recuperación y estado de entrega
+
+**Realizado aquí:** lectura y descodificación del JSON aportado; contraste de su build con el inventario de 0.11.0; revisión de código y documentos; inventario de los tres crates; consulta de documentación primaria de Discord/Microsoft; actualización de este plan y anexo. Las capturas y observaciones no se presentan como reproducciones del agente.
+
+**Pendiente de implementación:** T7–T13. No se ejecutaron compilación, tests, probes, cliente, dispositivos ni suspensión del equipo en esta ronda. La revisión exhaustiva por archivo y las mediciones de rendimiento son trabajo previsto en T13, no resultados existentes.
+
+Al implementar, conservar datos y configuración sin migraciones nuevas. Intenciones/episodios de recuperación son efímeros y pertenecen a una cuenta. Para revertir, identificar el cambio concreto y preservar los cambios ajenos; no restaurar una sesión ni borrar carpetas para ocultar errores. Un rollback visual no revierte operaciones ya aceptadas por el servicio.
+
+| Tanda | Estado al entregar esta planificación | Evidencia exigida para su cierre |
+|---|---|---|
+| T7 | Pendiente | Fin real/stopWatch/error diferenciados; sin tarjeta residual, sonido único y recuperación acotada |
+| T8 | Pendiente; continúa T2 | Tramo de pérdida localizado y prueba pertinente; audibilidad remota si se afirma C5 resuelto |
+| T9 | Pendiente | Recuperación y códigos terminales correctos; episodios coalescidos y cancelación segura |
+| T10 | Pendiente | Retorno desde el frame real, sin eliminar guardas ni perder origen |
+| T11 | Pendiente | Actor/destinatario y salida voluntaria diferenciados con expectativas independientes |
+| T12 | Pendiente | Misma señal y guardas en ambos círculos |
+| T13 | Inventario y revisión transversal realizados; revisión integral/mediciones pendientes | Cobertura por responsabilidad, sólo cambios fundamentados y resultados comprobados |
+
+No hay aclaración del usuario necesaria para entregar el plan. Si la implementación necesita un ensayo de cuenta/dispositivos o suspensión real que todavía no esté autorizado, primero debe preparar código, instrumentación y un procedimiento concreto y limitado; la solicitud de ensayo no sustituye el trabajo independiente. No se crea una aprobación artificial del plan.
+
+**Cierre del corte documental:** 172 huellas contrastadas sin cambios; el diagnóstico original conserva su SHA-256. Anexo JSON válido con 172 entradas, ambos documentos sin espacios finales y diff del plan sin errores de formato. HEAD se mantuvo en `3bee4c8c6a9e7442817302850286d170c56976ad`. Esta ronda sólo actualiza el plan existente y añade su inventario; conserva las modificaciones previas y no modifica código, manifiestos ni datos del producto.
+
+## 10. Ejecución de 0.12.0 — 6 de noviembre de 2026
+
+Los pedidos posteriores de ejecución y continuación autorizaron implementar las
+tandas con `notdiscord-programar`. Se mantuvieron variante estándar, rama y base,
+y se adoptó **Mediana → 0.12.0** por las correcciones funcionales y recuperación.
+`version.json` contiene esa versión con `release: null`. Los límites de cuentas,
+dispositivos, suspensión real e instalación permanecieron vigentes. Esta ronda
+prepara entrega local; la publicación verificada de 0.11.0 no anuncia 0.12.0.
+
+| Tanda | Estado de implementación y comprobación |
+|---|---|
+| T7 | Implementada; fixtures de autoridad de publicación, fin único, stopWatch, sustitución, fallos, cierre con dueño/ACK y conservación de voz/cámara correctas |
+| T8 | Instrumentación voluntaria acotada implementada y comprobada con fakes. **C5 abierto:** causa física y audibilidad remota sin acreditar |
+| T9 | Implementada; presupuesto compuesto, Resume/Fresh, códigos terminales, generaciones, join y energía coalescida comprobados con fixtures y loopback; servicio y suspensión real sin probar |
+| T10 | Implementada y fixture del snapshot extraído del frame correcta |
+| T11 | Implementada; expectativas independientes para actor/destinatario, metadatos incompletos y copia correctas |
+| T12 | Implementada; predicado compartido y fixture de ambos círculos correctos; sin ensayo físico de voz |
+| T13 | Revisión estática por responsabilidades de **174/174** archivos Rust de `src`; sin faltantes. Sólo correcciones justificadas; sin métricas CPU/RAM/p95 ni auditoría de dependencias/vendor |
+
+Cambios materiales de integración: Fresh libera todos los propietarios locales
+antes de esperar Gateway/Sends; el diagnóstico distingue hosts principales
+sucesivos aunque repitan token de captura; la parada propia conserva causa
+clasificada; el lease de preview sobrevive a timeout/cambio de selección. Se
+corrigió el E0425 de `preview.rs` y las dos rutas de preview se ejercitaron con
+PNG/RGBA sintético. Ninguno de estos cambios demuestra audibilidad remota.
+
+Pasaron **995 pruebas** de librerías del workspace (766 app, 176 core, 53 media),
+con cinco ignoradas existentes, y las **55** del addon diagnóstico que se solapan
+con media. Cinco fallos iniciales de acceso denegado a pipes/junctions desaparecieron
+al ejecutar las mismas fixtures en el contexto de Windows que necesitan. Los
+dos drivers N-API usan objetos falsos: ocho ciclos de publicación y 64 de
+receptor, callbacks tardíos, ambas API de preview y cierre de GoLive sin main;
+sin motor de terceros, dispositivos ni conexiones de red en esos probes.
+
+La [nota de implementación](llamadas-presencia-navegacion-0.12.0.md) y el
+[inventario T13](../evidence/t13-review-0.12.0.json) detallan decisiones, evidencia
+y límites. El corte de fuentes de producción se fija por SHA-256 de bytes de
+trabajo; no se presenta como commit ni certificación de ausencia de errores.
+La compilación de producción y el check release de todos los destinos pasaron;
+el paquete de 41 archivos se verificó, pasaron siete comprobaciones IPC sin
+inicialización nativa y se generó `NotDiscord-Setup-0.12.0.exe` de 119095983 bytes.
+El [acta local](../evidence/delivery-0.12.0-local.json) fija hashes y límites.
+Los metadatos pendientes coinciden con Setup y el ejecutable; `release` sigue
+siendo null y no se verificó su URL futura. No se ejecutó Setup ni se hizo
+commit, push o publicación. No se alteraron instalación, datos ni otras
+variantes, ni se invocó una aprobación nueva para el trabajo ya autorizado.

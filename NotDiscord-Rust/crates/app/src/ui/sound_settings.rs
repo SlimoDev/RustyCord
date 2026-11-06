@@ -154,6 +154,19 @@ impl NotDiscordUi {
         let Some(event) = SoundEvent::parse(s(data, "event")) else {
             return;
         };
+        if event==SoundEvent::StreamEnded {
+            let account=s(data,"account_id");let attempt=data["voice_attempt"].as_u64().unwrap_or(0);let publication=data["publication"].as_u64().unwrap_or(0);
+            if account.is_empty()||publication==0||attempt==0
+                ||self.state.current_user.as_ref().map(|p|p.id.as_str())!=Some(account)
+                ||data["session_generation"].as_u64()!=Some(self.state.notification_generation)
+                ||attempt!=self.state.call_instance_id {return;}
+            let key=(account.to_owned(),self.state.notification_generation,attempt,publication);
+            let duplicate=self.ctx.data_mut(|data|{
+                let seen=data.get_temp_mut_or_default::<VecDeque<(String,u64,u64,u64)>>(egui::Id::new("ended-screen-publications"));
+                if seen.contains(&key){return true;}seen.push_back(key);while seen.len()>256{seen.pop_front();}false
+            });
+            if duplicate{return;}
+        }
         if matches!(event, SoundEvent::Message | SoundEvent::Mention) {
             if data["session_generation"].as_u64().unwrap_or(0) != self.state.notification_generation { return; }
             if data["notification_epoch"].as_u64().unwrap_or(0) != self.state.notification_epoch {
@@ -201,6 +214,7 @@ impl NotDiscordUi {
             || next.demo
             || !old.signed_in
             || !next.signed_in
+            || old.notification_generation != next.notification_generation
             || old.current_user.as_ref().map(|u| &u.id) != next.current_user.as_ref().map(|u| &u.id)
         {
             self.sounds.stop_ring();
@@ -231,16 +245,15 @@ impl NotDiscordUi {
                 SoundEvent::Undeafen
             });
         }
-        if old.screen_sharing != next.screen_sharing {
-            events.push(if next.screen_sharing {
-                SoundEvent::StreamStarted
-            } else {
-                SoundEvent::StreamEnded
-            });
+        if !old.screen_sharing && next.screen_sharing
+            && old.call_instance_id == next.call_instance_id
+            && old.call_channel_id == next.call_channel_id {
+            events.push(SoundEvent::StreamStarted);
         }
         if old.voice_connected
             && next.voice_connected
             && old.call_channel_id == next.call_channel_id
+            && old.call_instance_id == next.call_instance_id
         {
             let moving = old.call_move_version != next.call_move_version;
             if !moving
@@ -267,12 +280,8 @@ impl NotDiscordUi {
                     .iter()
                     .find(|p| p.user.id == participant.user.id)
                 {
-                    if previous.screen_sharing != participant.screen_sharing {
-                        events.push(if participant.screen_sharing {
-                            SoundEvent::StreamStarted
-                        } else {
-                            SoundEvent::StreamEnded
-                        });
+                    if !previous.screen_sharing && participant.screen_sharing {
+                        events.push(SoundEvent::StreamStarted);
                     }
                 }
             }
@@ -741,6 +750,155 @@ mod tests {
             app.sounds.observed,
             vec![SoundEvent::Message, SoundEvent::Mention]
         );
+    }
+    fn active_stream() -> AppSnapshot {
+        let mut state = initial();
+        state.voice_connected = true;
+        state.call_channel_id = "50".into();
+        state.call_instance_id = 9;
+        state.call_participants = vec![CallParticipant {
+            user: Person { id: "2".into(), ..Default::default() },
+            screen_sharing: true,
+            ..Default::default()
+        }];
+        state
+    }
+    fn stream_end_packet(account: &str, generation: u64, attempt: u64, publication: u64) -> Value {
+        serde_json::json!({"event":"stream_ended","account_id":account,
+            "session_generation":generation,"voice_attempt":attempt,"publication":publication})
+    }
+    #[test]
+    fn stream_end_requires_one_semantic_publication_event_instead_of_a_snapshot_difference() {
+        let (mut app, _, _) = super::super::tests::harness();
+        app.state = active_stream();
+        let mut stopped = app.state.clone();
+        stopped.call_participants[0].screen_sharing = false;
+        app.observe_sound_snapshot(&stopped);
+        app.state = stopped.clone();
+        app.observe_sound_snapshot(&stopped);
+        assert!(app.sounds.observed.is_empty(), "a decoder/offer snapshot difference is not a semantic publisher end");
+        let ended = stream_end_packet("1", 7, 9, 17);
+        sound_frame(&mut app, true, false, &[ended.clone(), ended.clone()]);
+        sound_frame(&mut app, false, true, &[ended]);
+        assert_eq!(app.sounds.observed, [SoundEvent::StreamEnded]);
+        sound_frame(&mut app, true, false, &[stream_end_packet("1", 7, 9, 18)]);
+        assert_eq!(app.sounds.observed, [SoundEvent::StreamEnded, SoundEvent::StreamEnded]);
+    }
+    #[test]
+    fn semantic_stream_end_obeys_event_configuration_and_preserves_active_call_sound_policy_in_dnd() {
+        let (mut app, _, _) = super::super::tests::harness();
+        app.state = active_stream();
+        app.state.self_presence = "dnd".into();
+        let mut setting = app.sound_preferences.setting(SoundEvent::StreamEnded);
+        setting.enabled = false;
+        app.sound_preferences.events.insert(SoundEvent::StreamEnded, setting.clone());
+        sound_frame(&mut app, false, true, &[stream_end_packet("1", 7, 9, 1)]);
+        assert!(app.sounds.observed.is_empty());
+        setting.enabled = true;
+        app.sound_preferences.events.insert(SoundEvent::StreamEnded, setting.clone());
+        sound_frame(&mut app, false, true, &[stream_end_packet("1", 7, 9, 1), stream_end_packet("1", 7, 9, 2)]);
+        assert_eq!(app.sounds.observed, [SoundEvent::StreamEnded], "reenabling must not replay a previously handled end");
+        setting.volume = 0.;
+        app.sound_preferences.events.insert(SoundEvent::StreamEnded, setting.clone());
+        sound_frame(&mut app, false, true, &[stream_end_packet("1", 7, 9, 3)]);
+        assert_eq!(app.sounds.observed.len(), 1);
+        setting.volume = 1.;
+        app.sound_preferences.events.insert(SoundEvent::StreamEnded, setting);
+        sound_frame(&mut app, false, true, &[stream_end_packet("1", 7, 9, 3), stream_end_packet("1", 7, 9, 4)]);
+        assert_eq!(app.sounds.observed, [SoundEvent::StreamEnded, SoundEvent::StreamEnded]);
+        // DND silences notifications and rings, while configured effects of an
+        // already active call keep their existing policy.
+        sound_frame(&mut app, false, true, &[sound_packet("message", "30", "101")]);
+        assert_eq!(app.sounds.observed.len(), 2);
+    }
+    #[test]
+    fn queued_stream_ends_cannot_cross_account_generation_or_voice_attempt_and_rejected_packets_do_not_poison_dedup() {
+        let (mut app, updates, _) = super::super::tests::harness();
+        app.state = active_stream();
+        let malformed = [
+            serde_json::json!({"event":"stream_ended"}),
+            stream_end_packet("2", 7, 9, 10), stream_end_packet("1", 8, 9, 10),
+            stream_end_packet("1", 7, 8, 10), stream_end_packet("1", 7, 9, 0),
+        ];
+        sound_frame(&mut app, false, false, &malformed);
+        assert!(app.sounds.observed.is_empty());
+        sound_frame(&mut app, false, false, &[stream_end_packet("1", 7, 9, 10)]);
+        assert_eq!(app.sounds.observed, [SoundEvent::StreamEnded]);
+        for (account, generation, attempt, previous) in [
+            ("2", 8, 9, stream_end_packet("1", 7, 9, 11)),
+            ("2", 9, 9, stream_end_packet("2", 8, 9, 11)),
+            ("2", 9, 10, stream_end_packet("2", 9, 9, 11)),
+        ] {
+            let before = app.sounds.observed.len();
+            let mut replacement = app.state.clone();
+            replacement.current_user.as_mut().unwrap().id = account.into();
+            replacement.notification_generation = generation;
+            replacement.call_instance_id = attempt;
+            app.latest_snapshot = Some(std::sync::Arc::new(std::sync::Mutex::new(Some(replacement))));
+            updates.send(UiUpdate::Data("sound".into(), previous)).unwrap();
+            let ctx = app.ctx.clone();
+            let _ = ctx.run(egui::RawInput::default(), |ctx| app.process_updates(ctx));
+            assert_eq!(app.sounds.observed.len(), before, "coalesced replacement must precede queued event validation");
+            sound_frame(&mut app, false, false, &[stream_end_packet(account, generation, attempt, 10)]);
+            assert_eq!(app.sounds.observed.len(), before + 1, "publication numbers are independent in each owner/attempt");
+        }
+    }
+    #[test]
+    fn a_screen_publisher_leaving_plays_only_configurable_user_left_with_or_without_a_coalesced_screen_stop() {
+        for presence in ["online", "dnd"] {
+            for stop_first in [false, true] {
+                let (mut app, _, _) = super::super::tests::harness();
+                app.state = active_stream();
+                app.state.self_presence = presence.into();
+                if stop_first {
+                    let mut stopped = app.state.clone(); stopped.call_participants[0].screen_sharing = false;
+                    app.observe_sound_snapshot(&stopped); app.state = stopped;
+                    assert!(app.sounds.observed.is_empty());
+                }
+                let mut departed = app.state.clone(); departed.call_participants.clear();
+                app.observe_sound_snapshot(&departed); app.state = departed.clone();
+                app.observe_sound_snapshot(&departed);
+                assert_eq!(app.sounds.observed, [SoundEvent::UserLeft], "presence={presence}, stop_first={stop_first}");
+                app.sounds.observed.clear();
+                app.state = active_stream(); app.state.self_presence = presence.into();
+                let mut setting = app.sound_preferences.setting(SoundEvent::UserLeft); setting.enabled = false;
+                app.sound_preferences.events.insert(SoundEvent::UserLeft, setting);
+                app.observe_sound_snapshot(&departed);
+                assert!(app.sounds.observed.is_empty(), "the existing UserLeft preference remains effective");
+            }
+        }
+    }
+    #[test]
+    fn snapshot_participant_and_source_differences_cannot_cross_a_relogin_or_replaced_call_attempt() {
+        let (mut app, _, _) = super::super::tests::harness();
+        for relogin in [false, true] {
+            app.state = active_stream();
+            let mut replacement = app.state.clone();
+            if relogin { replacement.notification_generation += 1; }
+            else { replacement.call_instance_id = 10; }
+            replacement.call_participants.clear();
+            replacement.screen_sharing = true;
+            app.observe_sound_snapshot(&replacement);
+            assert!(app.sounds.observed.is_empty(), "relogin={relogin}: another session's roster/source is not a transition in this call");
+        }
+        app.state = active_stream();
+        let mut within_attempt = app.state.clone(); within_attempt.call_participants.clear();
+        app.observe_sound_snapshot(&within_attempt);
+        assert_eq!(app.sounds.observed, [SoundEvent::UserLeft]);
+        app.sounds.observed.clear();
+        let mut joined = active_stream(); joined.call_instance_id = 10;
+        app.state = active_stream(); app.state.voice_connected = false;
+        app.observe_sound_snapshot(&joined);
+        assert_eq!(app.sounds.observed, [SoundEvent::VoiceConnected]);
+        app.sounds.observed.clear();
+        app.state = joined.clone();
+        let mut left = joined.clone(); left.voice_connected = false; left.call_instance_id = 0;
+        app.observe_sound_snapshot(&left);
+        assert_eq!(app.sounds.observed, [SoundEvent::VoiceDisconnected]);
+        app.sounds.observed.clear();
+        app.state = active_stream(); joined.call_channel_id = "51".into();
+        app.observe_sound_snapshot(&joined);
+        assert_eq!(app.sounds.observed, [SoundEvent::UserMove]);
     }
     #[test]
     fn snapshot_events_are_transitions_and_seed_participants_are_silent() {

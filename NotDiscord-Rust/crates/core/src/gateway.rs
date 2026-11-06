@@ -27,6 +27,13 @@ use zeroize::Zeroizing;
 
 #[path = "gateway_runtime.rs"]
 mod runtime;
+#[path = "shared_recovery.rs"]
+mod shared_recovery;
+pub use shared_recovery::{RecoveryPart, RecoveryPermit};
+use shared_recovery::RecoveryBudget;
+#[path = "gateway_power.rs"]
+mod gateway_power;
+use gateway_power::PowerSignal;
 
 const EVENT_DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -51,6 +58,8 @@ pub struct ConnectionChange {
 struct RecoverySignal {
     requested: AtomicBool,
     wake: Notify,
+    budget: Arc<RecoveryBudget>,
+    power: PowerSignal,
 }
 impl RecoverySignal {
     fn request(&self) {
@@ -189,6 +198,8 @@ impl GatewayHandle {
         let gate = safety.clone();
         let game_presence = Arc::new(GamePresencePolicy::default());
         let policy = game_presence.clone();
+        let recovery = Arc::new(RecoverySignal::default());
+        recovery.budget.gateway_ready(Instant::now());
         let task = tokio::spawn(async move {
             loop {
                 let envelope = tokio::select! {
@@ -209,7 +220,7 @@ impl GatewayHandle {
                 if let Some(done)=envelope.done { let _=done.send(result); }
             }
         });
-        (Self {inner:Arc::new(Inner {commands,cancel,ready:Arc::new(AtomicBool::new(true)),safety,game_presence,recovery:Default::default()})},values,task)
+        (Self {inner:Arc::new(Inner {commands,cancel,ready:Arc::new(AtomicBool::new(true)),safety,game_presence,recovery})},values,task)
     }
     /// Admit a desired-state update without waiting for its wire flush. Only
     /// presence and subscriptions are coalesced; media mutations retain order.
@@ -259,7 +270,7 @@ impl GatewayHandle {
     }
     async fn send_owned(&self, command: GatewayCommand, expected_epoch: Option<u64>, wait_for_completion: bool) -> Result<(), ServiceError> {
         self.inner.safety.check()?;
-        if !self.inner.ready.load(Ordering::Acquire) {
+        if !self.is_ready() {
             return Err(ServiceError::new("La conexión aún no está preparada."));
         }
         let (tx, rx) = oneshot::channel();
@@ -275,6 +286,7 @@ impl GatewayHandle {
         }
     }
     pub fn stop(&self) {
+        self.inner.recovery.budget.gateway_lost(Instant::now());
         self.inner.cancel.cancel()
     }
     /// Ask the session owner for one attempt after it stopped. Its resume state,
@@ -282,8 +294,27 @@ impl GatewayHandle {
     pub fn request_recovery(&self) {
         self.inner.recovery.request()
     }
+    /// Invalidate this actual transport on a positive Windows suspend event.
+    /// The existing owner retains its Resume state and shared attempt budget.
+    pub fn suspend_for_power(&self) {
+        self.inner.recovery.power.suspend(&self.inner.ready);
+    }
+    pub fn resume_after_power(&self) {
+        self.inner.recovery.power.resume();
+    }
+    /// Voice and the previously selected viewer are serial substeps of the
+    /// same episode as Gateway recovery, never independent automatic budgets.
+    pub fn try_voice_recovery(&self) -> Option<RecoveryPermit> {
+        self.is_ready().then(|| self.inner.recovery.budget.try_part(RecoveryPart::Voice, Instant::now())).flatten()
+    }
+    pub fn try_view_recovery(&self) -> Option<RecoveryPermit> {
+        self.is_ready().then(|| self.inner.recovery.budget.try_part(RecoveryPart::Viewer, Instant::now())).flatten()
+    }
+    pub fn recovery_wait(&self) -> Duration {
+        self.inner.recovery.budget.wait(Instant::now())
+    }
     pub fn is_ready(&self) -> bool {
-        self.inner.ready.load(Ordering::Acquire)
+        !self.inner.cancel.is_cancelled() && self.inner.recovery.power.is_ready(&self.inner.ready)
             && self.inner.safety.state() == SafetyState::Allowed
     }
 }

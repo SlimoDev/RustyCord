@@ -144,18 +144,26 @@ fn value_bytes(value: &Value, depth: usize) -> usize {
 fn event_bytes(event: &Event) -> usize {
     let payload = match event {
         Event::Request(value) => value_bytes(value, 0),
-        Event::WsFrame(_, frame) => frame.bytes.len().saturating_add(value_bytes(&frame.data, 0)),
+        Event::WsFrame(_, _, frame) => frame.bytes.len().saturating_add(value_bytes(&frame.data, 0)),
         Event::Callback(tag, values) => {
-            let tag_bytes = match tag { Tag::Modes(_, a, b) => value_bytes(a, 0).saturating_add(value_bytes(b, 0)),
-                Tag::Codecs(_, value) => value_bytes(value, 0),
-                Tag::Inventory { request, part } | Tag::Configure { request, part } => value_bytes(request, 0).saturating_add(part.len()),
-                Tag::Stats { request, .. } => value_bytes(request, 0), _ => 0 };
+            let tag_bytes = tag_bytes(tag, 0);
             values.iter().fold(tag_bytes, |bytes, value| bytes.saturating_add(value_bytes(value, 0)))
         }
-        Event::WsError(_, _, error) => error.message.len(),
+        Event::WsError(_, _, error) => error.error.message.len(),
         Event::PreviewResult { source, .. } => source.len(), _ => 0,
     };
     std::mem::size_of::<Event>().saturating_add(payload).max(1)
+}
+fn tag_bytes(tag: &Tag, depth: usize) -> usize {
+    if depth > 64 { return CONTROL_BYTES + 1; }
+    match tag {
+        Tag::Modes(_, a, b) => value_bytes(a, 0).saturating_add(value_bytes(b, 0)),
+        Tag::Codecs(_, value) => value_bytes(value, 0),
+        Tag::Inventory { request, part } | Tag::Configure { request, part } => value_bytes(request, 0).saturating_add(part.len()),
+        Tag::Stats { request, .. } => value_bytes(request, 0),
+        Tag::Applied(_, inner) => std::mem::size_of::<Tag>().saturating_add(tag_bytes(inner, depth + 1)),
+        _ => 0,
+    }
 }
 
 pub(super) fn callback_delivery_error() -> MediaError {
@@ -169,12 +177,12 @@ mod tests {
     fn control_budget_keeps_inflight_reservations_and_telemetry_coalesces() {
         let (output, _) = mpsc::channel();
         let mailbox = Mailbox::new(Arc::new(AtomicBool::new(false)), output);
-        for id in 0..CONTROL_MESSAGES { assert!(mailbox.push(Event::WsOpen(id as u64)).is_ok()); }
-        assert!(mailbox.push(Event::WsOpen(999)).is_err());
+        for id in 0..CONTROL_MESSAGES { assert!(mailbox.push(Event::WsOpen(id as u64, 0)).is_ok()); }
+        assert!(mailbox.push(Event::WsOpen(999, 0)).is_err());
         let delivery = mailbox.pop().unwrap();
-        assert!(mailbox.push(Event::WsOpen(999)).is_err());
+        assert!(mailbox.push(Event::WsOpen(999, 0)).is_err());
         mailbox.complete(delivery.bytes);
-        assert!(mailbox.push(Event::WsOpen(999)).is_ok());
+        assert!(mailbox.push(Event::WsOpen(999, 0)).is_ok());
         assert!(mailbox.push(Event::Tick).is_ok()); assert!(mailbox.push(Event::Tick).is_ok());
         assert!(matches!(mailbox.pop().unwrap().event, Event::Tick));
         assert_eq!(mailbox.coalesced.load(Ordering::Relaxed), 1);

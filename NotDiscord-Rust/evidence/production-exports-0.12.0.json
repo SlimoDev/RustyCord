@@ -1,0 +1,16 @@
+{
+  "Success": true,
+  "ProductionAddon": true,
+  "ProtocolVersion": 1,
+  "Exports": [
+    "protocolVersion",
+    "run",
+    "sanitizeStats",
+    "validateEndpoint"
+  ],
+  "DiagnosticExportsPresent": false,
+  "NativeEngineLoaded": false,
+  "Accounts": false,
+  "Devices": false,
+  "SHA256": "5671a71f3af9592306bb2f0f09250e3b64c2550aceff953d7b72a87415eacdde"
+}

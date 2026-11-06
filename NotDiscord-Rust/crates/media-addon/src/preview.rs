@@ -8,8 +8,67 @@ pub(super) struct ScreenPreview {
     source: String,
     native: String,
     alive: Arc<AtomicBool>,
-    next: Instant,
-    pending: Option<Instant>,
+}
+#[derive(Default)]
+pub(super) struct Pipeline {
+    demand: Option<Demand>,
+    lease: Option<Query>,
+    sequence: u64,
+}
+struct Demand { token: u64, next: Instant, failed: bool }
+struct Query { id: u64, token: u64, started: Instant, expired: bool }
+#[derive(Debug, PartialEq, Eq)]
+enum PreviewAction { Idle, Query { id: u64, token: u64 }, Expired { token: u64 } }
+struct Completion { token: u64, deliver: bool }
+impl Pipeline {
+    fn select(&mut self, token: u64, now: Instant) {
+        self.demand = Some(Demand { token, next: now, failed: false });
+    }
+    fn cancel(&mut self) { self.demand = None; }
+    fn tick(&mut self, now: Instant) -> PreviewAction {
+        if let Some(query) = self.lease.as_mut() {
+            if !query.expired && now.saturating_duration_since(query.started) >= Duration::from_secs(5) {
+                query.expired = true;
+                if let Some(demand) = self.demand.as_mut().filter(|demand| demand.token == query.token) { demand.failed = true; }
+                return PreviewAction::Expired { token: query.token };
+            }
+            return PreviewAction::Idle;
+        }
+        let Some(demand) = self.demand.as_mut().filter(|demand| !demand.failed && now >= demand.next) else { return PreviewAction::Idle; };
+        let Some(id) = self.sequence.checked_add(1) else {
+            demand.failed = true;
+            return PreviewAction::Expired { token: demand.token };
+        };
+        self.sequence = id;
+        self.lease = Some(Query { id, token: demand.token, started: now, expired: false });
+        PreviewAction::Query { id, token: demand.token }
+    }
+    fn can_deliver(&self, id: u64, now: Instant) -> bool {
+        self.lease.as_ref().is_some_and(|query| query.id == id && !query.expired
+            && now.saturating_duration_since(query.started) < Duration::from_secs(5)
+            && self.demand.as_ref().is_some_and(|demand| demand.token == query.token && !demand.failed))
+    }
+    /// Only a real callback/Promise settlement releases its exact lease. A
+    /// timeout, cancellation or a newer selection never asserts completion.
+    fn complete(&mut self, id: u64, now: Instant, ok: bool) -> Option<Completion> {
+        if !self.lease.as_ref().is_some_and(|query| query.id == id) { return None; }
+        let query = self.lease.take().unwrap();
+        let current = self.demand.as_ref().is_some_and(|demand| demand.token == query.token);
+        let deliver = ok && current && !query.expired && now.saturating_duration_since(query.started) < Duration::from_secs(5)
+            && self.demand.as_ref().is_some_and(|demand| !demand.failed);
+        if let Some(demand) = self.demand.as_mut().filter(|demand| demand.token == query.token) {
+            demand.failed |= query.expired || now.saturating_duration_since(query.started) >= Duration::from_secs(5);
+            demand.next = now + Duration::from_millis(750);
+        }
+        Some(Completion { token: query.token, deliver })
+    }
+    fn fail_unknown(&mut self, id: u64) -> Option<u64> {
+        let query = self.lease.as_mut().filter(|query| query.id == id)?;
+        query.expired = true;
+        if let Some(demand) = self.demand.as_mut().filter(|demand| demand.token == query.token) { demand.failed = true; }
+        Some(query.token)
+    }
+    fn failed(&self, token: u64) -> bool { self.demand.as_ref().is_some_and(|demand| demand.token == token && demand.failed) }
 }
 fn preview_pixels(url: &str) -> Option<(u32, u32, Vec<u8>)> {
     let data = url
@@ -61,6 +120,7 @@ fn selected_url(env: Env, list: JsObject, source: &str) -> Option<String> {
 }
 impl Host {
     pub(crate) fn stop_screen_preview(&mut self) {
+        self.video.preview_pipeline.borrow_mut().cancel();
         if let Some(preview) = self.video.screen_preview.take() {
             preview.alive.store(false, Ordering::Release);
             let _ = self.video_detach(&preview.native, true);
@@ -132,9 +192,8 @@ impl Host {
             source: selection.source,
             native,
             alive: Arc::new(AtomicBool::new(true)),
-            next: Instant::now(),
-            pending: None,
         });
+        self.video.preview_pipeline.borrow_mut().select(token, Instant::now());
         self.preview_tick();
         #[cfg(feature = "native-probe")]
         trace("preview-start-return");
@@ -149,8 +208,7 @@ impl Host {
         else {
             return;
         };
-        preview.pending = None;
-        preview.next = Instant::now() + Duration::from_millis(750);
+        if !ok && self.video.preview_pipeline.borrow().failed(token) { preview.alive.store(false, Ordering::Release); }
         let native = preview.native.clone();
         if let Some(source) = self.video.sources.get(&native) {
             let mut value = metadata(source, ok, if ok { "active" } else { "error" });
@@ -162,32 +220,34 @@ impl Host {
         }
     }
     pub(crate) fn preview_tick(&mut self) {
-        let Some(preview) = self.video.screen_preview.as_mut() else {
+        self.preview_tick_at(Instant::now());
+    }
+    pub(crate) fn preview_tick_at(&mut self, now: Instant) {
+        let action = self.video.preview_pipeline.borrow_mut().tick(now);
+        if let PreviewAction::Expired { token } = action {
+            if let Some(preview) = self.video.screen_preview.as_ref().filter(|preview| preview.token == token) {
+                let source = preview.source.clone();
+                self.preview_result(token, &source, false);
+            }
+            return;
+        }
+        let PreviewAction::Query { id: query, token } = action else { return; };
+        let Some(preview) = self.video.screen_preview.as_mut().filter(|preview| preview.token == token) else {
+            self.video.preview_pipeline.borrow_mut().complete(query, now, false);
             return;
         };
-        let now = Instant::now();
-        if preview
-            .pending
-            .is_some_and(|at| now.duration_since(at) > Duration::from_secs(5))
-        {
-            let token = preview.token;
-            let source = preview.source.clone();
-            self.preview_result(token, &source, false);
-            return;
-        }
-        if preview.pending.is_some() || now < preview.next {
-            return;
-        }
-        preview.pending = Some(now);
-        let token = preview.token;
         let source_id = preview.source.clone();
         let alive = preview.alive.clone();
         let Some(source) = self.video.sources.get(&preview.native).cloned() else {
+            let mut pipeline = self.video.preview_pipeline.borrow_mut();
+            pipeline.fail_unknown(query);
+            pipeline.complete(query, now, false);
             return;
         };
         let output = self.video.output.clone();
         let sender = self.sender.clone();
         let result_source = source_id.clone();
+        let pipeline = self.video.preview_pipeline.clone();
         #[cfg(feature = "native-probe")]
         trace("preview-callback-before");
         let callback =
@@ -225,7 +285,7 @@ impl Host {
                             }
                         }
                     }
-                    let pixels = if alive.load(Ordering::Acquire) {
+                    let pixels = if alive.load(Ordering::Acquire) && pipeline.borrow().can_deliver(query, Instant::now()) {
                         ctx.get::<JsObject>(0)
                             .ok()
                             .and_then(|list| selected_url(*ctx.env, list, &source.source_id))
@@ -233,9 +293,9 @@ impl Host {
                     } else {
                         None
                     };
-                    let ok = pixels.is_some();
-                    if let Some((width, height, rgba)) = pixels {
-                        if alive.load(Ordering::Acquire) {
+                    let completion = pipeline.borrow_mut().complete(query, Instant::now(), pixels.is_some());
+                    if let Some(completion) = completion {
+                        if completion.deliver && alive.load(Ordering::Acquire) && let Some((width, height, rgba)) = pixels {
                             output.publish(VideoFrame {
                                 subscription_id: source.id,
                                 sequence: source.sequence.fetch_add(1, Ordering::Relaxed) + 1,
@@ -244,19 +304,16 @@ impl Host {
                                 rgba,
                             });
                         }
+                        let _ = sender.call(
+                            Event::PreviewResult { token: completion.token, source: result_source.clone(), ok: completion.deliver },
+                            ThreadsafeFunctionCallMode::NonBlocking,
+                        );
                     }
-                    let _ = sender.call(
-                        Event::PreviewResult {
-                            token,
-                            source: result_source.clone(),
-                            ok,
-                        },
-                        ThreadsafeFunctionCallMode::NonBlocking,
-                    );
                     ctx.env.get_undefined()
                 });
         #[cfg(feature = "native-probe")]
         trace("preview-callback-after");
+        let capture_invoked = std::cell::Cell::new(false);
         let result = callback
             .map_err(|_| MediaError::internal())
             .and_then(|callback| {
@@ -287,21 +344,20 @@ impl Host {
                     // The shipped engine exposes this as a Promise of source[];
                     // only the explicitly selected window is captured here.
                     let handle = source_id.split(':').nth(1).unwrap_or("");
+                    let args = [self.json(json!(handle))?, self.json(json!(640))?, self.json(json!(360))?];
+                    capture_invoked.set(true);
                     let promise = native::call(
                         self.env,
                         &engine,
                         "getSingleWindowPreview",
-                        &[
-                            self.json(json!(handle))?,
-                            self.json(json!(640))?,
-                            self.json(json!(360))?,
-                        ],
+                        &args,
                     )?;
                     let promise = promise
                         .coerce_to_object()
                         .map_err(|_| MediaError::internal())?;
                     let sender = self.sender.clone();
                     let failed_source = source_id.clone();
+                    let failure_pipeline = self.video.preview_pipeline.clone();
                     let failure = self
                         .env
                         .create_function_from_closure("selectedPreviewRejected", move |ctx| {
@@ -321,14 +377,12 @@ impl Host {
                                     });
                                 eprintln!("rust-preview:rejected:reason={reason:?}");
                             }
-                            let _ = sender.call(
-                                Event::PreviewResult {
-                                    token,
-                                    source: failed_source.clone(),
-                                    ok: false,
-                                },
-                                ThreadsafeFunctionCallMode::NonBlocking,
-                            );
+                            if let Some(completion) = failure_pipeline.borrow_mut().complete(query, Instant::now(), false) {
+                                let _ = sender.call(
+                                    Event::PreviewResult { token: completion.token, source: failed_source.clone(), ok: false },
+                                    ThreadsafeFunctionCallMode::NonBlocking,
+                                );
+                            }
                             ctx.env.get_undefined()
                         })
                         .map_err(|_| MediaError::internal())?;
@@ -345,27 +399,71 @@ impl Host {
                     } else {
                         "getScreenPreviews"
                     };
+                    let args = [self.json(json!(640))?, self.json(json!(360))?, callback.into_unknown()];
+                    capture_invoked.set(true);
                     native::call(
                         self.env,
                         &engine,
                         method,
-                        &[
-                            self.json(json!(640))?,
-                            self.json(json!(360))?,
-                            callback.into_unknown(),
-                        ],
+                        &args,
                     )
                     .map(|_| ())
                 }
             });
         if result.is_err() {
-            self.preview_result(token, &source_id, false);
+            let failed = if capture_invoked.get() {
+                self.video.preview_pipeline.borrow_mut().fail_unknown(query).is_some()
+            } else {
+                self.video.preview_pipeline.borrow_mut().complete(query, Instant::now(), false).is_some()
+            };
+            if failed { self.preview_result(token, &source_id, false); }
         }
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn query(pipeline: &mut Pipeline, now: Instant) -> (u64, u64) {
+        match pipeline.tick(now) { PreviewAction::Query { id, token } => (id, token), other => panic!("Expected query, got {other:?}") }
+    }
+    #[test]
+    fn hung_preview_times_out_once_and_replacement_waits_for_exact_old_completion() {
+        let now = Instant::now(); let mut pipeline = Pipeline::default();
+        pipeline.select(1, now); let (old, _) = query(&mut pipeline, now);
+        assert_eq!(pipeline.tick(now + Duration::from_millis(4999)), PreviewAction::Idle);
+        assert_eq!(pipeline.tick(now + Duration::from_secs(5)), PreviewAction::Expired { token: 1 });
+        for elapsed in [6, 10, 60, 600] { assert_eq!(pipeline.tick(now + Duration::from_secs(elapsed)), PreviewAction::Idle); }
+        pipeline.select(2, now + Duration::from_secs(600));
+        assert_eq!(pipeline.tick(now + Duration::from_secs(600)), PreviewAction::Idle);
+        assert!(pipeline.complete(old + 1, now + Duration::from_secs(601), true).is_none());
+        assert!(!pipeline.can_deliver(old, now + Duration::from_secs(601)));
+        assert!(!pipeline.complete(old, now + Duration::from_secs(601), true).unwrap().deliver);
+        let (second, token) = query(&mut pipeline, now + Duration::from_secs(601)); assert_eq!(token, 2);
+        assert!(pipeline.complete(old, now + Duration::from_secs(601), true).is_none());
+        pipeline.cancel(); pipeline.select(3, now + Duration::from_secs(601));
+        assert_eq!(pipeline.tick(now + Duration::from_secs(601)), PreviewAction::Idle);
+        assert!(!pipeline.complete(second, now + Duration::from_secs(601), true).unwrap().deliver);
+        let (current, token) = query(&mut pipeline, now + Duration::from_secs(601)); assert_eq!(token, 3);
+        assert!(pipeline.complete(current, now + Duration::from_secs(601), true).unwrap().deliver);
+        assert_eq!(pipeline.tick(now + Duration::from_secs(601) + Duration::from_millis(749)), PreviewAction::Idle);
+        assert!(matches!(pipeline.tick(now + Duration::from_secs(601) + Duration::from_millis(750)), PreviewAction::Query { token: 3, .. }));
+    }
+    #[test]
+    fn late_completion_without_a_tick_is_terminal_but_settled_empty_frames_keep_normal_refresh() {
+        let now = Instant::now(); let mut pipeline = Pipeline::default(); pipeline.select(1, now);
+        let (id, _) = query(&mut pipeline, now);
+        assert!(!pipeline.complete(id, now + Duration::from_secs(5), true).unwrap().deliver);
+        assert!(pipeline.failed(1)); assert_eq!(pipeline.tick(now + Duration::from_secs(60)), PreviewAction::Idle);
+        pipeline.select(2, now + Duration::from_secs(60)); let (id, _) = query(&mut pipeline, now + Duration::from_secs(60));
+        assert!(!pipeline.complete(id, now + Duration::from_secs(60), false).unwrap().deliver);
+        assert!(!pipeline.failed(2));
+        assert_eq!(pipeline.tick(now + Duration::from_secs(60) + Duration::from_millis(749)), PreviewAction::Idle);
+        let (id, _) = query(&mut pipeline, now + Duration::from_secs(60) + Duration::from_millis(750));
+        pipeline.fail_unknown(id);
+        assert_eq!(pipeline.tick(now + Duration::from_secs(90)), PreviewAction::Idle);
+        assert!(!pipeline.complete(id, now + Duration::from_secs(90), true).unwrap().deliver);
+        assert_eq!(pipeline.tick(now + Duration::from_secs(91)), PreviewAction::Idle);
+    }
     #[test]
     fn selected_preview_accepts_only_bounded_embedded_images() {
         let mut bytes = Cursor::new(Vec::new());

@@ -4,11 +4,17 @@ Aplicar sólo las partes requeridas por la tarea. Leer los scripts y docs actual
 antes de ejecutar; las rutas y nombres de versión siguientes se resuelven desde
 el repositorio, no desde esta skill instalada.
 
-## Entrega y aplicación de cambios pequeños
+## Entrega al completar planes y cambios pequeños
 
-En una entrega **Pequeña**, la preferencia del usuario es publicar el instalador
-y el manifiesto para aplicar la actualización después desde el botón de
-NotDiscord. Generar Setup no implica ejecutarlo ni reemplazar la instalación,
+La preferencia permanente del usuario es publicar en GitHub al terminar la
+implementación de un plan y sus comprobaciones permitidas, para cualquier tipo
+de actualización, sin solicitar otra confirmación. Incluye fuentes, instalador
+y manifiesto verificados. Las entregas **Pequeñas** también mantienen esta
+preferencia. Una restricción posterior explícita de publicación prevalece;
+planificar o documentar por sí solo no publica una versión.
+
+El usuario aplica la actualización después desde el botón de NotDiscord.
+Generar o publicar Setup no implica ejecutarlo ni reemplazar la instalación,
 accesos directos o paquetes locales de uso del usuario. Mantener los temporales
 de build y payload separados de esas instalaciones.
 
@@ -43,8 +49,10 @@ es un cambio separado; no se presupone al pedir una corrección pequeña.
    SHA-256 del instalador y hash del ejecutable. Usar
    `prepare-update-release.ps1` para el manifiesto. No volver a incluir en el mismo
    instalador el hash de ese instalador, evitando un ciclo de autorreferencia.
-6. Sólo con publicación autorizada, hacer commit/push de los archivos pertinentes
-   a la rama correcta y crear la release con el asset correspondiente. Ante una
+6. La preferencia permanente autoriza esta publicación al completar un plan o
+   una entrega Pequeña, salvo una restricción posterior vigente. Hacer commit/push
+   de los archivos pertinentes a la rama correcta y crear la release con el asset
+   correspondiente sin pedir una autorización redundante. Ante una
    respuesta desconocida, consultar el estado remoto antes de repetir la mutación.
    Evitar push forzado o cambios en ramas fuera del alcance.
    El título de cada release de NotDiscord debe ser exactamente `NotDiscord x.x.x`,

@@ -121,7 +121,7 @@ impl NotDiscordUi {
         let history_pending = history_page_pending(ui.ctx(), state);
         reaction_tooltip::begin_frame(ui.ctx(), state);
         if matches!(state.view.as_str(), "pins" | "search" | "history") {
-            self.draw_chat_return_header_for(ui, if state.view == "pins" { "pins" } else { "return-chat" },state);
+            self.draw_chat_return_header(ui, if state.view == "pins" { "pins" } else { "return-chat" },state);
         }
         let latest_window = latest_window(ui.ctx(), state);
         let at_latest = latest_window && self.positions.get(&state.selected_channel_id)
@@ -583,10 +583,7 @@ impl NotDiscordUi {
     }
     /// A view's back navigation lives outside its scrolled content, including
     /// while a call panel occupies part of the available height.
-    pub(super) fn draw_chat_return_header(&mut self, ui: &mut egui::Ui, action: &str) {
-        self.draw_chat_return_header_for(ui,action,&self.state.clone());
-    }
-    fn draw_chat_return_header_for(&mut self, ui:&mut egui::Ui, action:&str, state:&AppSnapshot) {
+    pub(super) fn draw_chat_return_header(&mut self, ui:&mut egui::Ui, action:&str, state:&AppSnapshot) {
         ui.horizontal(|ui| {
             if ui.button("← Volver al chat").on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
                 && self.command.send(chat_navigation_action(action,state)).is_err() {
@@ -1192,22 +1189,24 @@ impl NotDiscordUi {
                                     ui.set_max_width(ui.available_width());
                                     ui.horizontal_wrapped(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.;
-                                        let author = ui.add(
+                                        if system_record_has_actor(m) {
+                                            let author = ui.add(
                                                 egui::Label::new(
                                                     theme::author_text(message_display_name(m, state), self.prefs.chat_size),
                                                 )
                                                 .sense(egui::Sense::click()),
                                             );
-                                        theme::bare_text_link_feedback(ui, &author, author.rect, self.theme.ink);
-                                        context_menu::capture(ui, &author, || context_menu::Target::Person(m.author.clone()));
-                                        if author.clicked() {
-                                            self.send(
-                                                "profile",
-                                                &m.author.id,
-                                                "",
-                                                "",
-                                                &m.channel_id,
-                                            );
+                                            theme::bare_text_link_feedback(ui, &author, author.rect, self.theme.ink);
+                                            context_menu::capture(ui, &author, || context_menu::Target::Person(m.author.clone()));
+                                            if author.clicked() {
+                                                self.send(
+                                                    "profile",
+                                                    &m.author.id,
+                                                    "",
+                                                    "",
+                                                    &m.channel_id,
+                                                );
+                                            }
                                         }
                                         if pinned {
                                             selectable_message_label(ui,
@@ -1279,7 +1278,9 @@ impl NotDiscordUi {
             .response
             .on_hover_text(detail);
         history_register_row(ui.ctx(), response.id);
-        let copy_text = format!("{} {}", message_display_name(m, state), description);
+        let copy_text = if system_record_has_actor(m) {
+            format!("{} {}", message_display_name(m, state), description)
+        } else {description};
         self.message_context_menu(ui, &response, m, state, Some(&copy_text));
         response
     }
@@ -3266,6 +3267,21 @@ fn reply_display_name<'a>(reply: &MessageReplyPreview, person: &'a Person, state
     }
     if state.selected_guild_id.is_empty(){&person.name}else{state.guild_display_name(person)}
 }
+enum GroupRemoval<'a> { Left, Removed(&'a Person), Unknown }
+fn group_removal(message:&ChatMessage)->GroupRemoval<'_> {
+    let [recipient]=message.mentions.as_slice() else {return GroupRemoval::Unknown;};
+    if !notdiscord_core::parsing::valid_id(&message.author.id)
+        || !notdiscord_core::parsing::valid_id(&recipient.id) {return GroupRemoval::Unknown;}
+    if message.author.id==recipient.id {return GroupRemoval::Left;}
+    // The parser uses "Usuario" when all naming metadata is absent. Do not
+    // mistake that fallback or an empty partial user for an identified target.
+    if recipient.name.trim().is_empty() || recipient.name=="Usuario"
+        && recipient.username.is_empty() && recipient.display_name.is_empty() {return GroupRemoval::Unknown;}
+    GroupRemoval::Removed(recipient)
+}
+fn system_record_has_actor(message:&ChatMessage)->bool {
+    message.message_type!=2 || !matches!(group_removal(message),GroupRemoval::Unknown)
+}
 fn system_record_description(message: &ChatMessage) -> String {
     match message.message_type {
         1 => {
@@ -3281,7 +3297,11 @@ fn system_record_description(message: &ChatMessage) -> String {
                 format!("añadió a {} al grupo.", names.join(", "))
             }
         }
-        2 => "salió del grupo.".into(),
+        2 => match group_removal(message) {
+            GroupRemoval::Left=>"salió del grupo.".into(),
+            GroupRemoval::Removed(person)=>format!("eliminó a {} del grupo.",person.name),
+            GroupRemoval::Unknown=>"Se registró una salida o retirada del grupo.".into(),
+        },
         4 if !message.content.is_empty() && message.content != "Cambió el nombre del grupo" => {
             format!(
                 "cambió el nombre del grupo a «{}».",
@@ -5094,13 +5114,20 @@ mod tests {
     fn joins_and_other_channel_activity_use_compact_records_without_user_message_bodies() {
         let (mut app, ctx, _) = ui_harness();
         let (mut message, state) = message_fixture();
-        for kind in [1, 2, 4, 5, 7, 8, 9, 10, 11, 12, 18] {
+        for (kind,expected) in [
+            (1,"añadió participantes al grupo."),(2,"salió del grupo."),(4,"cambió el nombre del grupo."),
+            (5,"cambió la imagen del grupo."),(7,"se unió al servidor."),(8,"mejoró el servidor."),
+            (9,"mejoró el servidor y alcanzó el nivel 1."),(10,"mejoró el servidor y alcanzó el nivel 2."),
+            (11,"mejoró el servidor y alcanzó el nivel 3."),(12,"añadió actualizaciones a este canal."),
+            (18,"creó un hilo."),
+        ] {
             assert!(is_system_record(kind));
             message.message_type = kind;
             message.content = String::new();
+            message.mentions=if kind==2 {vec![message.author.clone()]}else{vec![]};
             let output = message_frame(&mut app, &ctx, &message, &state, vec![]);
             let author = painted_text(&output, "Fixture author");
-            let description = painted_text(&output, &system_record_description(&message));
+            let description = painted_text(&output,expected);
             assert!((author.center().y - description.center().y).abs() <= 2.);
         }
         // Additional public system events have neutral descriptions even when

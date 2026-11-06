@@ -178,6 +178,8 @@ pub struct Controller {
     pending_video: bool,
     gif_state: gifs::GifState,
     recovery: connection::Recovery,
+    power:crate::platform::power::PowerMonitor,
+    power_reported:bool,
     sends: outgoing::Sends,
     game_catalog: game_mentions::State,
     emoji_cache: HashMap<String, (Instant, Vec<CustomEmoji>)>,
@@ -367,6 +369,8 @@ impl Controller {
             pending_video: false,
             gif_state: gifs::GifState::default(),
             recovery: Default::default(),
+            power:crate::platform::power::PowerMonitor::new(),
+            power_reported:false,
             sends: Default::default(),
             game_catalog: game_mentions::State::default(),
             emoji_cache: HashMap::new(),
@@ -717,6 +721,18 @@ impl Controller {
                 result,
                 credential: None,
             });
+        });
+    }
+    /// Mandatory resource release owns its bridge and writer until completion;
+    /// logging out may discard the reply, but cannot cancel the release itself.
+    fn launch_owned_close<F>(&self,action:UiAction,future:F)
+    where F:std::future::Future<Output=Reply>+Send+'static {
+        let tx=self.completion.clone();let generation=self.generation;
+        tokio::spawn(async move {
+            use futures_util::FutureExt;
+            let result=std::panic::AssertUnwindSafe(future).catch_unwind().await
+                .unwrap_or_else(|_|Err("No se pudo confirmar un cierre multimedia.".into()));
+            let _=tx.send(Completed {generation,nav:None,action,result,credential:None});
         });
     }
     fn launch_credential(&self) {
@@ -1983,6 +1999,7 @@ impl Controller {
         // stops the session. Invalidate voice/capture attempts before resuming it.
         self.sync_network_safety().await;
         match action.kind.as_str() {
+            "__source-close" => self.complete_source_close(&action,&value)?,
             "__call-discovered" => self.complete_call_discovery(&action, &value),
             "__voice-leave" => self.complete_voice_leave(&action, &value)?,
             "__presence-reconciled"=>{self.finish_presence_reconcile(&action,Some(&value))?;}
@@ -2438,7 +2455,10 @@ impl Controller {
         }
     }
     async fn tick(&mut self) {
+        self.poll_power_events().await;
         self.tick_connection();
+        if let Err(error)=self.tick_voice_recovery().await {self.status(&error);}
+        if let Err(error)=self.tick_screen_recovery().await {self.status(&error);}
         self.poll_call_discovery();
         self.tick_game_activity().await;
         self.expire_outgoing_ring();

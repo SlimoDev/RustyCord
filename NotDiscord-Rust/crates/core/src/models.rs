@@ -372,6 +372,9 @@ pub struct CallParticipant {
     pub speaking: bool,
     pub self_video: bool,
     pub screen_sharing: bool,
+    /// Publication may still be announced while its selected reception was
+    /// exhausted or its end is ambiguous. Do not offer an inoperable retry.
+    pub screen_view_unavailable: bool,
     /// Local publication intent survives the lifetime of its single preview.
     /// These fields never announce a camera or screen to other participants.
     pub camera_preparing: bool,
@@ -384,12 +387,12 @@ pub struct CallParticipant {
     pub volume_percent: f32,
 }
 impl Default for CallParticipant {
-    fn default() -> Self { Self {user:Person::default(),is_self:false,self_mute:false,self_deaf:false,server_mute:false,server_deaf:false,speaking:false,self_video:false,screen_sharing:false,camera_preparing:false,screen_preparing:false,camera_announcement_known:false,screen_announcement_known:false,viewing:String::new(),view_error:String::new(),volume_percent:100.} }
+    fn default() -> Self { Self {user:Person::default(),is_self:false,self_mute:false,self_deaf:false,server_mute:false,server_deaf:false,speaking:false,self_video:false,screen_sharing:false,screen_view_unavailable:false,camera_preparing:false,screen_preparing:false,camera_announcement_known:false,screen_announcement_known:false,viewing:String::new(),view_error:String::new(),volume_percent:100.} }
 }
 impl CallParticipant {
     /// Published sources and local preparation are independent of decoder lifetime.
     pub fn source_available(&self, kind: &str) -> bool {
-        (match kind { "camera" => self.self_video, "screen" => self.screen_sharing, _ => false })
+        (match kind { "camera" => self.self_video, "screen" => self.screen_sharing&&!self.screen_view_unavailable, _ => false })
             || self.source_preparing(kind)
     }
     pub fn source_preparing(&self, kind: &str) -> bool {
@@ -407,6 +410,7 @@ impl CallParticipant {
 /// unknown announcements alone may use the bounded current-call video fallback.
 pub fn call_source_available(person:Option<&CallParticipant>,owner:&str,kind:&str,videos:&[CallVideo])->bool {
     if !matches!(kind,"camera"|"screen") {return false;}
+    if kind=="screen"&&person.is_some_and(|person|person.screen_view_unavailable) {return false;}
     if let Some(person)=person && (person.source_known(kind)||person.source_available(kind)) {return person.source_available(kind);}
     videos.iter().any(|video|video.user_id==owner&&video.kind==kind&&!video.preview
         && (video.active||matches!(video.status.as_str(),"loading"|"connecting"|"waiting"|"starting"|"paused")))
