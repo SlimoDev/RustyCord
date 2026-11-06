@@ -4,12 +4,13 @@ Esta entrega actualiza sólo **NotDiscord estándar**. NotDiscord+ conserva su r
 ejecutable y accesos directos anteriores; todavía no participa en el actualizador
 ni en la configuración y exclusión bidireccionales nuevas.
 
-0.12.0 es una actualización **Mediana local** desde 0.11.0, documentada en la
-[nota de implementación](llamadas-presencia-navegacion-0.12.0.md). Su manifiesto
-compilado conserva `release: null`; los metadatos preparados localmente no prueban
-disponibilidad remota. La última publicación verificada continúa siendo 0.11.0.
-Esta ronda no instala ni publica la versión. La causa física del micrófono y la
-audibilidad remota continúan pendientes de confirmación.
+0.12.0 es una actualización **Mediana publicada** desde 0.11.0, documentada en la
+[nota de implementación](llamadas-presencia-navegacion-0.12.0.md). Su instalador
+se verificó en GitHub por nombre, estado, tamaño y SHA-256. El manifiesto remoto
+anuncia el asset después de esa verificación; el compilado y el incluido en Setup
+conservan `release: null`. La [evidencia de publicación](../evidence/publication-0.12.0.json)
+identifica fuentes y artefactos. No se ejecutó Setup. La causa física del micrófono
+y la audibilidad remota continúan pendientes de confirmación.
 
 El formato de distribución de 0.11.0 es exclusivamente el instalador
 **NotDiscord-Setup-0.11.0.exe**. No se publica una edición portable de esta versión.

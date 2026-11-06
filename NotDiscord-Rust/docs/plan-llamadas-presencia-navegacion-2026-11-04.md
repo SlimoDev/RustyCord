@@ -1,6 +1,6 @@
 # Plan de llamadas, micrófono, presencia y navegación — iniciado el 4 y actualizado el 6 de noviembre de 2026
 
-Estado vigente al **6 de noviembre de 2026**: 0.11.0 publicada; **0.12.0 generada y comprobada como entrega local**. El apartado 9 conserva el corte de planificación y el apartado 10 y la [nota 0.12.0](llamadas-presencia-navegacion-0.12.0.md) registran T7–T13 y sus límites. La ejecución anterior de T1–T6 conserva sus resultados en el apartado 8 y la [nota de implementación](llamadas-presencia-navegacion-0.11.0.md). **C5 sigue abierto:** diagnóstico acotado implementado, causa física y audibilidad remota sin acreditar.
+Estado vigente al **6 de noviembre de 2026**: **0.12.0 publicada por autorización posterior del usuario**, con instalador y manifiesto verificados. El apartado 9 conserva el corte de planificación, el 10 la entrega local y el 11 la publicación; la [nota 0.12.0](llamadas-presencia-navegacion-0.12.0.md) registra T7–T13 y sus límites. La ejecución anterior de T1–T6 conserva sus resultados en el apartado 8 y la [nota de implementación](llamadas-presencia-navegacion-0.11.0.md). **C5 sigue abierto:** diagnóstico acotado implementado, causa física y audibilidad remota sin acreditar.
 
 Los apartados 1–7 conservan el corte histórico de planificación, sus restricciones de entonces y las huellas de la base. Sus frases «no realizado» o «pendiente» no describen la ejecución posterior, registrada en el apartado 8 y la nota enlazada. La publicación en GitHub se autorizó posteriormente; las pruebas con cuentas/dispositivos y la instalación siguen fuera del alcance ejecutado.
 
@@ -619,3 +619,23 @@ Los metadatos pendientes coinciden con Setup y el ejecutable; `release` sigue
 siendo null y no se verificó su URL futura. No se ejecutó Setup ni se hizo
 commit, push o publicación. No se alteraron instalación, datos ni otras
 variantes, ni se invocó una aprobación nueva para el trabajo ya autorizado.
+
+## 11. Publicación posterior autorizada — 6 de noviembre de 2026
+
+El usuario pidió publicar esta versión y ajustar `notdiscord-programar` para
+publicar al terminar los planes de cualquier tipo de actualización. La skill del
+repositorio y la instalada se actualizaron y validaron; no se amplió la autorización
+a cuentas, dispositivos, suspensión real ni instalación.
+
+Se publicó el commit de fuentes `9eb222ffd3a3e962106864317c6cb0a674f13209`, con
+`release: null`. El mapa Git vincula los 184 inputs del binario con los blobs del
+commit, distinguiendo la normalización de texto de los bytes de compilación; el
+corte y las actas locales mantienen sus bytes históricos. La etiqueta
+`NotDiscord-v0.12.0` apunta a ese commit. La release se titula exactamente
+`NotDiscord 0.12.0`, sin estado draft ni prerelease. El asset de 119095983 bytes
+tiene el SHA-256 `5097b8b7d034ffb5c5b7e8786c5984a0654c41f6b3bf855aa063f632f8874915`,
+igual a Setup local; su enlace público respondió HTTP 200.
+
+El manifiesto se anuncia después de verificar el asset. El
+[acta de publicación](../evidence/publication-0.12.0.json) recoge las comprobaciones
+y los límites; no altera el acta local previa ni afirma solucionado C5.

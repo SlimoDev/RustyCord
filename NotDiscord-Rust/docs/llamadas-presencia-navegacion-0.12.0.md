@@ -1,6 +1,11 @@
 # Llamadas, diagnóstico y recuperación — 0.12.0
 
-Entrega local de NotDiscord estándar, rama `NotDiscord`, del 6 de noviembre de
+**Estado actual:** publicada posteriormente por petición explícita del usuario
+como [NotDiscord 0.12.0](https://github.com/SlimoDev/RustyCord/releases/tag/NotDiscord-v0.12.0).
+El [acta de publicación](../evidence/publication-0.12.0.json) registra la verificación.
+Los siguientes párrafos conservan el corte local previo a esa publicación.
+
+Corte de entrega local de NotDiscord estándar, rama `NotDiscord`, del 6 de noviembre de
 2026. Actualización **Mediana**, inferida por las correcciones funcionales y la
 recuperación de voz: 0.11.0 → 0.12.0. Base de trabajo
 `3bee4c8c6a9e7442817302850286d170c56976ad`; fuentes con cambios locales sin commit.
@@ -129,5 +134,12 @@ sin comprobar. La revisión T13 no certifica ausencia de fallos ni auditoría de
 dependencias/vendor; no se midieron CPU, RAM, working set ni p95 de frame y no se
 anuncia un ahorro de rendimiento.
 
-El instalador se prepara como artefacto local. No se publica, instala ni sustituye
-la instalación del usuario. NotDiscord+ y `legacy` quedan fuera de esta entrega.
+El corte local anterior terminó con el instalador sin publicar ni ejecutar.
+Después el usuario pidió subir 0.12.0 y mantener esa publicación como paso normal
+al finalizar los planes. Se publicaron las fuentes en
+`9eb222ffd3a3e962106864317c6cb0a674f13209`, la release con título exacto
+`NotDiscord 0.12.0` y el asset; nombre, estado, tamaño y digest coinciden con Setup.
+El enlace público respondió HTTP 200 y la etiqueta apunta al commit de fuentes.
+El manifiesto se anuncia después de esas verificaciones, conservando `release: null`
+en el commit de fuentes y dentro de Setup. No se instaló ni sustituyó la
+instalación del usuario. NotDiscord+ y `legacy` quedan fuera de esta entrega.
