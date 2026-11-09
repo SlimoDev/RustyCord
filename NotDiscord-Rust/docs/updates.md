@@ -4,6 +4,13 @@ Esta entrega actualiza sólo **NotDiscord estándar**. NotDiscord+ conserva su r
 ejecutable y accesos directos anteriores; todavía no participa en el actualizador
 ni en la configuración y exclusión bidireccionales nuevas.
 
+0.13.0 es una actualización **Mediana** desde 0.12.0, documentada en la
+[nota de modularización y estabilidad](modularizacion-llamadas-0.13.0.md).
+Setup está generado y verificado, sin ejecutarlo; el manifiesto compilado
+conserva `release: null`. El anuncio del actualizador se realiza después de
+verificar la release y su asset. Las causas físicas de los cortes y C5 siguen
+abiertas; los ensayos sintéticos no equivalen a llamadas reales prolongadas.
+
 0.12.0 es una actualización **Mediana publicada** desde 0.11.0, documentada en la
 [nota de implementación](llamadas-presencia-navegacion-0.12.0.md). Su instalador
 se verificó en GitHub por nombre, estado, tamaño y SHA-256. El manifiesto remoto

@@ -1,0 +1,4297 @@
+{
+  "schema": 1,
+  "date_client_timezone": "2026-11-09 America/Lima",
+  "purpose": "Inventario completo de archivos seguidos y corte de planificación, no certificado de auditoría exhaustiva. directed_read indica lectura de recorridos/rangos pertinentes, no todas las líneas. inventory_only requiere caracterización restante T0.",
+  "head": "01c7ed88ae9bcdbe6b4b9288fe6c74fe2c641811",
+  "branch": "NotDiscord",
+  "version": "0.12.0",
+  "product_tracked_changes": [],
+  "tracked_changes_at_cut": [
+    "NotDiscord-Rust/README.md",
+    "NotDiscord-Rust/docs/plan-conexion-envios-adjuntos-ui-2026-10-31.md",
+    "skills/notdiscord-planificar/SKILL.md",
+    "skills/notdiscord-planificar/references/plan-template.md",
+    "skills/notdiscord-planificar/references/project-map.md"
+  ],
+  "staged_changes_at_cut": [],
+  "tracked_files_count": 532,
+  "groups": {
+    "build_config_assets": 36,
+    "examples_tests": 24,
+    "rust_src": 174,
+    "documentation": 37,
+    "historical_evidence": 27,
+    "vendor": 226,
+    "skills": 8
+  },
+  "rust_src_counts": {
+    "app": 125,
+    "core": 31,
+    "media-addon": 18
+  },
+  "rust_src_lines_including_embedded_tests": {
+    "app": 73467,
+    "core": 13077,
+    "media-addon": 9734
+  },
+  "directed_read_count": 58,
+  "excluded": "Archivos no seguidos/ignorados, .git, .tools, target, dist, datos de usuario y runtime privado no se abren/inventarían. No se ejecutó el producto ni pruebas. Los archivos nuevos de este plan no forman parte de git ls-files al fijar este inventario.",
+  "entries": [
+    {
+      "path": ".gitignore",
+      "bytes": 198,
+      "sha256": "1c5458211cd7b1c44b94f67c32c8c646f21d7248e98ff34d9a1eeaf21aadfc3e",
+      "lines_including_embedded_tests": 9,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/.gitignore",
+      "bytes": 226,
+      "sha256": "d201dac8907fa9a288a402ebd7d4646002f1d5c343b8ebcbe27f40d73df90249",
+      "lines_including_embedded_tests": 14,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/ABRIR_NOTDISCORD_RUST.cmd",
+      "bytes": 187,
+      "sha256": "f7539f9ad8438c0932fa7dfcffaaad0ae9005b5cb9f25ac3705ca36ed3132eef",
+      "lines_including_embedded_tests": 2,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/Cargo.lock",
+      "bytes": 122337,
+      "sha256": "6fd80e9e7d9a5ce8cd6bc38a64c56b57e766b9d949dd7315118d2e13a6390b33",
+      "lines_including_embedded_tests": 4988,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/Cargo.toml",
+      "bytes": 458,
+      "sha256": "a74c01b99547b307577034323724dbf301be3d271c59c9333b4ebf7a064c50a6",
+      "lines_including_embedded_tests": 20,
+      "group": "build_config_assets",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/README.md",
+      "bytes": 7252,
+      "sha256": "7d688756b0b897370785ec86dc4be455a541ab0655c388bf7d53f2a45c5e1f1e",
+      "lines_including_embedded_tests": 62,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/assets/SYMPHONIA-LICENSE-MPL-2.0.txt",
+      "bytes": 16725,
+      "sha256": "c76f740d1521b9bed9ca7a04ad526c310493c62621b1341d623b431736533b30",
+      "lines_including_embedded_tests": 373,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/assets/UNICODE-LICENSE.txt",
+      "bytes": 1995,
+      "sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
+      "lines_including_embedded_tests": 39,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/assets/WINIT-LICENSE-APACHE-2.0.txt",
+      "bytes": 11692,
+      "sha256": "bcb35ba83ef633b6a7e6a53f69241380230cbd48c88c64805d39a0759438a9f5",
+      "lines_including_embedded_tests": 207,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/assets/discord.ico",
+      "bytes": 285478,
+      "sha256": "dfcea1bea8a924252d507d0316d8cf38efc61cf1314e47dca3eb723f47d5fe43",
+      "lines_including_embedded_tests": null,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/assets/emoji-catalog.tsv",
+      "bytes": 301792,
+      "sha256": "3ee0896a788cd0a8de4aa771019c2ff474d99a978161e5d03b54d0207b0aec1c",
+      "lines_including_embedded_tests": 3781,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/build-installer.ps1",
+      "bytes": 5159,
+      "sha256": "24c0ba0a034ddd2f1e816805589a7997fd173737001469c876a16e5013b796a1",
+      "lines_including_embedded_tests": 58,
+      "group": "build_config_assets",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/build.ps1",
+      "bytes": 887,
+      "sha256": "5df759e09d1e9c75e9c704499e2a3cf880876ce7e3f23b1c20a5a9797d409cec",
+      "lines_including_embedded_tests": 18,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/Cargo.toml",
+      "bytes": 2741,
+      "sha256": "403ff930dcc45a8434a037c9bb9b0437f47a58efbfd87319b9eca49dd8a5100f",
+      "lines_including_embedded_tests": 57,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/blur_probe.rs",
+      "bytes": 33715,
+      "sha256": "3bce6a2b6303aae6c12681ab797ea0b2eb65b7da3aba4cdfc496857f4574d1ec",
+      "lines_including_embedded_tests": 824,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/clipboard_probe.rs",
+      "bytes": 20445,
+      "sha256": "0c274e35e4d1197e1d59f8c450244b3eb4eefa3a849f2282d30139a1d6e3e7a4",
+      "lines_including_embedded_tests": 556,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/emoji_open_probe.rs",
+      "bytes": 19932,
+      "sha256": "57fae6715946d2ad715d45b90aa43054eec76296d0a683fe97f567298e9b03ce",
+      "lines_including_embedded_tests": 487,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/game_detection_probe.rs",
+      "bytes": 319,
+      "sha256": "cee52022080e9e27d9d7ae0a4b749c7a5458769425d7e83d9d12b024a4447a1a",
+      "lines_including_embedded_tests": 7,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/incoming_popup_probe.rs",
+      "bytes": 10857,
+      "sha256": "575c90c08ca43d709c6ec7a1d59bbe61ab94bc4ad15973bc0d3bf13a653a5fd2",
+      "lines_including_embedded_tests": 286,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/microphone_input_check.rs",
+      "bytes": 11931,
+      "sha256": "b86ddffe8a8d70b0c40c82f1559b12353f95bcfb92dc6f499c564db693159078",
+      "lines_including_embedded_tests": 218,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/notification_probe.rs",
+      "bytes": 9837,
+      "sha256": "a0bd6757ceefcd15f5fda4c8a76a635473b10534fd254ff9ef4f56bb3144de50",
+      "lines_including_embedded_tests": 257,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/p2_gui_soak.rs",
+      "bytes": 9641,
+      "sha256": "14fe740d1501962ca5caceb9760e904f17ffbdb4a1c48586f4d7bc722322e233",
+      "lines_including_embedded_tests": 236,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/p2_memory_probe.rs",
+      "bytes": 9870,
+      "sha256": "c7d55e844835c1ef675a24504831c6f5c5b32ec55aea5d069c8cda5fee367c6e",
+      "lines_including_embedded_tests": 203,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/sound_import_probe.rs",
+      "bytes": 12621,
+      "sha256": "7d157de0fb9a0f82a6bb766f461349dc399973e645656e8c919dffe6659c21d9",
+      "lines_including_embedded_tests": 335,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/sound_probe.rs",
+      "bytes": 9851,
+      "sha256": "ff17ec9cfb15b1d4da68c3e9b519d3c88587874a55fdf49bad13d0c7c2f2a129",
+      "lines_including_embedded_tests": 248,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/transparency_probe.rs",
+      "bytes": 24141,
+      "sha256": "5f322a79dd138bdcaad147d551ba6e8e27ae8112c24e106de494e6de1812cbd5",
+      "lines_including_embedded_tests": 623,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/ui7_resource_probe.rs",
+      "bytes": 8541,
+      "sha256": "c9050a63a1f8c51d2852613c7bcd1c990f7d254763f910de206ad208f77096dd",
+      "lines_including_embedded_tests": 194,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/video_render_probe.rs",
+      "bytes": 6297,
+      "sha256": "4b91822db67ff26ebfd9821d505c88af06951401d8831a919fda56bfca24da0e",
+      "lines_including_embedded_tests": 173,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/examples/viewer_probe.rs",
+      "bytes": 17385,
+      "sha256": "341780544612aa689e61e477161ed9a15f370fdbbff8cc1e1b450b1ae8bd0aab",
+      "lines_including_embedded_tests": 391,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/auth_job.rs",
+      "bytes": 6522,
+      "sha256": "59e988a308bd6cb0d321468cfbe7950536ed705c05f038398af1c2227d90032b",
+      "lines_including_embedded_tests": 198,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/auth_lifecycle.rs",
+      "bytes": 32908,
+      "sha256": "910e5f607e044a7da0d7a95e5ad7fee965b9c0a29ba3005ba0418f68f3a9ae63",
+      "lines_including_embedded_tests": 864,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/auth_webview_probe.rs",
+      "bytes": 18518,
+      "sha256": "bf1a5418b584ac127e433d047add03ed41de583bd1e022d90d91dff3d03dc440",
+      "lines_including_embedded_tests": 482,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/authentication.rs",
+      "bytes": 18823,
+      "sha256": "c7caf71af5da8b7bc0eae02dbef47f6bfc27c88a1f84306324760b1f59d3291a",
+      "lines_including_embedded_tests": 479,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/backdrop.rs",
+      "bytes": 19135,
+      "sha256": "a92963a6a24f5c666d4f7694a8a7533342f280a701c2fe004f19dc1dd050252a",
+      "lines_including_embedded_tests": 518,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/brand.rs",
+      "bytes": 364,
+      "sha256": "ec895d562f3884f73df99bf87f78557c0a78c8cdb18824ce4f2a7ae99f735efd",
+      "lines_including_embedded_tests": 6,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller.rs",
+      "bytes": 118699,
+      "sha256": "864b1ae2c0c49bb00c1be55b9908a8b3307327d1f73494d82c09544ed0f1d1bf",
+      "lines_including_embedded_tests": 2602,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/attachments.rs",
+      "bytes": 2417,
+      "sha256": "aeb001a54325f569f35e244a8e98b8d8be3bb2f60d1f13b33f8f8bb1f05f566f",
+      "lines_including_embedded_tests": 44,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/channel_catalog.rs",
+      "bytes": 22501,
+      "sha256": "6c43378cfc62486d9547ffafe8d4bdc116fbbe28a144727cafe3c5cd0062be6a",
+      "lines_including_embedded_tests": 330,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/connection.rs",
+      "bytes": 14637,
+      "sha256": "e06503831f94a5fdc0e67505e403b9180823d972b184f98a4eec960be7b2a63c",
+      "lines_including_embedded_tests": 276,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/deleted_logs.rs",
+      "bytes": 3090,
+      "sha256": "4a7e6d2356e83e7d7d823c382caaa9be8ca16348841fd33aabcf5c8a9f70cfec",
+      "lines_including_embedded_tests": 52,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/emoji_policy.rs",
+      "bytes": 6572,
+      "sha256": "3a8e15525b748de03f1ccfcf572c86952524f2645b9f03a951f38ed9d4ef9394",
+      "lines_including_embedded_tests": 97,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/game_activity.rs",
+      "bytes": 23640,
+      "sha256": "ad7f66469533ee303d9359357b764d274b3339425e10612ce4169c8883166152",
+      "lines_including_embedded_tests": 431,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/game_activity/detection.rs",
+      "bytes": 8079,
+      "sha256": "198cbd4c65637f9d5bc2624bf2493787d1ff5628dc953d6c26597d78f9d23fb8",
+      "lines_including_embedded_tests": 123,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/game_activity/rpc.rs",
+      "bytes": 8969,
+      "sha256": "0dd0440e235340de4bfdb42d184ab6a632b8ec04072cec43e1acfcba306cc410",
+      "lines_including_embedded_tests": 125,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/game_activity/windows.rs",
+      "bytes": 3833,
+      "sha256": "a40bba5fc36fd3b1c32f8c4ee7b6707d4afb98fbf1a1edfa5aa80186253bbeb9",
+      "lines_including_embedded_tests": 47,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/game_mentions.rs",
+      "bytes": 11630,
+      "sha256": "ba773f3bfd11abd2fb323af23b407d56ee8a9f2f2b32d6ff8e0cb7594eaa4907",
+      "lines_including_embedded_tests": 187,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/gifs.rs",
+      "bytes": 19302,
+      "sha256": "62d1abaf75b14d5bc48f619c28018836878319b2426eb623a8dbe19cccdc71b9",
+      "lines_including_embedded_tests": 440,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/group_members.rs",
+      "bytes": 14529,
+      "sha256": "12b05fcd706e37ca3cc48017e4ae426c191776d543c2b7338cdfc1b9c46ec5c7",
+      "lines_including_embedded_tests": 186,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/guild_settings.rs",
+      "bytes": 27916,
+      "sha256": "e0ee8e8022c3d36cd2bb3701015963352d4bb0cdea210a701b866fedaea826d4",
+      "lines_including_embedded_tests": 636,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/incoming.rs",
+      "bytes": 150590,
+      "sha256": "cc2666eecad1ffa41da25092ade186357abc655861e738611ee009c8b2d4ccb4",
+      "lines_including_embedded_tests": 3140,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/input_diagnostic.rs",
+      "bytes": 2804,
+      "sha256": "48af46157480a56fa470f60b13bf78ce75983f5d9579f57e22b7b5575520eb55",
+      "lines_including_embedded_tests": 35,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/member_moderation.rs",
+      "bytes": 14487,
+      "sha256": "47b495595ac404031184f32924a568c7f3c849f97f5f1a903141969bcd9bc84a",
+      "lines_including_embedded_tests": 187,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/network_safety_tests.rs",
+      "bytes": 10654,
+      "sha256": "b79efbf49734203e1d3117fc743a091917c1c4dbaba8c7e8024952dcda77b491",
+      "lines_including_embedded_tests": 269,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/notification_activation.rs",
+      "bytes": 13469,
+      "sha256": "85366d0ef254f1003f9e5958ccac436332e6d8819a3b07a75955b32105f4c477",
+      "lines_including_embedded_tests": 317,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/observed_calls.rs",
+      "bytes": 37357,
+      "sha256": "46875b49a71a854cd795c3c2fced631d722a2e5f813183b41c5d1f5020df254d",
+      "lines_including_embedded_tests": 564,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/outgoing.rs",
+      "bytes": 15213,
+      "sha256": "8c0353106f88768d1c8afb7c846ee485624deaf58eb60388a29ae9cb84dbe432",
+      "lines_including_embedded_tests": 274,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/presence.rs",
+      "bytes": 33975,
+      "sha256": "342d13ea569f743309bc0b20f05d136cf48316f1b15a80462e6bd6cb597c7193",
+      "lines_including_embedded_tests": 535,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/private_calls.rs",
+      "bytes": 36590,
+      "sha256": "9c9c2281f2332f16d8d4867700da36524b149b7b301bc229a4cd5414559537c5",
+      "lines_including_embedded_tests": 443,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/profile_editor.rs",
+      "bytes": 16525,
+      "sha256": "4a1015d18ffed8c85d73492b310a27997505b665fe860893fdc56632e5a03c23",
+      "lines_including_embedded_tests": 459,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/reaction_users.rs",
+      "bytes": 17753,
+      "sha256": "561b8c1b4b4a3cc2a69c61d65568b8930f6c6b8befcb3b2e18a9662eb85f9184",
+      "lines_including_embedded_tests": 270,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/read_index.rs",
+      "bytes": 4610,
+      "sha256": "1f74ac7e3bfb273b29e00f148e2bb96dc84cff503d3dc9f9afb55ed4c9de7639",
+      "lines_including_embedded_tests": 69,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/request_policy.rs",
+      "bytes": 13145,
+      "sha256": "922e4072b5ba09336a69c1b5ff0a7e6a10e1c14c38a700dfedf9305261d7d1c1",
+      "lines_including_embedded_tests": 369,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/request_policy_tests.rs",
+      "bytes": 12826,
+      "sha256": "fbe9a26b50151832b85579f41e55151d33125c9f66e39bd98e4812391aacd935",
+      "lines_including_embedded_tests": 310,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/social.rs",
+      "bytes": 83924,
+      "sha256": "26f3e778285036686746c209c5b30ecbc20c67fa81aed4bace54a965c255ed50",
+      "lines_including_embedded_tests": 1644,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/source_lifecycle.rs",
+      "bytes": 12221,
+      "sha256": "4c0e9d699fc3d8f34740c04e947e18b784606ecd0deff2e604a6bbe4d002f728",
+      "lines_including_embedded_tests": 171,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/source_lifecycle_tests.rs",
+      "bytes": 20182,
+      "sha256": "caae9a84cbf6fbb6016a72744de64d2f5340cbf7795cfade7e266347b504450e",
+      "lines_including_embedded_tests": 332,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/stream_sources.rs",
+      "bytes": 4718,
+      "sha256": "606497de97ba95c40fc670bf5271ba479b0ff80814e18f0d7aea0b44c139a728",
+      "lines_including_embedded_tests": 84,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/tests.rs",
+      "bytes": 39825,
+      "sha256": "7a4d0dd7df7389c647e0deaa6034911197d2dd2fd710ba784f7a1045c0f047c2",
+      "lines_including_embedded_tests": 887,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/voice.rs",
+      "bytes": 380960,
+      "sha256": "accd9621d7973a215c4137126cd5250dc8229ec6f57df0017311f256eb35f234",
+      "lines_including_embedded_tests": 6177,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/controller/voice_recovery.rs",
+      "bytes": 48206,
+      "sha256": "14ebef93628b171617fb2c33be51510c309688a6192668bbef54d4e9fea9eda8",
+      "lines_including_embedded_tests": 1205,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/diagnostics.rs",
+      "bytes": 22241,
+      "sha256": "62a94c942a590a6e3ba692ca24f5814dd1d1245e84a4d921b107019fb63b5f0b",
+      "lines_including_embedded_tests": 383,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/feature_history.rs",
+      "bytes": 21955,
+      "sha256": "100158982dbf28a4b9de3a603873c8d97378c8b855f06efeea111ec06080aa75",
+      "lines_including_embedded_tests": 371,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/game_rpc.rs",
+      "bytes": 7956,
+      "sha256": "92289e3da86be6032b25b72aabfa28856d6c9e50dfcf1204b663c777fde2e26c",
+      "lines_including_embedded_tests": 174,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/game_rpc/protocol.rs",
+      "bytes": 11938,
+      "sha256": "a23f37567b57070116ff5bc2c20dd06b2f36a900d918d04dfede3e45241cc35d",
+      "lines_including_embedded_tests": 194,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/game_rpc/security.rs",
+      "bytes": 5746,
+      "sha256": "353b2acced48f4388e4a4c4b1140c9ba69d853a77acd20e08b35d6712002a117",
+      "lines_including_embedded_tests": 100,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/game_rpc/tests.rs",
+      "bytes": 13285,
+      "sha256": "59ff7e2bfe5cf03c796345791fe1e880f724f06380665a8e57c998cef0caee6d",
+      "lines_including_embedded_tests": 178,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/instance.rs",
+      "bytes": 9739,
+      "sha256": "13539c5b9d21889e236dc4259fe33774db450234a2708bb4d126c6ffb984df41",
+      "lines_including_embedded_tests": 181,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/lib.rs",
+      "bytes": 360,
+      "sha256": "a66f184904b025f8dafa35db9be469fff842bc7519f073157d7e851e2bd4dec1",
+      "lines_including_embedded_tests": 18,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/main.rs",
+      "bytes": 11227,
+      "sha256": "5489e34b89e95d79b25a0f429de61dd55c09eb59c3e7d71e57aac00064368037",
+      "lines_including_embedded_tests": 227,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/media.rs",
+      "bytes": 51113,
+      "sha256": "03372491c4448b81dd6815c023bb8e511308edbfd8d70467e2bd8f1582608417",
+      "lines_including_embedded_tests": 1183,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/message_cache.rs",
+      "bytes": 14359,
+      "sha256": "459fa845867c5990c23c90edd341d9f6ffc71d8c73357b8da9dfb32378665c31",
+      "lines_including_embedded_tests": 364,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/network_safety.rs",
+      "bytes": 22957,
+      "sha256": "fe289dd0922aa71100622567fff2e6740fa2068141ac29893e81984e398dedd7",
+      "lines_including_embedded_tests": 560,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/notification_identity.rs",
+      "bytes": 16165,
+      "sha256": "0b86d985c5f64cc8d3b4183965b8ecbd633cadd9381907a9fadc125fa7b3253e",
+      "lines_including_embedded_tests": 409,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/notification_text.rs",
+      "bytes": 2584,
+      "sha256": "c4cb24a92ecf6a376da1551f48ad812e34d647f0cca44d2303153ee6350a3845",
+      "lines_including_embedded_tests": 40,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/picker_history.rs",
+      "bytes": 14597,
+      "sha256": "7937af929b82fdc741df554d5784875e03a485a32d4b1e6803df8d08389daf87",
+      "lines_including_embedded_tests": 335,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/pickers.rs",
+      "bytes": 20530,
+      "sha256": "f7a30cb7e7c724bc662e8b6466605f073c9812fb4b314ad5036ff46bca7c1b15",
+      "lines_including_embedded_tests": 585,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/pickers/favorites_wire.rs",
+      "bytes": 8949,
+      "sha256": "9685e00317a4cd5a599795aec2a6e8e058a4dadfc2d38e7566af9661e39e88d8",
+      "lines_including_embedded_tests": 258,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/platform.rs",
+      "bytes": 45688,
+      "sha256": "177450c8089e0a46a2f122bc90d1f2749160f108d0c835309b9d8379614b9b12",
+      "lines_including_embedded_tests": 1093,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/platform/notification_activation.rs",
+      "bytes": 3359,
+      "sha256": "e73d7d42530a76b136aab3444700bcfe3c06357185817c2d3601e12fab5c1f43",
+      "lines_including_embedded_tests": 90,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/platform/power.rs",
+      "bytes": 12715,
+      "sha256": "cd8cf33acd7511480d87bdcf2917290cabbd1f527f8af39836f9445ef450ec51",
+      "lines_including_embedded_tests": 250,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/shared_state.rs",
+      "bytes": 17683,
+      "sha256": "5ea8d2e07d251b6610584bfa3bae6785a8beacca30b8c9e0ee3e5ffed30d18f4",
+      "lines_including_embedded_tests": 310,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/sounds.rs",
+      "bytes": 60963,
+      "sha256": "c8c7489ed28b808a5f47db010f8f0957a4fb25596dec3528c9793a52584d9261",
+      "lines_including_embedded_tests": 1655,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/sounds/clip_output.rs",
+      "bytes": 6284,
+      "sha256": "3aa655203bceb3fbb9ca0d3f52a7b02d4e2e0978bbd2920f8dedf2fd4c778a61",
+      "lines_including_embedded_tests": 154,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/sounds/import.rs",
+      "bytes": 43239,
+      "sha256": "c8ab274c4c66e4e78d400ff8a826410470b7f9feb53b50ae10fe3770701c4b4b",
+      "lines_including_embedded_tests": 1195,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/sounds/playback.rs",
+      "bytes": 11295,
+      "sha256": "a2bad480cc4d695c6b2edc52c0182155facca49d2c1b15cf9901178d0ab5a8c4",
+      "lines_including_embedded_tests": 259,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/storage.rs",
+      "bytes": 21434,
+      "sha256": "ad399d4cd9e65cb496b12a56cfd5a488a1cb80332a309d09a4f6f29e8a29f87e",
+      "lines_including_embedded_tests": 469,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/appearance.rs",
+      "bytes": 25893,
+      "sha256": "64c7797dafc2e54c391ca1590249973b119c1f254f134d5efb8969609c8975ac",
+      "lines_including_embedded_tests": 438,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/autoscroll.rs",
+      "bytes": 16962,
+      "sha256": "b7f963e6ff5663d702d34362c132a46d04ba916deea27fb7deceaa0254438582",
+      "lines_including_embedded_tests": 258,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/avatar_cache.rs",
+      "bytes": 29042,
+      "sha256": "ebb2da2c77141f2223a7e57dbdc370f5091391342d11b5fd0a52b2232f5125bc",
+      "lines_including_embedded_tests": 745,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/call_preferences.rs",
+      "bytes": 3269,
+      "sha256": "b86dddb868e942df92a933a48ce9720bb407e5fddf3d20a1a2a22ad386e6957d",
+      "lines_including_embedded_tests": 58,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/chat.rs",
+      "bytes": 369281,
+      "sha256": "18bb4e59938de2b8e6cd1993cafe12afdc5c9dcbbbbf7135af2453660867a055",
+      "lines_including_embedded_tests": 6604,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/chat/context_menu.rs",
+      "bytes": 10006,
+      "sha256": "c13ba461dbdf18f57cacd3a63f507aa6245aef0d2f79bf9a5899ba70c2405a06",
+      "lines_including_embedded_tests": 193,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/chat/interaction.rs",
+      "bytes": 3851,
+      "sha256": "edc2d5cc2d55904d968436e04405618bd72959b46792a5e9462e1d5cab1bc2c6",
+      "lines_including_embedded_tests": 81,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/chat/interaction_tests.rs",
+      "bytes": 28504,
+      "sha256": "a72ffec6106de8953ca2235feaf6c043212d233e9c2d036bddb10778aa0e7046",
+      "lines_including_embedded_tests": 419,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/chat/markdown.rs",
+      "bytes": 6973,
+      "sha256": "0ba6660780d0d0374492e52622a4051e4b54b17160ad9f0a55f5b85080045206",
+      "lines_including_embedded_tests": 113,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/chat/reaction_tooltip.rs",
+      "bytes": 23773,
+      "sha256": "e6629263ef7b26c6e0421165d464e379879e3bbcf27c587572a559a891fc10a0",
+      "lines_including_embedded_tests": 387,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/chat/rich.rs",
+      "bytes": 14042,
+      "sha256": "653ae63910d13ab354795fc81196295b863f6efc57f661494b3e62bf95a2973f",
+      "lines_including_embedded_tests": 206,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/chat/scroll_follow.rs",
+      "bytes": 1606,
+      "sha256": "4e25018ed163114b9fc309ed9b8938a9b990aa2615154b9f38f51e7be1df4db6",
+      "lines_including_embedded_tests": 37,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/completion.rs",
+      "bytes": 13869,
+      "sha256": "30f6743010286021a8c7ae21ba6e7c5cc50f4991a74b4699466aa1ec6a6eaa89",
+      "lines_including_embedded_tests": 203,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/custom_text.rs",
+      "bytes": 10181,
+      "sha256": "94de52a5feea9e0204ccbb7e9d0959af4fc775d8c0e5d90eef954b1efd983194",
+      "lines_including_embedded_tests": 207,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/dialogs.rs",
+      "bytes": 150557,
+      "sha256": "d6fe213bbb64df79c6ba37b9198debc9009a5c347f61f3bbf6d2eaded97642a3",
+      "lines_including_embedded_tests": 2708,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/font_files.rs",
+      "bytes": 2538,
+      "sha256": "f3c43a455ee93c15c9f8c5d8baf86cd89f320f62518194bf1e0c9bf7122ca219",
+      "lines_including_embedded_tests": 69,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/game_mentions.rs",
+      "bytes": 10268,
+      "sha256": "32cb3a13819533eee2d6717e6663e665e6c6345f71231d2f3452cc7862fae30d",
+      "lines_including_embedded_tests": 127,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/group_members.rs",
+      "bytes": 2394,
+      "sha256": "c5841b9de0aeb83ae46171eb9faf11d6de1384f6a184dced00ef597591174e1e",
+      "lines_including_embedded_tests": 51,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/group_members/tests.rs",
+      "bytes": 6332,
+      "sha256": "683281a78eebd30b3a4029e91273826be9e612ec356640262844d30720bc2ea3",
+      "lines_including_embedded_tests": 115,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/guild_settings.rs",
+      "bytes": 37169,
+      "sha256": "fcbb8aa5c9d9ab0f6dc025ab4e0d3b6c2b6539120fcd7024f6f3d15af5f801c6",
+      "lines_including_embedded_tests": 816,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/icons.rs",
+      "bytes": 1470,
+      "sha256": "293daa3bb48ed1a96583acf5701fada79cd5bf9b8e1c82f87647b88e4fc3c794",
+      "lines_including_embedded_tests": 52,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/image_spool.rs",
+      "bytes": 9646,
+      "sha256": "16a1981e0b1e9e8aff21614821a3a6b6e9cf3efbcf8056c726fbe5280190d3e2",
+      "lines_including_embedded_tests": 275,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/incoming.rs",
+      "bytes": 30566,
+      "sha256": "9fd1fe95c4f8acfa8efb8c079d768d38f163351f4ad6a78a77899f143e8ad149",
+      "lines_including_embedded_tests": 772,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/input_ownership.rs",
+      "bytes": 14856,
+      "sha256": "cfb72bffc80cca0389562107d575f72421682460aa199036b23f47ec1ed0ef56",
+      "lines_including_embedded_tests": 234,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/markdown_cache.rs",
+      "bytes": 4161,
+      "sha256": "1bcbf75e2059dd3f696a68bbd55ea46c4f48ee1c010747cbabe2fc6e03b45a04",
+      "lines_including_embedded_tests": 85,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/media_limit.rs",
+      "bytes": 747,
+      "sha256": "6187343c28fa8d50fca274a70dd8be17134dac53d312e93d70f7c1a559099941",
+      "lines_including_embedded_tests": 19,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/member_demand.rs",
+      "bytes": 7354,
+      "sha256": "77711c581a9abb9b50b2697515be81d2bd5d4a3e1bf99dcae555b014eda69b29",
+      "lines_including_embedded_tests": 179,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/mentions.rs",
+      "bytes": 26877,
+      "sha256": "1b543178ea3be352d1158b7b177784dcc2ef739041b3b3749e9f352bfa231f98",
+      "lines_including_embedded_tests": 654,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/menus.rs",
+      "bytes": 3595,
+      "sha256": "e32470217dda19644c163c954449ced600572073a63ddad6cd148205d5f71f2e",
+      "lines_including_embedded_tests": 74,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/mod.rs",
+      "bytes": 107307,
+      "sha256": "ebefc4a491517f60f20800b8f3e7c2fb8770d52172abe762cd2b085252935045",
+      "lines_including_embedded_tests": 2504,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/moderation.rs",
+      "bytes": 9056,
+      "sha256": "4149d3483e91a3825eb6989736cef34bc4e20da9fc70475c80a054b6354e62c8",
+      "lines_including_embedded_tests": 124,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/moderation/tests.rs",
+      "bytes": 7439,
+      "sha256": "b5a8cb23477038cec93012c146e4c0941c8ad43de7557282e5fe76ce87d31052",
+      "lines_including_embedded_tests": 100,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/notification_activation.rs",
+      "bytes": 4403,
+      "sha256": "a9421de2b046baa4b20541037cefafa87a13706ba885254375f9678c6e8d0a52",
+      "lines_including_embedded_tests": 113,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/overlay.rs",
+      "bytes": 7488,
+      "sha256": "d8242269d66adeb473e29a2a14652b5d5a5e0e4cb3d65deaebd625ca16a4a6ca",
+      "lines_including_embedded_tests": 143,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/profile_editor.rs",
+      "bytes": 20511,
+      "sha256": "3ef5024f590d0266b5e9d2486f6860af9ab5b3c172417cbf82cedef3d941e402",
+      "lines_including_embedded_tests": 466,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/resources.rs",
+      "bytes": 89546,
+      "sha256": "998c1813d0584b5e5ee4a2c758c04c9c590948d55337875e0bf7e30c169215c6",
+      "lines_including_embedded_tests": 2059,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/resources/animation_clock.rs",
+      "bytes": 1127,
+      "sha256": "e890a4ed692c890a28bf7a6afc7274abfd7105002ee9cb9175309d20aa714247",
+      "lines_including_embedded_tests": 32,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/resources/custom_animation.rs",
+      "bytes": 25791,
+      "sha256": "23d4054038c058df1b06c7c508c81f3d2a9f024ed0ab45e3a389c93a15e0c192",
+      "lines_including_embedded_tests": 598,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/resources/deleted_preview.rs",
+      "bytes": 4391,
+      "sha256": "e5d1bf515c448ca6be8b71e00807041483fa07536f469cbe765304383ee133f1",
+      "lines_including_embedded_tests": 89,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/resources/gif_source.rs",
+      "bytes": 15786,
+      "sha256": "e52c14cef0820c453cd73be23d4185e01a0ead194aba8e26797fde51b3da4084",
+      "lines_including_embedded_tests": 432,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/resources/p2_emoji_cold.rs",
+      "bytes": 11981,
+      "sha256": "680a38aeb31a1dccc4175194a4b7df72836c22d015f53a5432043d3aa31397e0",
+      "lines_including_embedded_tests": 300,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/resources/p2_offline_soak.rs",
+      "bytes": 36878,
+      "sha256": "c72c525bb1e033f171c34193d44a752d2d0207510f2215653e4e7ccf4e4329ba",
+      "lines_including_embedded_tests": 930,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/resources/webp_animation.rs",
+      "bytes": 5052,
+      "sha256": "b8ab21be31c440271810aae01a6eafb4a2888b9690f2d1fe16d8e0e996418e7c",
+      "lines_including_embedded_tests": 127,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/self_presence.rs",
+      "bytes": 19556,
+      "sha256": "fc8577d2b0e243c258723b97ca2509c27a1fd794565f316315bbcffde7a06379",
+      "lines_including_embedded_tests": 302,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/server_order.rs",
+      "bytes": 5778,
+      "sha256": "88a7eb70796498571e303c46d6578b59f8a586203ebef237b51a38a9ef7d5cae",
+      "lines_including_embedded_tests": 91,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/shell.rs",
+      "bytes": 197997,
+      "sha256": "90464a1dad5542e1620f4a2dcec67cbb0ef15af7a7d43a8a94d7961724aa8b60",
+      "lines_including_embedded_tests": 4049,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/sound_settings.rs",
+      "bytes": 45564,
+      "sha256": "818a8c1caba99e365e29b611c588982ae423785716fef66fe361aca04c3585e6",
+      "lines_including_embedded_tests": 965,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/text_budget.rs",
+      "bytes": 6580,
+      "sha256": "aad0479cffaa6c6ff1250f3e1e655aa537c6d7a2078b3bf92544392f67958f43",
+      "lines_including_embedded_tests": 116,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/text_viewer.rs",
+      "bytes": 16259,
+      "sha256": "2321b52864417fc31a61361f53785fdc7ac4a91014be3d41e6ff55fd48db125c",
+      "lines_including_embedded_tests": 306,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/theme.rs",
+      "bytes": 41828,
+      "sha256": "fee9779781a1959d39368654f9e01db472627203c4cb4a21d1dcd63f110d9667",
+      "lines_including_embedded_tests": 896,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/timestamps.rs",
+      "bytes": 19629,
+      "sha256": "97c82fee7a8b08e5498d119281f35b5769ec5e7aa39956886378cbbf71cc1178",
+      "lines_including_embedded_tests": 283,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/txt_import.rs",
+      "bytes": 5627,
+      "sha256": "e2620a62355ef7a5241e02255b6a03d8678554675dc1bd1ccadca2b48cc31f44",
+      "lines_including_embedded_tests": 98,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/ui7_probe.rs",
+      "bytes": 20881,
+      "sha256": "a81ac328274e7b867d77f205148fd30f78632b1e131b49e487092cf96d7d813b",
+      "lines_including_embedded_tests": 537,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/video.rs",
+      "bytes": 2614,
+      "sha256": "d813b6d1accc18dea5d969ec9ce2f7ded21eef75192b81a797d4d6404c02e7ed",
+      "lines_including_embedded_tests": 70,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/voice.rs",
+      "bytes": 190371,
+      "sha256": "6a3328e4657098ac2abee21f1269e9bec0b74509a4e4320a2ae3eda36ac596c5",
+      "lines_including_embedded_tests": 3392,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/ui/voice/invitation_tests.rs",
+      "bytes": 29058,
+      "sha256": "584288b76cdbe717912725d92320d12d1a6cf1b382e6383803bddafa34d9f20f",
+      "lines_including_embedded_tests": 368,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/updates.rs",
+      "bytes": 28507,
+      "sha256": "6cc845a9a8825dd010756bf5816abdafb6e95ba6c3ebdb8c1f83ae4e10b87aca",
+      "lines_including_embedded_tests": 800,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/src/updates/staging.rs",
+      "bytes": 6496,
+      "sha256": "f9d7917ffa0aa07bb23684e8e0b561833cac4c71f315aaf6cfcaf7bc84c0f060",
+      "lines_including_embedded_tests": 99,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/tests/fixtures/audio/manifest.json",
+      "bytes": 1951,
+      "sha256": "a27a61aae88e15b4278962c87c4dd90f205d912407cf29552bc6251ca91b1cee",
+      "lines_including_embedded_tests": 69,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/tests/fixtures/audio/synthetic-0.25s.mp3",
+      "bytes": 3256,
+      "sha256": "c3fca204ff7292a9f3e5db84a2236ad7dd446ac06b6cbb9bcf846ac9df698122",
+      "lines_including_embedded_tests": null,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/tests/fixtures/audio/synthetic-0.25s.ogg",
+      "bytes": 5401,
+      "sha256": "1a3c8d601ec49f16452b65fcd6392af9610b0d40bc43fa13075a3c3dbb36e44f",
+      "lines_including_embedded_tests": null,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/tests/fixtures/audio/synthetic-60s.mp3",
+      "bytes": 928433,
+      "sha256": "690a039d53034f910702cf88470bb14d4ff63ba43132dd85d9cd8251a1001de9",
+      "lines_including_embedded_tests": null,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/tests/fixtures/audio/synthetic-60s.ogg",
+      "bytes": 539699,
+      "sha256": "6b113659ac646de18c191bc1c08d6326d5c49488672e507aaa49f4f6870acc16",
+      "lines_including_embedded_tests": null,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/tests/fixtures/audio/synthetic-61s.mp3",
+      "bytes": 945222,
+      "sha256": "e7d1bd1222291beb2364328fd3d3856ba2f9476d15bb1657fdb2d9b6650ec5dd",
+      "lines_including_embedded_tests": null,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/tests/fixtures/audio/synthetic-61s.ogg",
+      "bytes": 550989,
+      "sha256": "2ee34690b00e86c46a21d45dd9362c81fa3fa77559104ab411c7a6e31c8bbba2",
+      "lines_including_embedded_tests": null,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/app/tests/fixtures/audio/synthetic-opus.ogg",
+      "bytes": 3024,
+      "sha256": "2af2e7b19e5877ed25db24d1bd32649acfc20e4290244cf2101722b78df4ff74",
+      "lines_including_embedded_tests": null,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/Cargo.toml",
+      "bytes": 914,
+      "sha256": "1afbb638098c4ca5545725e70c670ca17238cd168495009b4b388d286cfa7864",
+      "lines_including_embedded_tests": 29,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/access.rs",
+      "bytes": 16356,
+      "sha256": "fffb3cf3934c3bd6874f4fa109cbdec6d68388973037c649f2a68c9c5f33c333",
+      "lines_including_embedded_tests": 375,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/api.rs",
+      "bytes": 61511,
+      "sha256": "aa3289620fb1a24244c18c0e8cb84e1413f57bd7b9fad17210abd6aa40283a5b",
+      "lines_including_embedded_tests": 1414,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/api_operations.rs",
+      "bytes": 9693,
+      "sha256": "545feee8bd09a3d190c8722eb2c844d105cd0439d49b1e625c45b5c90201e909",
+      "lines_including_embedded_tests": 274,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/catalog.rs",
+      "bytes": 6432,
+      "sha256": "d0118d52ded9484373264c938b70e78302ae97c5861742100a68c4516791c303",
+      "lines_including_embedded_tests": 159,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/diagnostics.rs",
+      "bytes": 18383,
+      "sha256": "94e7b95cea2d1e69f8ab290be1bba69d02448c4fd245e69b37e4777266131956",
+      "lines_including_embedded_tests": 287,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/game_mentions.rs",
+      "bytes": 4483,
+      "sha256": "b9f17c65daaf5bf9fe9d3dfd9dd3676bd393e0ee810fd82dde8bc6f19c24d5f5",
+      "lines_including_embedded_tests": 45,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/game_presence.rs",
+      "bytes": 11080,
+      "sha256": "93a0ed3753941346edac83d4d883bbd652fdcc66e2ae4c1a11269d51811d971b",
+      "lines_including_embedded_tests": 221,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/gateway.rs",
+      "bytes": 56141,
+      "sha256": "9e4f30b0b9a29ce2dec72d6484bf25c6ee79e949e4d4b6779b5c11b0c9384f02",
+      "lines_including_embedded_tests": 1231,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/gateway_power.rs",
+      "bytes": 10156,
+      "sha256": "a61abf74ea0f88de774c2dd9e156281fa4707d2e0c40112233ba786d94cde21d",
+      "lines_including_embedded_tests": 290,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/gateway_runtime.rs",
+      "bytes": 46016,
+      "sha256": "c7118ba3ea0bf00358a82ff9b2e8d4c98be558c0ecccf56a100936901577b54a",
+      "lines_including_embedded_tests": 903,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/gateway_runtime_tests.rs",
+      "bytes": 37762,
+      "sha256": "ae0d8752f587db5a4261a92fe3027faae9675d068343fbc2fde948db0890deed",
+      "lines_including_embedded_tests": 907,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/guild_settings.rs",
+      "bytes": 26017,
+      "sha256": "a65c4c9771f73d8a081229d178666f62420bad4c5843c7bae12a6e9ab4432f30",
+      "lines_including_embedded_tests": 714,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/lib.rs",
+      "bytes": 674,
+      "sha256": "ddae8877c05aa4e6dcf6e21acf4d3ef0eecd8425448c5a68a01d51cd88be7e68",
+      "lines_including_embedded_tests": 27,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/markdown.rs",
+      "bytes": 21882,
+      "sha256": "33de1cc0ed7bb4442eb94954905ac6a2ace2e09ffa21136f5caaac42553712dd",
+      "lines_including_embedded_tests": 458,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/member_moderation.rs",
+      "bytes": 13032,
+      "sha256": "b83fdb1d989c9ea9bb578d7232fd099232faef030e985d9f973bbe8ad3fbadff",
+      "lines_including_embedded_tests": 216,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/mentions.rs",
+      "bytes": 5023,
+      "sha256": "1f0ee1841bcab60954b3564fbbbd9a53c82b27b55f7dd53c59eab0351ce05754",
+      "lines_including_embedded_tests": 151,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/message_atoms.rs",
+      "bytes": 3482,
+      "sha256": "4e385146fcc1e35b79ed051363c7a8ed0982f166d296b93212037db482ff32a2",
+      "lines_including_embedded_tests": 66,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/models.rs",
+      "bytes": 28592,
+      "sha256": "319454e522a0aa3b5809a505b5f422e09a0c901d3485005b6624f50005b392de",
+      "lines_including_embedded_tests": 758,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/notifications.rs",
+      "bytes": 18307,
+      "sha256": "29e260387c84fc1c8c2f9dc9b9f806e839c482b44804e5db3361dee0c3c07fbd",
+      "lines_including_embedded_tests": 447,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/parsing.rs",
+      "bytes": 62239,
+      "sha256": "8599c3a6be479282dd878bb8d66f155f8995d3ab39c4c7a5a5644b3c2d9a45be",
+      "lines_including_embedded_tests": 1448,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/parsing/gif_media.rs",
+      "bytes": 3020,
+      "sha256": "e0d07a207322c306b2fb011f3bf2e052308495953d44b4b74f4a7c495c65061f",
+      "lines_including_embedded_tests": 92,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/parsing/message_rich.rs",
+      "bytes": 10643,
+      "sha256": "2d7ff16dc5edcc7d65cd23d446e2a60247b7cb2a1ff3e30977e76bd49d753364",
+      "lines_including_embedded_tests": 182,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/rate_limits.rs",
+      "bytes": 17437,
+      "sha256": "fb05e77f802aedfef0ddefbe6bdf630dc62c8419d88a9290ad028f685b1c9d45",
+      "lines_including_embedded_tests": 454,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/safety.rs",
+      "bytes": 6280,
+      "sha256": "59c7944192bc2a72a88adb430ce8f098b3f55d7684559aad1d74b8ed569319a7",
+      "lines_including_embedded_tests": 165,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/search.rs",
+      "bytes": 22237,
+      "sha256": "640958bf6ac0e343b960093cbb35aea5751383aacd7f043b940902355b3416c9",
+      "lines_including_embedded_tests": 663,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/settings_proto.rs",
+      "bytes": 5638,
+      "sha256": "81216c14f5bfcfe8eb87a6985d7894161f101502974ac81a92fbfaa050cc4f4f",
+      "lines_including_embedded_tests": 190,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/shared_list.rs",
+      "bytes": 6482,
+      "sha256": "a6cd94cf3c5a8d7265ff3998e5c6f93301c6ca7e8d37407919b6015c87816d93",
+      "lines_including_embedded_tests": 190,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/shared_recovery.rs",
+      "bytes": 13285,
+      "sha256": "90bcbfcb7178184365fd9026499ff5629825ded4ce0ac4647e37449cbc638e2e",
+      "lines_including_embedded_tests": 383,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/uploads.rs",
+      "bytes": 2569,
+      "sha256": "e2849e3109d8a3ed7519c8917f9b006c8720a8b747df8a17bd0bf204160e8576",
+      "lines_including_embedded_tests": 45,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/video.rs",
+      "bytes": 7637,
+      "sha256": "29934dba24b8d20a585ac1b4129e894747191e10a5306ebf01c9dadb39e4c819",
+      "lines_including_embedded_tests": 231,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/core/src/voice_diagnostics.rs",
+      "bytes": 3465,
+      "sha256": "21f9cfd3a1f7e615b2efd10d608858f7aebe18fa911cf9125341ce496e8b35d1",
+      "lines_including_embedded_tests": 91,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/Cargo.toml",
+      "bytes": 798,
+      "sha256": "cbbdf98e52ea5d3fd3f33dfdbad85fd5acaa72d42b79d8c304a35af144df8b09",
+      "lines_including_embedded_tests": 27,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/Prepare-Host.ps1",
+      "bytes": 3216,
+      "sha256": "48981c89c4c750ddbfcd1e9d79173a9ecb3faff3ddd17c5acca194b32d4ee423",
+      "lines_including_embedded_tests": 43,
+      "group": "build_config_assets",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/README.md",
+      "bytes": 9787,
+      "sha256": "3e403ce69aafc7f31d5e5cc1c902a10eec68afc9195307f0b2be4c2988a1fe2d",
+      "lines_including_embedded_tests": 40,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/Test-Host.ps1",
+      "bytes": 4366,
+      "sha256": "903aaea2b4ff0c0692b352494fb142c9c5d75e99347a46557b26a30243c4457e",
+      "lines_including_embedded_tests": 69,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/Test-NativeMls.ps1",
+      "bytes": 3359,
+      "sha256": "df9e35a0173eff57c0e5840af2796951f4b24d7429a7ca89f2f3d92ddf30bd33",
+      "lines_including_embedded_tests": 47,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/Test-NativeVideo.ps1",
+      "bytes": 2908,
+      "sha256": "29160a0983af88c85e1e912f1404987a9a07cd5db30ada2e652e463d70017ef6",
+      "lines_including_embedded_tests": 40,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/Test-OwnedPreview.ps1",
+      "bytes": 7740,
+      "sha256": "10ea1cf11aa89f96fd729779a250a436f9400b66b6ebd04ef65c400e3fc75212",
+      "lines_including_embedded_tests": 83,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/build.rs",
+      "bytes": 39,
+      "sha256": "fcbd1ff3f627a7553fa1704dc6f558998daff8bc256015c37aace62cc49ce584",
+      "lines_including_embedded_tests": 3,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/host/main.cjs",
+      "bytes": 1284,
+      "sha256": "1b3caba52c2c538800f697a9c947be8f716babe6a7de4048438dffa1625b7bb2",
+      "lines_including_embedded_tests": 27,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/host/package.json",
+      "bytes": 91,
+      "sha256": "41d39db8a5f2956619b99983017aae00d56657732386bfcbd8a90dafe82ffb08",
+      "lines_including_embedded_tests": 1,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/host.rs",
+      "bytes": 147753,
+      "sha256": "2b12aee31ddc01419cd2e0e849f6c5b5af30f3e0c33405a6b15b5fef9be071e4",
+      "lines_including_embedded_tests": 3030,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/host/applied_frames.rs",
+      "bytes": 4763,
+      "sha256": "17b47db10903243466d01c4e0dd5eb10a8803d7016c0fefc391d54d0b306edef",
+      "lines_including_embedded_tests": 89,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/host/dispatch_queue.rs",
+      "bytes": 10270,
+      "sha256": "544bcf1a3329106913c4624c398c68a9b7451a6e1f288fd1d14caf9fd687ae65",
+      "lines_including_embedded_tests": 190,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/host/recovery_methods.rs",
+      "bytes": 11653,
+      "sha256": "357a055d7e803c3ed1c1d0a2e97770aae581de62059bd217f5da68f411c435ca",
+      "lines_including_embedded_tests": 188,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/host/voice_resume.rs",
+      "bytes": 8359,
+      "sha256": "6524c7fb8c1d7083341c07893079db0042e6a0231dc232a3a4d0aedb607f88c2",
+      "lines_including_embedded_tests": 192,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/host/voice_socket.rs",
+      "bytes": 21710,
+      "sha256": "1aa05dccdb244c775862fc4143e502a0f57980c8ec82fd68288c224e6a04f9a5",
+      "lines_including_embedded_tests": 630,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/lib.rs",
+      "bytes": 3357,
+      "sha256": "1a0e62052facbfb56d23058e3b665cd102b4c87407e6302c814d27af8068c426",
+      "lines_including_embedded_tests": 95,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/native.rs",
+      "bytes": 9302,
+      "sha256": "464a78ab6df295990ac38adb14ee0a8c6e6c98a87a9bf5c3cfc491b7f3ba5214",
+      "lines_including_embedded_tests": 235,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/preview.rs",
+      "bytes": 26985,
+      "sha256": "c848d19dc70a5355f5a21d2c0dcbdacbb360ad0eddbd5dc186d84baebacc0de3",
+      "lines_including_embedded_tests": 518,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/probe.rs",
+      "bytes": 33305,
+      "sha256": "12f68764029d58c0f2a6d9386063a149352194b9870b51d6e6e974943a3369ea",
+      "lines_including_embedded_tests": 600,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/probe_video.rs",
+      "bytes": 13859,
+      "sha256": "b774c068b5e24110207231d1621b36430b0bc3ed5c7732b9ceb110383acfbc0f",
+      "lines_including_embedded_tests": 345,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/probe_window.rs",
+      "bytes": 8695,
+      "sha256": "4db61abf21feee5f704f8dd0f9207ebd990cce1cf0dbcc67e39ca8e896e1b544",
+      "lines_including_embedded_tests": 290,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/protocol.rs",
+      "bytes": 10443,
+      "sha256": "ccab6aabe0b78963336f1a641a4e4c95fa85f71ff71b2a86ba7d73aa5fc1f305",
+      "lines_including_embedded_tests": 303,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/receive_probe.rs",
+      "bytes": 62445,
+      "sha256": "19585b9a32bd8013c5f89724e4884a87b710297794462194b7fdd6dd045fe964",
+      "lines_including_embedded_tests": 959,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/session.rs",
+      "bytes": 27365,
+      "sha256": "5a34f813ab2991ec9cf207b7b020a5298fc731cbdd2c295c732f217eb4196f74",
+      "lines_including_embedded_tests": 640,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/settings.rs",
+      "bytes": 5921,
+      "sha256": "d2be0b048fa69b7ada2e2f985caca1cf11f8a681694ff960f92e5470805f6544",
+      "lines_including_embedded_tests": 144,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/stats.rs",
+      "bytes": 22940,
+      "sha256": "bddf573b7e26f1b42d2549a536d816282c062473ec37c25a635d49a39d990201",
+      "lines_including_embedded_tests": 393,
+      "group": "rust_src",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/src/video.rs",
+      "bytes": 35597,
+      "sha256": "3b3716923fb9df39c3397eda00a8b7ab09f01fdb2c43e90f9d3a485e8c8a71a7",
+      "lines_including_embedded_tests": 893,
+      "group": "rust_src",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/crates/media-addon/tests/preview-pipeline.cjs",
+      "bytes": 1750,
+      "sha256": "f62ffebb2c13d32c07716694056feabc4f2b6a1acaf4fd79126940816c27d6ca",
+      "lines_including_embedded_tests": 29,
+      "group": "examples_tests",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/active-call-sources-0.9.0.md",
+      "bytes": 6661,
+      "sha256": "d30b977d8cdb30b4e90cc6e9661340f65ba5c95ed54a214f04406d434c794e17",
+      "lines_including_embedded_tests": 53,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/alt-input-0.6.0.md",
+      "bytes": 4795,
+      "sha256": "1f5c7be21a8d40388f9e71b95e1496087e997d37918862edc63c6c021c5275c6",
+      "lines_including_embedded_tests": 78,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/animation-0.7.0.md",
+      "bytes": 4055,
+      "sha256": "34c26eca7b71cd16a15c1eb3d1d03209a6da0894f6a5e37914b7f924a3085eff",
+      "lines_including_embedded_tests": 71,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/call-source-lifecycle-fix.md",
+      "bytes": 5940,
+      "sha256": "9fdee579189ed4d5511debe8687c46eb3b6fa35928fe25c4d6fff4a82a48b728",
+      "lines_including_embedded_tests": 39,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/deleted-media-previews.md",
+      "bytes": 2493,
+      "sha256": "505677a000d257d9027b0f05850538b73157292e09abd17967474d75ace98c74",
+      "lines_including_embedded_tests": 40,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/desarrollo-conservador.md",
+      "bytes": 12461,
+      "sha256": "a17857b348e377cd1aa5d0c0e776c80e78da07b5dbd6cf927a2352bc50a7f6ea",
+      "lines_including_embedded_tests": 94,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/diagnostics-0.6.0.md",
+      "bytes": 3237,
+      "sha256": "944563bf73c009b58af49a033b3f4b649a00ff812cd77ddc1fa8585793448076",
+      "lines_including_embedded_tests": 17,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/entrega-local-0.11.0.md",
+      "bytes": 8779,
+      "sha256": "534800915127d6cb2c910c56b5bd4e94120b8bc74e4837fd6a71f9e7df952e01",
+      "lines_including_embedded_tests": 79,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/game-catalog-0.7.0.md",
+      "bytes": 3782,
+      "sha256": "ea4eaafc1adfea2227c91b484fcdf14d759cfb39678b42e53e914ef9c035ab33",
+      "lines_including_embedded_tests": 57,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/gif-060-evidence.md",
+      "bytes": 5706,
+      "sha256": "9dd547b7d0a4f533a8a15ad22935e0fef374fb58cff7990461add43043c518bb",
+      "lines_including_embedded_tests": 86,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/gif-rendering.md",
+      "bytes": 3282,
+      "sha256": "08883086e6d593df0f41658ade9630c09628a53bdc351596f81c632b01138170",
+      "lines_including_embedded_tests": 54,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/input-0.7.0.md",
+      "bytes": 5849,
+      "sha256": "88cab1d7dbf18520cea89890033d170275a3f645e197297a0550522889782ea8",
+      "lines_including_embedded_tests": 93,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/installer.md",
+      "bytes": 4511,
+      "sha256": "70024a9f9c9e2469bc4e921dda6b7971019db4010fd9dc98240d185fc63bc3e7",
+      "lines_including_embedded_tests": 73,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/interaction-and-shared-state.md",
+      "bytes": 13688,
+      "sha256": "106ec3a2b54ed815e040d93d67858991076343ed00e6acc08e9b09737a01cc39",
+      "lines_including_embedded_tests": 193,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/llamadas-presencia-navegacion-0.11.0.md",
+      "bytes": 14904,
+      "sha256": "78bed12861ec5ba17c4b3e07a70034b78f43a7280a1d7e0f0035b0c0f149733e",
+      "lines_including_embedded_tests": 82,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/llamadas-presencia-navegacion-0.12.0.md",
+      "bytes": 10023,
+      "sha256": "9e9b72782d10c52f685a1f6e99876047657eab490f55d842a8d88d685c094db6",
+      "lines_including_embedded_tests": 145,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/message-limits-pending.md",
+      "bytes": 3598,
+      "sha256": "24fa6a33f5f1128a30a747f66d654e331a12de79abc4833cd176ea7df062f273",
+      "lines_including_embedded_tests": 61,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/microfono-0.11.0.md",
+      "bytes": 14957,
+      "sha256": "ccb63830f75a0057974bf0b97c2bf41ffdfd3289d0a65370e5afb9b67aa6aef0",
+      "lines_including_embedded_tests": 87,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/plan-conexion-envios-adjuntos-ui-2026-10-31.md",
+      "bytes": 53898,
+      "sha256": "3425b120654dca503fd954e6e472c2aa218712a3eec4b18c16f386f094acb969",
+      "lines_including_embedded_tests": 352,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/plan-correcciones-interaccion-llamadas-gifs-2026-10-27.md",
+      "bytes": 90379,
+      "sha256": "cec83b3563feaf6d62e57da3417ac7d19cda16ce26d0f89b14331111223c5dfb",
+      "lines_including_embedded_tests": 603,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/plan-llamadas-presencia-navegacion-2026-11-04.md",
+      "bytes": 87197,
+      "sha256": "5587a776b5b217e022a074856c3554705eddd9bf8b96bdbacf1c40b884d1c2cd",
+      "lines_including_embedded_tests": 641,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/plan-llamadas-presencia-navegacion-2026-11-06-inventario.json",
+      "bytes": 29445,
+      "sha256": "e51817f8476db93e7faa2c13e75323057b37e6d19f10081eb17804e95fdb2aed",
+      "lines_including_embedded_tests": 870,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/plan-optimizacion-robustez-seguridad-2026-10-26.md",
+      "bytes": 40676,
+      "sha256": "07d32434ae0ee8de8644f2ce26e4b29e18cb2b80bcb17d4ee3e0b7466eb177f2",
+      "lines_including_embedded_tests": 319,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/plan-skills.md",
+      "bytes": 16867,
+      "sha256": "4e13fd111374c2f12031bf798d9cbaec8e69d3c4146f3877db047a6e54919da9",
+      "lines_including_embedded_tests": 249,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/profile-baseline-0.5.0.md",
+      "bytes": 2782,
+      "sha256": "49260752ef4660fd705374f82aca88a8089244ea16efb255f0f4a57a5240dd4a",
+      "lines_including_embedded_tests": 44,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/rea-markdown-0.4.0.md",
+      "bytes": 11390,
+      "sha256": "2721a6f746a9c79daf1696af68323c4cfbf8908a9834218806e588fba46622b3",
+      "lines_including_embedded_tests": 145,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/rea-time-game-2026-10-27.md",
+      "bytes": 13332,
+      "sha256": "4ac4e35eebbe8ba08e2d426c4faf8e710ce5e2b5f36837cfb999e448cd6b53d0",
+      "lines_including_embedded_tests": 124,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/runtime-static-0.5.0.md",
+      "bytes": 3544,
+      "sha256": "6c932cc5d6aecbd1e94e12ec067e75f48c232e054ba64b40129301d5384688f2",
+      "lines_including_embedded_tests": 58,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/startup-0.3.2.md",
+      "bytes": 3223,
+      "sha256": "f8c28ac584c7183444bfbfe394da60b928ed7d5475e936dbf4175f676199a422",
+      "lines_including_embedded_tests": 56,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/startup-catalog-0.10.1.md",
+      "bytes": 5455,
+      "sha256": "07282183beb35a7fe883f75035559d9cbc7b00c5b0fa1ab773a7a3c31675f325",
+      "lines_including_embedded_tests": 50,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/timestamps-0.7.0.md",
+      "bytes": 4386,
+      "sha256": "451d3cfadd1623a1ef74ccea2de6856462d78ef582b705bfb7eba81276e0feee",
+      "lines_including_embedded_tests": 70,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/ui-0.4.0.md",
+      "bytes": 8781,
+      "sha256": "46ade25b7e2e82e9bc9bcdcaab31e2bc4ddf296243ac6c0e3b8cfaceec8688d7",
+      "lines_including_embedded_tests": 147,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/ui-0.4.1.md",
+      "bytes": 3269,
+      "sha256": "978fddee48f67298248f1ba5b0c1baaef7159a6a52d39443c819daea78e50687",
+      "lines_including_embedded_tests": 58,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/update-signing-design.md",
+      "bytes": 3098,
+      "sha256": "b3359d80d33b5f4c2e828f205a8407a367c383c541ed867bc4b82ce9e8bc7393",
+      "lines_including_embedded_tests": 50,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/updates.md",
+      "bytes": 9965,
+      "sha256": "ed3cc5d032ac66d0f91eaf2506c146eac919d9a58df7de65e044f1c9ac93280e",
+      "lines_including_embedded_tests": 162,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/uploads.md",
+      "bytes": 4166,
+      "sha256": "a28fd0b95c5b0c51bf87ef0b78fe00e46b43fa16359572070afe3a30d8541011",
+      "lines_including_embedded_tests": 65,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/docs/voice-0.7.0.md",
+      "bytes": 6119,
+      "sha256": "abc612a67a1936ed89b2e2f11ca6e92dba5a1b26ce2525bd44fad5d6afaff1ee",
+      "lines_including_embedded_tests": 99,
+      "group": "documentation",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/.gitattributes",
+      "bytes": 1739,
+      "sha256": "577c94f1702a3ac8e02d28aa2f020f08e155137151059710523892c0229d103b",
+      "lines_including_embedded_tests": 18,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/delivery-0.11.0-local.json",
+      "bytes": 2030,
+      "sha256": "dd6ea5c14e1d7a878d9fc5578819c0767807a6933dc21b559a92714c611df751",
+      "lines_including_embedded_tests": 60,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/delivery-0.12.0-local.json",
+      "bytes": 7324,
+      "sha256": "7de9e20430a58589530596156f118bd6248d9ce25347cd16d5f1891faca70003",
+      "lines_including_embedded_tests": 192,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/production-exports-0.12.0.json",
+      "bytes": 360,
+      "sha256": "4933b32e0e83d6fd4d8d0d034a7558273febe5ee75949bd75fb18028d7013b83",
+      "lines_including_embedded_tests": 16,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/production-host-0.12.0.json",
+      "bytes": 406,
+      "sha256": "489ed620f1a4ffe7eb11d49a7673a0ada77c985355efc3aed46e2592e10a1342",
+      "lines_including_embedded_tests": 14,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/publication-0.11.0.json",
+      "bytes": 2354,
+      "sha256": "a5c9180e2dbb1c78914cc7a496ebe8707d744b2a14a3a0dc1baa2cd1cdc11a9a",
+      "lines_including_embedded_tests": 56,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/publication-0.12.0.json",
+      "bytes": 3084,
+      "sha256": "e9da9362ae5e368188bbe934d476f4fb2a280e2ca1f0da45789498ffe27a7545",
+      "lines_including_embedded_tests": 73,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/source-cut-0.11.0-delivery.json",
+      "bytes": 5048,
+      "sha256": "5b6286f2043eab9772d2ddd68352bf044f4d4d3ee296f4647b52b684ffba766c",
+      "lines_including_embedded_tests": 143,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/source-cut-0.12.0-delivery.json",
+      "bytes": 28906,
+      "sha256": "b953c4e22ef2384c5424917ac28f94479e7411910b25e7ecefaa1713fba4691e",
+      "lines_including_embedded_tests": 756,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/source-cut-0.12.0-workspace-tests.json",
+      "bytes": 28683,
+      "sha256": "532397d22ed4303f1c28df5a8503bf9482ffbf680340d358be9f11f2910f01a5",
+      "lines_including_embedded_tests": 755,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/source-git-map-0.11.0.json",
+      "bytes": 12151,
+      "sha256": "7e9a4050f8e527855c8dad5f028a6b5d693ce19e7a35bc0f11ba37d61e0166fc",
+      "lines_including_embedded_tests": 236,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/source-git-map-0.12.0.json",
+      "bytes": 66073,
+      "sha256": "f21940ac1c40f95d188c18633dc39fb0ccd4bd129e91409d64d1422e037e64e4",
+      "lines_including_embedded_tests": 1300,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t1-call-discovery-source.json",
+      "bytes": 1142,
+      "sha256": "a396804688eb19e5a71e95907990bbccbaa4f10f641537c59b2fd8813c975aae",
+      "lines_including_embedded_tests": 27,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t13-preview-pipeline-0.12.0.json",
+      "bytes": 5146,
+      "sha256": "723897fcbecfb7dafb37b1975aa1cedb91167692ca3ae2f0e17a30ff3447f395",
+      "lines_including_embedded_tests": 161,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t13-review-0.12.0.json",
+      "bytes": 150388,
+      "sha256": "b78b10ae4f5df2472f936ecbcb4e977dbbf0ac1349b016ca0096462c4d259cc3",
+      "lines_including_embedded_tests": 2744,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t2-abi-findings.md",
+      "bytes": 10955,
+      "sha256": "55b9803241b0d02ca82c5a428dfd9ce06556a6ea67313e91f42b9384c75e25ff",
+      "lines_including_embedded_tests": 67,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t2-abi-manifest.json",
+      "bytes": 7978,
+      "sha256": "6cce8af66c9301a6169e2e8e04c9df4b93fdf54955c35be54837175c77b22fc5",
+      "lines_including_embedded_tests": 221,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t2-media-continuity-result.json",
+      "bytes": 4631,
+      "sha256": "6f6cfa2986f0ef5e1b7df3413e0957b91841356e06eb97d37553548815ef549a",
+      "lines_including_embedded_tests": 145,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t2-media-continuity.cjs",
+      "bytes": 1616,
+      "sha256": "e5a9dc4c2be5e0ff05613879634d77e4e33762528e4fe56041bf5107e1366985",
+      "lines_including_embedded_tests": 22,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t2-native-execution-0110.json",
+      "bytes": 1989,
+      "sha256": "df82658f794f6295317278d7a9d1b20239b81d2ce2e3f6a073d93b8d3342040c",
+      "lines_including_embedded_tests": 50,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t2-native-mls-0110-final.json",
+      "bytes": 9667,
+      "sha256": "36d8f6a5e7eca234ba61c387a781acb2a1980b3528620441d105a8b9bf2b92dd",
+      "lines_including_embedded_tests": 341,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t2-native-video-0110-final.json",
+      "bytes": 460,
+      "sha256": "e33e1ed1a982dbdc6c92c337378fe567f8de15882f4402002e6572b731ee87a2",
+      "lines_including_embedded_tests": 18,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t6-package-0110.json",
+      "bytes": 267,
+      "sha256": "7e017e16f475845a37e7f8cd25b7bac2b8cd77a6addd6aa25112127d015d899e",
+      "lines_including_embedded_tests": 6,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t6-production-exports-0110.json",
+      "bytes": 182,
+      "sha256": "304fa855ab05d35daca714ef06e17887c8633be748e38cbf236c3b1306d89f7f",
+      "lines_including_embedded_tests": 11,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t6-production-host-0110.json",
+      "bytes": 406,
+      "sha256": "e016af9a2e8d4524725c0abb84be50fe5128212a595cf399354fa3a93a388bbd",
+      "lines_including_embedded_tests": 14,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t6-source-cut-0.11.0.json",
+      "bytes": 3836,
+      "sha256": "a363c81347c6490d9f59534972057dde472fc88c70ccef7e95b7a225a359080b",
+      "lines_including_embedded_tests": 107,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/evidence/t8-media-continuity-0.12.0.json",
+      "bytes": 5241,
+      "sha256": "c74bcb278208b959ce593d3445972a9fdb2e19f72d52c96f33ba0af7d1f9ed81",
+      "lines_including_embedded_tests": 162,
+      "group": "historical_evidence",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/installer/NotDiscord.iss",
+      "bytes": 15674,
+      "sha256": "da5d6b2d5ad451e0ad16665ca5e24aaede0e17480247b976eb4e3b10a9bf65ea",
+      "lines_including_embedded_tests": 367,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/launch-installed.ps1",
+      "bytes": 4687,
+      "sha256": "d6ecf09de0ef598a7a1aef77573b6cd6c60fdcaa2aaee64b30e800337fe87be0",
+      "lines_including_embedded_tests": 98,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/package.ps1",
+      "bytes": 3850,
+      "sha256": "db69c77e84a53e2d5a35dc99913feb356f5062b0da4a1fb548c964c9bfb9ead5",
+      "lines_including_embedded_tests": 46,
+      "group": "build_config_assets",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/prepare-update-release.ps1",
+      "bytes": 2986,
+      "sha256": "09bd770087264aa27d31c2f7cd6a7b90f26c9cad647044185a33c0ad0df100f9",
+      "lines_including_embedded_tests": 47,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/runtime.json",
+      "bytes": 106,
+      "sha256": "7fd4005078ff897e02a9cbf87d3ea613ef28a9a8f6877f90ebe648bca021319b",
+      "lines_including_embedded_tests": 4,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/scripts/install-update.ps1",
+      "bytes": 15191,
+      "sha256": "11b412adf615cab1aa1aeac0aff3f5394ef0ba2d69349e81e6d9d9b1681351e6",
+      "lines_including_embedded_tests": 247,
+      "group": "build_config_assets",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/scripts/measure-process-counters.ps1",
+      "bytes": 9344,
+      "sha256": "1717ef84d2f75b63b39028655dd1a734938c3e17d85e3cdd3f6ed3987ea70b83",
+      "lines_including_embedded_tests": 130,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/scripts/runtime-inventory.ps1",
+      "bytes": 10216,
+      "sha256": "701a0be0860e012cfdda21cda49e961b2ffbb2705c518f4f8ccce6d7d28bcc2c",
+      "lines_including_embedded_tests": 151,
+      "group": "build_config_assets",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/egui-winit/Cargo.toml",
+      "bytes": 9604,
+      "sha256": "0ca07ad043847a3f6abaa8adb3a83609a8d3eb755d829c9c1f0ce5dc527980dd",
+      "lines_including_embedded_tests": 389,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/egui-winit/Cargo.toml.orig",
+      "bytes": 3834,
+      "sha256": "a006d030b101d0c9075c7fb6ba705f37e10a8efa6da0ece3985d32685ea92782",
+      "lines_including_embedded_tests": 103,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/egui-winit/LICENSE-APACHE",
+      "bytes": 10850,
+      "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+      "lines_including_embedded_tests": 201,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/egui-winit/LICENSE-MIT",
+      "bytes": 1092,
+      "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
+      "lines_including_embedded_tests": 25,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/egui-winit/PATCH-NOTDISCORD.md",
+      "bytes": 1717,
+      "sha256": "e07aceaeb83f93cdb0595de18335e33185bff801ea01d8738e4878771711fe22",
+      "lines_including_embedded_tests": 30,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/egui-winit/README.md",
+      "bytes": 571,
+      "sha256": "7a8ccbb9fbddf24243446291b8e5a4e6bddcb6b565602c9561581926d5ae362b",
+      "lines_including_embedded_tests": 10,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/egui-winit/src/clipboard.rs",
+      "bytes": 5826,
+      "sha256": "75750e1a888f53a58f44f276c450929f624d6cea89a8f81b9ecbf9fd81123dca",
+      "lines_including_embedded_tests": 195,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/egui-winit/src/lib.rs",
+      "bytes": 78188,
+      "sha256": "f259f12a3992dcaa82e3884ebf625eccaca119baafbd099d79ccce4b23364fd6",
+      "lines_including_embedded_tests": 1939,
+      "group": "vendor",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/egui-winit/src/safe_area.rs",
+      "bytes": 2372,
+      "sha256": "2222cf82b8f9b7eff8fa3a3b9348d0ce38a6e72469e53eff0486f88b2f53e36d",
+      "lines_including_embedded_tests": 56,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/egui-winit/src/window_settings.rs",
+      "bytes": 7817,
+      "sha256": "dd932be8e17a69b222015ec1a25cb4e163aa44a204a41760c7b0f53418ef63de",
+      "lines_including_embedded_tests": 216,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/Cargo.toml",
+      "bytes": 13724,
+      "sha256": "2aeb741d47b763ee198ca915c330a6bf0b1fc094dd69357e80278b7852289c61",
+      "lines_including_embedded_tests": 553,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/Cargo.toml.orig",
+      "bytes": 9844,
+      "sha256": "9e406724f6e8e69ea1986f1f4bc592617c3e19ff855b163cd076939d6c8969b9",
+      "lines_including_embedded_tests": 378,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/FEATURES.md",
+      "bytes": 15334,
+      "sha256": "0e7a315f1016e07b0e1045511b6072ce13b3fc372c4fe097d0a8eea3d35ec2e1",
+      "lines_including_embedded_tests": 248,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/LICENSE",
+      "bytes": 11323,
+      "sha256": "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a",
+      "lines_including_embedded_tests": 201,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/PATCH-NOTDISCORD.md",
+      "bytes": 622,
+      "sha256": "f2442d5064d9e19782a15bf0f5efb00817803bda8ca1aa3f438951262b86dd24",
+      "lines_including_embedded_tests": 10,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/README.md",
+      "bytes": 2887,
+      "sha256": "c21ecf8dc8b5cab43c5a8ecf0c043ad4eae6663b962ae6e9d10b7a6e3fb13039",
+      "lines_including_embedded_tests": 70,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/build.rs",
+      "bytes": 1004,
+      "sha256": "eda62c3ebf765708bf1608b51ccf77501b4aa0253214c419f813c6d08d640b1a",
+      "lines_including_embedded_tests": 27,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/docs/res/ATTRIBUTION.md",
+      "bytes": 569,
+      "sha256": "cce791f4d42357649754427331e9a0e0d4ff21f7e49919708991c71a70b7b132",
+      "lines_including_embedded_tests": 11,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/docs/res/keyboard_left_shift_key.svg",
+      "bytes": 74680,
+      "sha256": "c490cbbd7a0bd7de65d2ae46c074678dc8dd03da76e634996b58e76bef4d9551",
+      "lines_including_embedded_tests": 1,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/docs/res/keyboard_numpad_1_key.svg",
+      "bytes": 74682,
+      "sha256": "2892b7039b857875fbfa71a2bbedaa245b92b060aedff71a79a3c555e2fef11c",
+      "lines_including_embedded_tests": 1,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/docs/res/keyboard_right_shift_key.svg",
+      "bytes": 74679,
+      "sha256": "0d585a96f7ef3d06b1609c26d6c836b40bef823fb5337dbb661419bf9bc57929",
+      "lines_including_embedded_tests": 1,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/docs/res/keyboard_standard_1_key.svg",
+      "bytes": 74681,
+      "sha256": "2fc962bb17eeb482dc79cef05b16937d1096d0d25a784c1c27150540437f3e9a",
+      "lines_including_embedded_tests": 1,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/child_window.rs",
+      "bytes": 3821,
+      "sha256": "a605c0d8d2b7e9bbc585a109f82fe0f032dda2ea80e4efb07c396d34576bc10c",
+      "lines_including_embedded_tests": 88,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/control_flow.rs",
+      "bytes": 4627,
+      "sha256": "3c3ab1670113f7ef4b826f91a1daf6b8419171cac3e6042cc3d871c31fcb858d",
+      "lines_including_embedded_tests": 148,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/data/cross.png",
+      "bytes": 159,
+      "sha256": "4db9fec917c6cb3196872073e4168d28c4f3e0ad04c5c41865407088abf279e4",
+      "lines_including_embedded_tests": null,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/data/cross2.png",
+      "bytes": 129,
+      "sha256": "fbeeb71e5d6f24898017739d088acefb522d85108a6f1f96183e60e6b4b1f6e6",
+      "lines_including_embedded_tests": null,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/data/gradient.png",
+      "bytes": 229,
+      "sha256": "8f80c21867a59959b84f9ced19ff3aba7bf4e1cf0e2c24dea2c8465c8705c7ca",
+      "lines_including_embedded_tests": null,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/data/icon.png",
+      "bytes": 2950,
+      "sha256": "4340d72fb8b5d95a10e3b2c02230f1060dff0950a137bd1d830c63dbc020dd45",
+      "lines_including_embedded_tests": null,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/pump_events.rs",
+      "bytes": 2430,
+      "sha256": "9d2b52aee808ba58c4e987eda0562493c15da298de67bba210a5727ceb910c9c",
+      "lines_including_embedded_tests": 80,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/run_on_demand.rs",
+      "bytes": 3377,
+      "sha256": "b12ac771a8e4fd8945170f5dead56905ca6146e98c6203f2e197e50a364d0406",
+      "lines_including_embedded_tests": 99,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/util/fill.rs",
+      "bytes": 4177,
+      "sha256": "9fb51f71015d6a0bac1ab796c1b4806970f4cda6003d996ce2a5fce97c4f5260",
+      "lines_including_embedded_tests": 117,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/util/tracing.rs",
+      "bytes": 694,
+      "sha256": "4df742b6fa78a20e1d1971c789042a154c3cfa83eaea7b670ff56ab6e04f5a86",
+      "lines_including_embedded_tests": 25,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/window.rs",
+      "bytes": 39758,
+      "sha256": "f7cd8787211bb307736dd385766dd22e93a74fecae5f4f45928152a0265537e7",
+      "lines_including_embedded_tests": 1110,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/examples/x11_embed.rs",
+      "bytes": 2251,
+      "sha256": "571f44156b395c4b2466f2bedae81c818817a6b87f1d1958e9b52c117df3f5ad",
+      "lines_including_embedded_tests": 69,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/application.rs",
+      "bytes": 14135,
+      "sha256": "993ddc2bbffca969224b2045dfd6cefd6cadd923df83f8ba24da8da8e5ab3fb4",
+      "lines_including_embedded_tests": 339,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/mod.rs",
+      "bytes": 1648,
+      "sha256": "55a97a82a15c4006dca76e46bbd7ade72e103f54bbcc111bc55341207dff5140",
+      "lines_including_embedded_tests": 77,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/unreleased.md",
+      "bytes": 1192,
+      "sha256": "21810a83a3b89ef6dc1471c8028bcc9beecb467e88bbb944f2cdb9f04633ad1f",
+      "lines_including_embedded_tests": 41,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.10.md",
+      "bytes": 1130,
+      "sha256": "3ed4a49e068409208aa2d1640693bcf835b5b0a5367fc19a03f458edb366a7cb",
+      "lines_including_embedded_tests": 13,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.11.md",
+      "bytes": 1631,
+      "sha256": "81110653eea2a68ff69b19cd540c1461cff1d9a4353fec08dc3a4e26ff44db07",
+      "lines_including_embedded_tests": 27,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.12.md",
+      "bytes": 711,
+      "sha256": "41250756388ef71a6889f076a4ee87f63c6c70bf75597ce3dc5bd812d36d2f82",
+      "lines_including_embedded_tests": 8,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.13.md",
+      "bytes": 1911,
+      "sha256": "021eb96e41f10de60fc33c0463df68194571ecd6169e17cc8c5c938f7f64e5ce",
+      "lines_including_embedded_tests": 20,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.14.md",
+      "bytes": 2821,
+      "sha256": "8ed872d3e8abdd2c18ae1d65976734442ab41194195b31888c155b2bcba21c98",
+      "lines_including_embedded_tests": 21,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.15.md",
+      "bytes": 3935,
+      "sha256": "3c96f73e28f85926440b9db7b445a1786f30bb7ec2844c3f3f57e7849db32b07",
+      "lines_including_embedded_tests": 42,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.16.md",
+      "bytes": 3673,
+      "sha256": "5c8333b5bf024a2f39d91f93846ffe469d141c7b11e5ce501daa720ba64a9196",
+      "lines_including_embedded_tests": 32,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.17.md",
+      "bytes": 1336,
+      "sha256": "2598e37dbb7e495bec60cafe693041fa5d58335a1a38b37a0779edae24e6942a",
+      "lines_including_embedded_tests": 23,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.18.md",
+      "bytes": 4366,
+      "sha256": "f61eab5f6eace3ff07f66d4340c21926172332c748ba3e3fc4b7e07bdfa92ecf",
+      "lines_including_embedded_tests": 52,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.19.md",
+      "bytes": 2130,
+      "sha256": "ea5ca936d53274e8a4f8bd385ba59fff5df866d889a4a69ca329791a664a3aee",
+      "lines_including_embedded_tests": 27,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.20.md",
+      "bytes": 13979,
+      "sha256": "b04bf3e79ee11fd5f9646ccdc076a50c5a7e9749dc872adcc1f392fa1f1b1723",
+      "lines_including_embedded_tests": 200,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.21.md",
+      "bytes": 1346,
+      "sha256": "ebc856323df17decd003fba57fc5e3f5b8c7ae8eaa763048b4d6dbef8ae09b01",
+      "lines_including_embedded_tests": 16,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.22.md",
+      "bytes": 2046,
+      "sha256": "bd56cb152ac452ee4b354ace3976d3abda73d7db3a81afafee25c84cfdf08705",
+      "lines_including_embedded_tests": 37,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.23.md",
+      "bytes": 5137,
+      "sha256": "6570ab734b9201360f5ca592343114bb3de9a608051333a4601c087dff234d5c",
+      "lines_including_embedded_tests": 65,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.24.md",
+      "bytes": 1970,
+      "sha256": "a7bea6cd9d087c0a6ecddbbe5472dd3fa87735f088614c052db808c5742b57a8",
+      "lines_including_embedded_tests": 28,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.25.md",
+      "bytes": 2697,
+      "sha256": "38d2cd8e8b067779b4c86c0b1d7d81a3b5f4101b2868eb316f41bd55e8bff71e",
+      "lines_including_embedded_tests": 31,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.26.md",
+      "bytes": 2745,
+      "sha256": "b7a52b06cdddeff78c1c3e845ab42f5d41a268ef409c5237ddf3e15c1bbb7772",
+      "lines_including_embedded_tests": 36,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.27.md",
+      "bytes": 8901,
+      "sha256": "51765d0114217504dc17c65894194ceb6928601eade2949fa72fcb6c00051528",
+      "lines_including_embedded_tests": 107,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.28.md",
+      "bytes": 7132,
+      "sha256": "12829235afb1ae4481cc74bfff80997d404c987fda69c81bb657d7b709ead394",
+      "lines_including_embedded_tests": 100,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.29.md",
+      "bytes": 18622,
+      "sha256": "04f9f09219695380622359e3ef74ebda5a89549cf8175b7aa965743a9e6d48b0",
+      "lines_including_embedded_tests": 289,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.30.md",
+      "bytes": 16977,
+      "sha256": "5e436376fe1234cf94b08c4cb1dcd6d2e6e7684e4a33b71e17217a8fd0c18721",
+      "lines_including_embedded_tests": 413,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.8.md",
+      "bytes": 1464,
+      "sha256": "c936e8b8ef369180ab9cf8fc24891d398dca5f238cb39467fe79a2f0b19539a1",
+      "lines_including_embedded_tests": 33,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/changelog/v0.9.md",
+      "bytes": 1369,
+      "sha256": "fe9f9f731d585e83c2d35d7c2c560fa892c424d3e7ea1d13050ffdb467d50383",
+      "lines_including_embedded_tests": 22,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/cursor.rs",
+      "bytes": 8117,
+      "sha256": "479eb73a7a23a58b718ce7255345f3f65ed2cf46d2e4e7d1716deb469dd9099b",
+      "lines_including_embedded_tests": 263,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/error.rs",
+      "bytes": 3675,
+      "sha256": "549f95a2afff4435eed400c580b7d512229c7958df19258c0ce2ac30474f121d",
+      "lines_including_embedded_tests": 131,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/event.rs",
+      "bytes": 46604,
+      "sha256": "b22420ef19f19df2031851cdcbe9a1d25b79ef6a2d2c0e8729690daddf818006",
+      "lines_including_embedded_tests": 1190,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/event_loop.rs",
+      "bytes": 24272,
+      "sha256": "f84209476849188122139926697f1fe97e17409a41ef0e8dfadf9bd4718108c7",
+      "lines_including_embedded_tests": 651,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/icon.rs",
+      "bytes": 4082,
+      "sha256": "42780fcdb3dfe001fa24c51e21d326df2961e4232e0b09b0e8d9c3518161e73b",
+      "lines_including_embedded_tests": 117,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/keyboard.rs",
+      "bytes": 67598,
+      "sha256": "fb1400750fb0c6d376415e642c837e0e8ded95f55ba03a8889d336d180620394",
+      "lines_including_embedded_tests": 1804,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/lib.rs",
+      "bytes": 9548,
+      "sha256": "924aead3c0bd3e446e8ee51193c636916f8b0b9d2cbb964e81e160db0f07a2ec",
+      "lines_including_embedded_tests": 217,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/monitor.rs",
+      "bytes": 5460,
+      "sha256": "60d8887910f1d3836544f12d000146d95790f8af54476d7288f73f822377083b",
+      "lines_including_embedded_tests": 167,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/android.rs",
+      "bytes": 8150,
+      "sha256": "7a576387937d93c03654067a7197ec65da6c9f3e39b145a32182fe43f93609bc",
+      "lines_including_embedded_tests": 188,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/ios.rs",
+      "bytes": 17288,
+      "sha256": "bfb43e3067cd74067ce6019048141f86c1524b5a7859756f7b938310e9d9984b",
+      "lines_including_embedded_tests": 435,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/macos.rs",
+      "bytes": 18909,
+      "sha256": "c6685a9e320715b00124d66eb5e9be088cf1f165678e832a86459f0026d215e9",
+      "lines_including_embedded_tests": 531,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/mod.rs",
+      "bytes": 1216,
+      "sha256": "371ae3adce64ba6353c03cc5f7251325b50f0516bed4eca50496f1e42b5f6dfc",
+      "lines_including_embedded_tests": 55,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/modifier_supplement.rs",
+      "bytes": 1312,
+      "sha256": "e23c4a667aec84232ce072b7066a2aa2c912a1a7d5c0b7d9b5b648f877fb642d",
+      "lines_including_embedded_tests": 35,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/orbital.rs",
+      "bytes": 201,
+      "sha256": "e511445fa2d06fc7210a88abbc760395710c60a4c0376d1a4a0ee29e522bf2ac",
+      "lines_including_embedded_tests": 6,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/pump_events.rs",
+      "bytes": 6272,
+      "sha256": "bbdc0f490758f91609f1b46998976e071775bf9f17a7c4a3a12bd6781b0c6b3c",
+      "lines_including_embedded_tests": 143,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/run_on_demand.rs",
+      "bytes": 4676,
+      "sha256": "007047afc1e916f1bc01c5ee1bc959dd865049f17be97dc517abb7bacda66262",
+      "lines_including_embedded_tests": 111,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/scancode.rs",
+      "bytes": 1820,
+      "sha256": "2ce520012ee3ab6b5884d2f74e84380811b6e50c7139eee176fb233d75b25df2",
+      "lines_including_embedded_tests": 50,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/startup_notify.rs",
+      "bytes": 3673,
+      "sha256": "c2b3ba714649268109ab48ef5cc7dddd7dab0198518987f8735c174fe6b2c5b8",
+      "lines_including_embedded_tests": 99,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/wayland.rs",
+      "bytes": 4268,
+      "sha256": "4fd4601c7733275031f14c40d33caca8e493197c40bc721fdd055297f9690d00",
+      "lines_including_embedded_tests": 131,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/web.rs",
+      "bytes": 16678,
+      "sha256": "4dac8e96213a4ca4ec586946f18d16dfbad3666ce1e60b34c4e28eac6e213c5e",
+      "lines_including_embedded_tests": 465,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/windows.rs",
+      "bytes": 27788,
+      "sha256": "1a480966b317ac2f3117b26d379954b2d9af1740472a9ae07e055598862a24eb",
+      "lines_including_embedded_tests": 767,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform/x11.rs",
+      "bytes": 9358,
+      "sha256": "a64f13d1e3e77c4cb3b21faafe87d74e8063bd901e5cb38af98738dbdd0fa911",
+      "lines_including_embedded_tests": 254,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/android/keycodes.rs",
+      "bytes": 27966,
+      "sha256": "ee8674acc597a71665bedd05e7ac79b8efb76570fcefe616e5eeb81474822475",
+      "lines_including_embedded_tests": 608,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/android/mod.rs",
+      "bytes": 38104,
+      "sha256": "17e982ffa857b36166b38a89c99bd4c19e199d847dfb3d43f289ca8d4e3bd066",
+      "lines_including_embedded_tests": 1141,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/ios/app_state.rs",
+      "bytes": 34620,
+      "sha256": "f2ff4a1093ccd4d52f3db86458ea8fbd18805876082c3a4ccc127e8d8e614a6a",
+      "lines_including_embedded_tests": 925,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/ios/event_loop.rs",
+      "bytes": 18404,
+      "sha256": "df8f0d5e25b799b63edba57168ccfd736283c10149d596aab146019fc770a5aa",
+      "lines_including_embedded_tests": 494,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/ios/mod.rs",
+      "bytes": 1493,
+      "sha256": "0707a46215de8a0c7692ae04ade45de27de19988fd3cb54fd4c5553e7c3aea7c",
+      "lines_including_embedded_tests": 52,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/ios/monitor.rs",
+      "bytes": 9359,
+      "sha256": "76abeeafdab29e5dd46426a3f0eb173931b392dcff356bdc1c218e00adefec37",
+      "lines_including_embedded_tests": 277,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/ios/notification_center.rs",
+      "bytes": 886,
+      "sha256": "cdcee390403dc4518402248022ad7d7fcd61ac42a041633f3de684d6533bddd3",
+      "lines_including_embedded_tests": 27,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/ios/view.rs",
+      "bytes": 25388,
+      "sha256": "95f8cb9caf86ef10174c687eb017d110567d8ad3adba89c25c37f41fb6359cc6",
+      "lines_including_embedded_tests": 607,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/ios/view_controller.rs",
+      "bytes": 6728,
+      "sha256": "fe4d8403c4e8f8bba6cb5f45191532649c6e28886536173dc3f546a3c9c9ff69",
+      "lines_including_embedded_tests": 176,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/ios/window.rs",
+      "bytes": 26290,
+      "sha256": "731b07469178cf763d44f43e6dc31a2b1dce89788ac4b5a9e8adf641237ea7f4",
+      "lines_including_embedded_tests": 750,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/common/mod.rs",
+      "bytes": 13,
+      "sha256": "697b29a56eeebe70eed5e9549b53d15c474d8c7f54a7476f992646f8603aeb25",
+      "lines_including_embedded_tests": 1,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/common/xkb/compose.rs",
+      "bytes": 3424,
+      "sha256": "d4f11c74f1e1ffd93ecc75d7fa2afdba25212925f0589d7a9c26b9784a43e344",
+      "lines_including_embedded_tests": 123,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/common/xkb/keymap.rs",
+      "bytes": 40223,
+      "sha256": "e08d41edd547e57df87b6c8da271f7c956a0d4dcead1cf2b17ab2c67652e0c82",
+      "lines_including_embedded_tests": 1044,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/common/xkb/mod.rs",
+      "bytes": 14275,
+      "sha256": "4ae8efa819657fa6cd8c38543f8638d7c7c67af18ff3a8b871919252d87c2400",
+      "lines_including_embedded_tests": 416,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/common/xkb/state.rs",
+      "bytes": 5925,
+      "sha256": "c7a940941b2d1c679a2da163b244d6ec131c2d5d24f75e5265921cdb938c3cb5",
+      "lines_including_embedded_tests": 189,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/mod.rs",
+      "bytes": 32702,
+      "sha256": "ee825f75ba79a7a12932640e8b085fdc897a35d3ec8105a37987ffd166d1c9f2",
+      "lines_including_embedded_tests": 1044,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/event_loop/mod.rs",
+      "bytes": 30268,
+      "sha256": "dd1ceefa859550fb109460ff9b536307dfa457069899244da0220c0a81267edb",
+      "lines_including_embedded_tests": 810,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/event_loop/proxy.rs",
+      "bytes": 791,
+      "sha256": "090756d810c1cdf56832c8b283044f93965f0149db601f40625bb977a05468de",
+      "lines_including_embedded_tests": 28,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/event_loop/sink.rs",
+      "bytes": 1526,
+      "sha256": "3f92a12b7d786f12edfe69925c2ba17194974c427614d4c449335aa843f9d2c2",
+      "lines_including_embedded_tests": 53,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/mod.rs",
+      "bytes": 2375,
+      "sha256": "473911ef643fb20ca22dcc9a7eb9c87344b0914b470b019384d7ba1be1e92111",
+      "lines_including_embedded_tests": 85,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/output.rs",
+      "bytes": 4658,
+      "sha256": "14982bc1e6ba130eb2c3d0da790905d28075cd1cec215b6f74e560fa449f5421",
+      "lines_including_embedded_tests": 163,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/seat/keyboard/mod.rs",
+      "bytes": 14435,
+      "sha256": "dd20e74809b3a7987864bc5cabdbeaf62a8474400ddbc4fc86188ed7a84dea62",
+      "lines_including_embedded_tests": 380,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/seat/mod.rs",
+      "bytes": 7788,
+      "sha256": "70bbd2a8c43a898f4cb2580d38c4f14e478e7331ab65d2e115feb0377fe2fc44",
+      "lines_including_embedded_tests": 235,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/seat/pointer/mod.rs",
+      "bytes": 17688,
+      "sha256": "842ea0e853a3fef090ddf2ff6bc68f00c008f38db3b222468f8332451aa569b8",
+      "lines_including_embedded_tests": 502,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/seat/pointer/relative_pointer.rs",
+      "bytes": 2747,
+      "sha256": "c1e9a253d23827036950ec58fb78f4d3b326b2f57cdff7381f0c0cef8015bea9",
+      "lines_including_embedded_tests": 83,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/seat/text_input/mod.rs",
+      "bytes": 7211,
+      "sha256": "197f1b241915f4d579649e187b653efb7f1bfac9405821f2a2e0eef88e5375c2",
+      "lines_including_embedded_tests": 201,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/seat/touch/mod.rs",
+      "bytes": 6635,
+      "sha256": "dd16a75607cab3ba5723ad6b7a2ad6dd09fa2a63fffa57622367f137ea5d3987",
+      "lines_including_embedded_tests": 220,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/state.rs",
+      "bytes": 14800,
+      "sha256": "18beef206a1d0a1cf72ac65b1cefb4984bc204ca0638ecbbe2cb2c8d316422c9",
+      "lines_including_embedded_tests": 435,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/types/cursor.rs",
+      "bytes": 1640,
+      "sha256": "b513bb85d34e3df1d5bc765e2f88a468e80f43d50464336d5dbaf54332fdf8e7",
+      "lines_including_embedded_tests": 59,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/types/kwin_blur.rs",
+      "bytes": 2068,
+      "sha256": "6cbb4ce3e2484a01bacfa24a55ea3c1659503b18fc48e8f41f341d437f291ea4",
+      "lines_including_embedded_tests": 68,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/types/mod.rs",
+      "bytes": 163,
+      "sha256": "84e32b36a90e15747ce5beae9318f1475d15925a45248147a5b7e9920e74f4c8",
+      "lines_including_embedded_tests": 7,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/types/wp_fractional_scaling.rs",
+      "bytes": 2611,
+      "sha256": "c0897ffeee6f631aac024e9a737b90c18b807a775cf898e64b45fcca84ca97c7",
+      "lines_including_embedded_tests": 78,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/types/wp_viewporter.rs",
+      "bytes": 1931,
+      "sha256": "77b67951f7bdd959555e8b39a8830d4547b28f73a921a4f347a647a9758d156a",
+      "lines_including_embedded_tests": 65,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/types/xdg_activation.rs",
+      "bytes": 3506,
+      "sha256": "8d0fd39c97c6eb19b8231df20624777feca1aa45bb38692ab498e37e42aa5bab",
+      "lines_including_embedded_tests": 103,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/window/mod.rs",
+      "bytes": 25452,
+      "sha256": "30b6c00aa143046e4b1d7277e5fd08ae7ef7f7f084b0c0e62c89e0dda8a5c6c2",
+      "lines_including_embedded_tests": 763,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/wayland/window/state.rs",
+      "bytes": 43519,
+      "sha256": "d09f9c19235a36d0a0068eb82428a27e3a4f318f31925368e573310ae791030a",
+      "lines_including_embedded_tests": 1220,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/activation.rs",
+      "bytes": 6250,
+      "sha256": "e30310151a7277aa8467adb0890b16482913efa6aea1e518a0b1d5ac83e3ec95",
+      "lines_including_embedded_tests": 194,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/atoms.rs",
+      "bytes": 2699,
+      "sha256": "409f77f94faa03e9ae3ab09d62a01e044aaeb5bbde9c9ee5e55ad6994374138b",
+      "lines_including_embedded_tests": 117,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/dnd.rs",
+      "bytes": 5512,
+      "sha256": "89b186416d72fb36ecfaa350cae884949b1445d7a7b99a926eadba861d550243",
+      "lines_including_embedded_tests": 174,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/event_processor.rs",
+      "bytes": 73445,
+      "sha256": "eefe47e789dae7cd56f3579eb292935d6237c886d486688ed2649b2aa6a76237",
+      "lines_including_embedded_tests": 1883,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/ffi.rs",
+      "bytes": 144,
+      "sha256": "a311e1e922ce9dab1d1761854bcff0b64ff50d7c34848a869ef70820cbcbdd79",
+      "lines_including_embedded_tests": 5,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/ime/callbacks.rs",
+      "bytes": 7184,
+      "sha256": "82fe96afa6d46514b54d3c1a35bc9ea8ef44e91750976c17aada99f521f33325",
+      "lines_including_embedded_tests": 206,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/ime/context.rs",
+      "bytes": 12481,
+      "sha256": "c4cbbdd20f6eb46e26521c1e877456363a2752e962ea4c4d27ee0f8e98e545f9",
+      "lines_including_embedded_tests": 376,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/ime/inner.rs",
+      "bytes": 2361,
+      "sha256": "0f8e8070b1590cff566db06d8fd4e849ebfd4066817f60a455cb020dff81ba2d",
+      "lines_including_embedded_tests": 74,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/ime/input_method.rs",
+      "bytes": 12098,
+      "sha256": "b301d72119cd3c87109540a760a7c0cac5cec58ced425a4bf2a91ff1c7dfb700",
+      "lines_including_embedded_tests": 345,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/ime/mod.rs",
+      "bytes": 7251,
+      "sha256": "efa84f5da26bdb10bbed3c0c5089e4aa719985b96fa18215db9c71bf3dcd5f10",
+      "lines_including_embedded_tests": 233,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/mod.rs",
+      "bytes": 34785,
+      "sha256": "811861508c9e34923fc77ff9aa610b1b977b641fd72a919e634ce0d38f788d45",
+      "lines_including_embedded_tests": 1064,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/monitor.rs",
+      "bytes": 10772,
+      "sha256": "5c49263f0ae5355cf56f379544f28301ebe63f4130e3b5744bfb5e1ae5d16fa0",
+      "lines_including_embedded_tests": 355,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/tests/xsettings.dat",
+      "bytes": 6840,
+      "sha256": "26968fe327bd1b9617766cc73128812a582c6254eb9ed1d222bc0d0faea43aac",
+      "lines_including_embedded_tests": 1,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/client_msg.rs",
+      "bytes": 967,
+      "sha256": "76c0c08831829fc010be1150e8f9aa9cc366b25dd344dba381ce7f7d3d3373af",
+      "lines_including_embedded_tests": 31,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/cookie.rs",
+      "bytes": 1516,
+      "sha256": "d53987a8d3bb8e0b4462ed3bf670ff35f1f9c8315f622ad199990cd7629adaef",
+      "lines_including_embedded_tests": 55,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/cursor.rs",
+      "bytes": 5062,
+      "sha256": "e3d229d3f27ed087c8916ba9b7e9ec6f08af11a5064e659f45aeb364ca703d22",
+      "lines_including_embedded_tests": 174,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/geometry.rs",
+      "bytes": 10455,
+      "sha256": "fd2054b2e1c086011cb639830038737654fb9ecbd7fd090f5bcc0cc1567a1803",
+      "lines_including_embedded_tests": 265,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/hint.rs",
+      "bytes": 4886,
+      "sha256": "f5f4744d090bbe6280e09ce2d6ea2da76d0d899d87762059a99d1174b39e47f8",
+      "lines_including_embedded_tests": 169,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/icon.rs",
+      "bytes": 1159,
+      "sha256": "598a457838fff1e3eccc4274a13bdd140419ce303684347604712b127d57c6d6",
+      "lines_including_embedded_tests": 36,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/input.rs",
+      "bytes": 3467,
+      "sha256": "a1db43e9940a20581cc4308f9be5b749d9912208c5bfd5fa6ce7d2aac71daaef",
+      "lines_including_embedded_tests": 106,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/keys.rs",
+      "bytes": 1636,
+      "sha256": "5d6af7d9c91107ad5d9d8451bc3f85922bc5dcb87deb9e215956d03d2a69acba",
+      "lines_including_embedded_tests": 75,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/memory.rs",
+      "bytes": 907,
+      "sha256": "b88e9bb56f20582c85bf07d176011dce4c6357c1de877c6241f2496ad4d27c42",
+      "lines_including_embedded_tests": 42,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/mod.rs",
+      "bytes": 2310,
+      "sha256": "180f12c887da4c10904de7cf2934543784c917338b49d182aba7d098b183a899",
+      "lines_including_embedded_tests": 77,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/modifiers.rs",
+      "bytes": 5563,
+      "sha256": "1f99aa3c76936f76eccc1eab18d39aa38916b97c4429e40818279650a09df78b",
+      "lines_including_embedded_tests": 187,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/mouse.rs",
+      "bytes": 1064,
+      "sha256": "5eb02a1b1206dc05d056da762c210e4828158758d10f547277e7e08d8cead38b",
+      "lines_including_embedded_tests": 49,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/randr.rs",
+      "bytes": 6438,
+      "sha256": "220d9343b2b3987c77fd346154fdfd9a23b004c077e1f57c3649c458a935b502",
+      "lines_including_embedded_tests": 186,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/window_property.rs",
+      "bytes": 5946,
+      "sha256": "a079a7c6a7ed75e39b35cc76e4f55aff54b1cb6887711d1323fd60bc36ab4e4a",
+      "lines_including_embedded_tests": 196,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/wm.rs",
+      "bytes": 5226,
+      "sha256": "09ec80c212ce2110022c8d2d81731e1f7c90438722cff8fae8dbbcc5e92ae220",
+      "lines_including_embedded_tests": 137,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/util/xmodmap.rs",
+      "bytes": 1609,
+      "sha256": "1bd99ff1891b79ff59f38773a1ab5ad3fb9a60fc55643a3787dd3c02b6afb48d",
+      "lines_including_embedded_tests": 56,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/window.rs",
+      "bytes": 74470,
+      "sha256": "caa0e303e2d1956020b1c27ead24dbe9c45fa73559ab38fea9a71d5e111ba8c7",
+      "lines_including_embedded_tests": 1938,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/xdisplay.rs",
+      "bytes": 11135,
+      "sha256": "ddfa5f2140c8cded23e14247011a5fdcc6c2a83d2523584f50d2da49b8a094d6",
+      "lines_including_embedded_tests": 356,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/linux/x11/xsettings.rs",
+      "bytes": 9014,
+      "sha256": "3429aea240688c0faaab7f9725b586b6cd2f3332d6f9b19ac8da7689605713b0",
+      "lines_including_embedded_tests": 325,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/app.rs",
+      "bytes": 7656,
+      "sha256": "14ba9f49d955a906a115c34fd12fdbbda13ac9b75740606e9fe0daeffa903c5b",
+      "lines_including_embedded_tests": 195,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/app_state.rs",
+      "bytes": 17881,
+      "sha256": "cb346eda09cfb7ddb4941fead441e3242eec0c64639a621e7f3116702531b7a4",
+      "lines_including_embedded_tests": 446,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/cursor.rs",
+      "bytes": 8808,
+      "sha256": "537ee43a90cba74cc73801a45b67ef2356d99c7af12489865d0ff78273c6a9c9",
+      "lines_including_embedded_tests": 225,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/event.rs",
+      "bytes": 23632,
+      "sha256": "dd073f82f85c5950eebb45256521da675e216ec56eaacadb7b413b96f1e894d4",
+      "lines_including_embedded_tests": 616,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/event_handler.rs",
+      "bytes": 5303,
+      "sha256": "05b01ef0413ef0eb1004decf7def1131aa0ac6ce445bbcc03606c9c8b3a862c5",
+      "lines_including_embedded_tests": 139,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/event_loop.rs",
+      "bytes": 18381,
+      "sha256": "c538c57419a311e335842f18e55d3e1ba4d493fa88c111d3e956ef81458f0c89",
+      "lines_including_embedded_tests": 523,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/ffi.rs",
+      "bytes": 9114,
+      "sha256": "ae4aed628db11c332c8de422bb181bec15b22e44712b50d0a8eabb98d25f417d",
+      "lines_including_embedded_tests": 256,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/menu.rs",
+      "bytes": 3426,
+      "sha256": "b0bcc89693df6c2f5ff5cbfadaad83cff7fd5815483e2aaeea07b55e61a32ceb",
+      "lines_including_embedded_tests": 107,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/mod.rs",
+      "bytes": 1655,
+      "sha256": "584af72536847910a3e461fb40b9a0f9a375da3200f7ecf38f5d989b3c143d9d",
+      "lines_including_embedded_tests": 61,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/monitor.rs",
+      "bytes": 14690,
+      "sha256": "456ae20157b0c40f98cf2d7b6850fc07aacb510f5cfda27891c0ffcc2ee47e68",
+      "lines_including_embedded_tests": 409,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/observer.rs",
+      "bytes": 12203,
+      "sha256": "c4b1a7e129237924d6f2f20eed2e66d1d9c111b267d2bf1556bec85accc509b4",
+      "lines_including_embedded_tests": 312,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/util.rs",
+      "bytes": 679,
+      "sha256": "9c938d322c89cee11fb041ebd43ef77355fb1a38fc77151ce730133929e32955",
+      "lines_including_embedded_tests": 27,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/view.rs",
+      "bytes": 45271,
+      "sha256": "de63351d7a757d58883600c3f1702fc369cb77b2ae323a4efca7cb520e9da90e",
+      "lines_including_embedded_tests": 1142,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/window.rs",
+      "bytes": 3543,
+      "sha256": "981b8acb0e46f9b153c143b939c8e39a63b994b5d3f8f0c0f24c56b2993bd1f8",
+      "lines_including_embedded_tests": 126,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/macos/window_delegate.rs",
+      "bytes": 76164,
+      "sha256": "791c8112b5eb95d4c5bf7efff3f458432cdfd77598053c3d756ae610323f36ae",
+      "lines_including_embedded_tests": 1910,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/mod.rs",
+      "bytes": 2155,
+      "sha256": "32e11e828a4cee9ad1dcb649beab6b6842f9b5bff4c1e070c67e78c7c1e3d6c6",
+      "lines_including_embedded_tests": 78,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/orbital/event_loop.rs",
+      "bytes": 33392,
+      "sha256": "20865c2ee7405e5dec577bc5aa6c62ca043ae4c3ff0cbd17f6d029ee27b1726d",
+      "lines_including_embedded_tests": 829,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/orbital/mod.rs",
+      "bytes": 6598,
+      "sha256": "6b078d029061621f88dca6b1b88eba78671304779352281a9ee8d84e6c5829ca",
+      "lines_including_embedded_tests": 255,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/orbital/window.rs",
+      "bytes": 15331,
+      "sha256": "a804344a32c90e8ff43a2640f99a63f3a3894a52137dd07a4503a435e7552279",
+      "lines_including_embedded_tests": 509,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/async/abortable.rs",
+      "bytes": 2100,
+      "sha256": "9a6e1ca49d3cc19cd808dc5d0a94a1da16f7049021449aed05073703f1410f1e",
+      "lines_including_embedded_tests": 96,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/async/atomic_waker.rs",
+      "bytes": 846,
+      "sha256": "d06e582da4c06722419566040cf2b9b131139072825d3c6da94183fa42d760ba",
+      "lines_including_embedded_tests": 35,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/async/channel.rs",
+      "bytes": 3200,
+      "sha256": "32c90e56e0c975168e6f1cb05dbec119112f5c34925ebdae02ac3ff933ee66ad",
+      "lines_including_embedded_tests": 113,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/async/concurrent_queue.rs",
+      "bytes": 1198,
+      "sha256": "b2db7edc5ae541bab5157cc057a5c5594aa4083acd6c564f615387799520c1b4",
+      "lines_including_embedded_tests": 52,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/async/dispatcher.rs",
+      "bytes": 3828,
+      "sha256": "8e9f12f85ff04ef43af769eb968208076c47bd8135e31af78e65defe972e58e1",
+      "lines_including_embedded_tests": 106,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/async/mod.rs",
+      "bytes": 580,
+      "sha256": "3d67f5c7205a9c506bf0273d97b786901225c015058eca4408f9aa09de4b5fa4",
+      "lines_including_embedded_tests": 19,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/async/notifier.rs",
+      "bytes": 1971,
+      "sha256": "a13b0d9e0517da28716b86c5155fcce06294e3386f4267a20eac043e97b7fa90",
+      "lines_including_embedded_tests": 72,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/async/waker.rs",
+      "bytes": 3784,
+      "sha256": "c6cde0c84e315972bc1735762961e29ff5cfdb4990a16c6e4196705a32305852",
+      "lines_including_embedded_tests": 131,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/async/wrapper.rs",
+      "bytes": 2842,
+      "sha256": "03aa2bcbf2a4af964f023d34d89344268ecd6851ee14ed62ec80735f7633894e",
+      "lines_including_embedded_tests": 89,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/cursor.rs",
+      "bytes": 24430,
+      "sha256": "4c44bb489893ffa0ce6f72e3949d4f6ec208ef0848ab76e2f2491d49227dd63b",
+      "lines_including_embedded_tests": 730,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/device.rs",
+      "bytes": 174,
+      "sha256": "b01dba26e4eaaa488e25637428d766d64e0ba3985645f9dd4f7a6c999d77243a",
+      "lines_including_embedded_tests": 8,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/error.rs",
+      "bytes": 200,
+      "sha256": "aa81b02160abb8707f5420d373ce9fd664f3255fedb49982f8539caf3a5e6083",
+      "lines_including_embedded_tests": 10,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/event_loop/mod.rs",
+      "bytes": 4203,
+      "sha256": "6352287ae6a0afb3ebcf3919d12c2dfb3821901f790dd31cdd4bf4a3846069a0",
+      "lines_including_embedded_tests": 119,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/event_loop/proxy.rs",
+      "bytes": 810,
+      "sha256": "03062c47460e5c53007bbccb233484435e081c515d7b59edd66bf808b40b3d62",
+      "lines_including_embedded_tests": 29,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/event_loop/runner.rs",
+      "bytes": 31583,
+      "sha256": "e8ecd77ef8c4550ded308827e3975fdc54065ab58413a80b48e2f2bd1325bc8a",
+      "lines_including_embedded_tests": 808,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/event_loop/state.rs",
+      "bytes": 343,
+      "sha256": "989601ab5a56c7eb6ba495d027f6093a64a8fb32facd31ad9e2f0da24697c98a",
+      "lines_including_embedded_tests": 18,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/event_loop/window_target.rs",
+      "bytes": 26317,
+      "sha256": "8c47586f4fba7a77d8ce339289893040287b6c78e6d98dc7f12522522ace337e",
+      "lines_including_embedded_tests": 685,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/keyboard.rs",
+      "bytes": 24028,
+      "sha256": "b15c5d89b2989b516ad87dbdc97b0b41aea6d09f929404894a0a907e4c4a2f6d",
+      "lines_including_embedded_tests": 522,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/main_thread.rs",
+      "bytes": 2595,
+      "sha256": "9658c9a69410784162c983144a5c37638eef4cd6967d24eaedd25f01567ab00c",
+      "lines_including_embedded_tests": 96,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/mod.rs",
+      "bytes": 2230,
+      "sha256": "2208e8c703370f19caa7c545badae78fce6f4bd5c569399dfa5497399212c98e",
+      "lines_including_embedded_tests": 50,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/monitor.rs",
+      "bytes": 1073,
+      "sha256": "a746440b15fd8affbef1cc7bec63bbb40e548494a01b67bfc061fb0e4da77d38",
+      "lines_including_embedded_tests": 53,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/animation_frame.rs",
+      "bytes": 1640,
+      "sha256": "6aee3f5a4ed6c2d6b8d5f570da552a618773e4e513c76746efcdd8c316f94043",
+      "lines_including_embedded_tests": 60,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/canvas.rs",
+      "bytes": 19378,
+      "sha256": "f2272f16a45b2245bd2e7dfc9458899d1fd248a9615ab49d5976bd1584d9af56",
+      "lines_including_embedded_tests": 565,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/event.rs",
+      "bytes": 8846,
+      "sha256": "f73d5c0509b1e4a430ac238712e5963d21d378e0701e9c2b67cf839d890e3fb1",
+      "lines_including_embedded_tests": 270,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/event_handle.rs",
+      "bytes": 1137,
+      "sha256": "3e81317e037627fa4874d28ff6d43dff4cc3f2970f33496ed345910f33eed108",
+      "lines_including_embedded_tests": 38,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/fullscreen.rs",
+      "bytes": 3135,
+      "sha256": "6cf26354391839b55f8d9f1426f842349bb159384a79598a47628da64ae5dc1d",
+      "lines_including_embedded_tests": 103,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/intersection_handle.rs",
+      "bytes": 1002,
+      "sha256": "af2024c3fea10a70fa9fdbb6cca474730fecc9ccdcf1d3bb7cec6305fdb7346b",
+      "lines_including_embedded_tests": 33,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/media_query_handle.rs",
+      "bytes": 1473,
+      "sha256": "0c6dde21f28ee2f47db2cf10f859e158e156549dd1c10141be02d9496ea720ab",
+      "lines_including_embedded_tests": 48,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/mod.rs",
+      "bytes": 7321,
+      "sha256": "60c26a5a11e998a7ebaa0432fdc11aa1458a9b6676ca6c398487f7d9dbbdffc9",
+      "lines_including_embedded_tests": 233,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/pointer.rs",
+      "bytes": 9605,
+      "sha256": "e6277ddcc06acf6d3e09ba95ea54e618c3d355a82f92fa8ee56463bd30c6f643",
+      "lines_including_embedded_tests": 244,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/resize_scaling.rs",
+      "bytes": 10212,
+      "sha256": "fe98de29d14f60d10447ddd87ffec46bd24bfdf90095b608143f8d253627e06e",
+      "lines_including_embedded_tests": 302,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/schedule.rs",
+      "bytes": 11056,
+      "sha256": "351aa8dc3019b4efd8af1457129faafc35ea8ce0581b39b9ac95d141753f2c09",
+      "lines_including_embedded_tests": 342,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/worker.js",
+      "bytes": 244,
+      "sha256": "13d7ad44fd0ad212cb3691cda3b94c0350b8f553447ec3395647472ed8e008cf",
+      "lines_including_embedded_tests": 10,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/web_sys/worker.min.js",
+      "bytes": 127,
+      "sha256": "1781ca3da664be395164092322711dd677283d98753c6b4bfe448586e9fcc8fd",
+      "lines_including_embedded_tests": 1,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/web/window.rs",
+      "bytes": 13810,
+      "sha256": "fc6a7844845ec3b9d84188b59c9ef4bc8f5357a922f34bcb62d7a1dd3ec29424",
+      "lines_including_embedded_tests": 477,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/dark_mode.rs",
+      "bytes": 5721,
+      "sha256": "9fa225a2462e0a0467b7608fc126515f5138d7762f0f86688b17ef9d627f0fe1",
+      "lines_including_embedded_tests": 170,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/definitions.rs",
+      "bytes": 4494,
+      "sha256": "d3eb11a33c6daf98682796f7c019238fdc8bd2d389119699a20c1ed7d9dbddaf",
+      "lines_including_embedded_tests": 148,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/dpi.rs",
+      "bytes": 4356,
+      "sha256": "de57490ede1509fadd0b92404450bb1044aa42fb59a14619e32497618e1dac46",
+      "lines_including_embedded_tests": 112,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/drop_handler.rs",
+      "bytes": 8361,
+      "sha256": "47abcad8770ba1d5ec8c877c8e725aa330c472ef07ec4ffcb60c1e7ae33c41c8",
+      "lines_including_embedded_tests": 237,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/event_loop.rs",
+      "bytes": 110607,
+      "sha256": "6a05004a9d08ee36a48db61f364c9ace032b8e90c53cf64c13d4de31184348c1",
+      "lines_including_embedded_tests": 2690,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/event_loop/runner.rs",
+      "bytes": 14879,
+      "sha256": "dfa68a445d4218098e39c731d27abfb172d55a2580c8e5bd16e209409f315f5b",
+      "lines_including_embedded_tests": 406,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/icon.rs",
+      "bytes": 7503,
+      "sha256": "89dd2f1e567852327cdc20adfb78ce12404f9ecc6786178d4caffe425a8d96c5",
+      "lines_including_embedded_tests": 265,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/ime.rs",
+      "bytes": 5440,
+      "sha256": "fb98b36a12d98bacf7fa88e8444f5d85713d51110e9ada028ce5ca12677a7feb",
+      "lines_including_embedded_tests": 162,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/keyboard.rs",
+      "bytes": 56667,
+      "sha256": "ea36ee9343aea79dedff4833ba3bc205446c9d4400a908d0eaaaa04823b65c3b",
+      "lines_including_embedded_tests": 1339,
+      "group": "vendor",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/keyboard_layout.rs",
+      "bytes": 42736,
+      "sha256": "d324796eaf474c35905f1b539cafaedaa3ee639e8ad7ad9ec559aeb2c56cf722",
+      "lines_including_embedded_tests": 986,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/minimal_ime.rs",
+      "bytes": 2118,
+      "sha256": "f400011bf7f57b50dd6f47066b6b1f354339217887938c26cbd22a062594805c",
+      "lines_including_embedded_tests": 67,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/mod.rs",
+      "bytes": 5208,
+      "sha256": "c739237f4903d6be9aaa3e913e50ae01575a689a4678486a3b82e214adf7020d",
+      "lines_including_embedded_tests": 196,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/monitor.rs",
+      "bytes": 8274,
+      "sha256": "fb177904e37746a41ff7607b60863282c505a885180dc9e069904f379b66f206",
+      "lines_including_embedded_tests": 256,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/raw_input.rs",
+      "bytes": 11228,
+      "sha256": "d36ff2c05cecc97b8b4e293a0a7dff4046a033b128101b07cc04812cbcc24b7a",
+      "lines_including_embedded_tests": 301,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/util.rs",
+      "bytes": 10488,
+      "sha256": "beed128bdedfb31daaa28da786bc6bdae037cbb41e5bf4db4d10678a44c72a68",
+      "lines_including_embedded_tests": 280,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/window.rs",
+      "bytes": 58448,
+      "sha256": "337a9fe3162e6ec2c4075b0a483fcdb9f424d57ac4c758bffc17adf712845bd7",
+      "lines_including_embedded_tests": 1575,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/platform_impl/windows/window_state.rs",
+      "bytes": 19341,
+      "sha256": "505e7ea90e1fa75500cb296cf6ec4cf3f04407c44731ffc9ae1f48e78d8d0f34",
+      "lines_including_embedded_tests": 545,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/utils.rs",
+      "bytes": 623,
+      "sha256": "a6b2a21ab09102d288d9c9bfdd4c9173ae24cd50b18f3b11c6d9842c69ea3fc9",
+      "lines_including_embedded_tests": 28,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/src/window.rs",
+      "bytes": 71910,
+      "sha256": "977153e4a39ae156c0dcbfcbd7270915fbc12c3459591535b351875a226aff97",
+      "lines_including_embedded_tests": 1876,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/tests/send_objects.rs",
+      "bytes": 881,
+      "sha256": "dd13b75fa0584cb03f928de109afd08859cffe9fd7828529ea3f4f1041b5085d",
+      "lines_including_embedded_tests": 36,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/tests/serde_objects.rs",
+      "bytes": 1086,
+      "sha256": "25ba1c2321a77a5b67196dd694eea65f7101f59c78d0a64f511ea02457937396",
+      "lines_including_embedded_tests": 38,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/vendor/winit/tests/sync_object.rs",
+      "bytes": 652,
+      "sha256": "be6f81b8e53b705b6733135d7f3bb3a33294c3c3e28078ffbf3b448d19a98235",
+      "lines_including_embedded_tests": 28,
+      "group": "vendor",
+      "review": "inventory_only"
+    },
+    {
+      "path": "NotDiscord-Rust/verify-package.ps1",
+      "bytes": 2907,
+      "sha256": "bf95d2de7d87ea54ea46de5d774f7fe0a6f5cedcabf095a5bbe8235a5e451d3f",
+      "lines_including_embedded_tests": 29,
+      "group": "build_config_assets",
+      "review": "directed_read"
+    },
+    {
+      "path": "NotDiscord-Rust/version.json",
+      "bytes": 497,
+      "sha256": "7e56b6a6fca19ed838d75effaca458f3d4ba892aa32c3eca47b32019f41f3927",
+      "lines_including_embedded_tests": 14,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2920,
+      "sha256": "18af9fbc21fa8ba5072c59abeae388e779a5327492517053eb22a407d9ee9e45",
+      "lines_including_embedded_tests": 18,
+      "group": "build_config_assets",
+      "review": "inventory_only"
+    },
+    {
+      "path": "skills/notdiscord-planificar/SKILL.md",
+      "bytes": 5453,
+      "sha256": "3f99cdd4e4d8d3a6451f77ee6ef99df8b4c5ad153d37d1b9fc317f86aff656a2",
+      "lines_including_embedded_tests": 91,
+      "group": "skills",
+      "review": "inventory_only"
+    },
+    {
+      "path": "skills/notdiscord-planificar/agents/openai.yaml",
+      "bytes": 281,
+      "sha256": "5001b3e3daf29158d11d12b8f97d468652bf9d2e0bf7c61ad60430cc41233692",
+      "lines_including_embedded_tests": 4,
+      "group": "skills",
+      "review": "inventory_only"
+    },
+    {
+      "path": "skills/notdiscord-planificar/references/plan-template.md",
+      "bytes": 3827,
+      "sha256": "458a68ffde22ea55be88df37e9b4b87b0224dd81dec7b6211be0917a5b3c1994",
+      "lines_including_embedded_tests": 65,
+      "group": "skills",
+      "review": "inventory_only"
+    },
+    {
+      "path": "skills/notdiscord-planificar/references/project-map.md",
+      "bytes": 2923,
+      "sha256": "3662f8f20c8d453bae076950495bdc00afd275c023578ce5efb963c89f48f4f8",
+      "lines_including_embedded_tests": 33,
+      "group": "skills",
+      "review": "inventory_only"
+    },
+    {
+      "path": "skills/notdiscord-programar/SKILL.md",
+      "bytes": 5436,
+      "sha256": "60dd3ad3952068cad83c3043647681740b3e553a979c6e92c9d1d0b9be597a5a",
+      "lines_including_embedded_tests": 92,
+      "group": "skills",
+      "review": "inventory_only"
+    },
+    {
+      "path": "skills/notdiscord-programar/agents/openai.yaml",
+      "bytes": 305,
+      "sha256": "1b515bacdc31e8acaf60e406a9070c0f111fc1070fbec5ab7c66425c8c6ca511",
+      "lines_including_embedded_tests": 6,
+      "group": "skills",
+      "review": "inventory_only"
+    },
+    {
+      "path": "skills/notdiscord-programar/references/project-workflow.md",
+      "bytes": 2954,
+      "sha256": "6483ce438013d55bd8bde7582e4cc42998c6618ba7043a6592e8c9c5ab966acf",
+      "lines_including_embedded_tests": 47,
+      "group": "skills",
+      "review": "inventory_only"
+    },
+    {
+      "path": "skills/notdiscord-programar/references/release.md",
+      "bytes": 4748,
+      "sha256": "fa49e929e1e7a63aa0aa48d5c105d63a0ef1a37bff2e7ae417141d2e8ea22b58",
+      "lines_including_embedded_tests": 72,
+      "group": "skills",
+      "review": "inventory_only"
+    }
+  ]
+}

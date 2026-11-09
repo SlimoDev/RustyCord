@@ -1,0 +1,235 @@
+{
+  "Schema": 1,
+  "Date": "2026-11-09",
+  "TimeZone": "America/Lima",
+  "Variant": "standard",
+  "Version": "0.13.0",
+  "UpdateType": "Mediana",
+  "Branch": "NotDiscord",
+  "BaseRevision": "01c7ed88ae9bcdbe6b4b9288fe6c74fe2c641811",
+  "UncommittedAtBuild": true,
+  "BuildId": "61bc8d3708e4dc9fed61448e6039e1da75ede2eea6079f2d7c5bd9800137637b",
+  "BinaryBuildIdVerified": true,
+  "SourceFilesUnchanged": 189,
+  "ProductionFeatures": [],
+  "DiagnosticFeatures": [
+    "native-probe"
+  ],
+  "ContractCommits": [
+    "413ef27fb3ee4eec62623231e1e91528f4b8fe9f",
+    "abf5704a43e5290d90846fe753391b7520b5179b"
+  ],
+  "WorkspaceLibraryTests": {
+    "AppPassed": 784,
+    "AppIgnored": 5,
+    "CorePassed": 178,
+    "MediaPassed": 59,
+    "Failed": 0,
+    "TotalPassed": 1021
+  },
+  "DiagnosticFeatureTestsPassed": 61,
+  "DiagnosticTestsOverlapMedia": true,
+  "WorkspaceTestsSourceCutSHA256": "a8b25acf8725ef445477445842dc31870bffb5e416dfbacfd1405f01b8893f22",
+  "PostWorkspaceSuiteChange": "Only cfg(native-probe) receive_probe.rs: consume bounded fake output between matrix phases and assert terminal control delivery. Diagnostic61 and both NAPI drivers passed after correction; production code unchanged.",
+  "InitialFailuresResolved": [
+    "Six resource integration visibility/API errors",
+    "Old synchronous-open fixture now consumes real prepared completion and checks same cleanup/error",
+    "Diagnostic publication matrix now consumes bounded output between phases and fails on fatal/control loss"
+  ],
+  "ProductionBuildPassed": true,
+  "AllTargetsReleaseCheckPassed": true,
+  "PackageVerified": true,
+  "ProductionIpcChecks": 7,
+  "DiagnosticFakes": {
+    "Success": true,
+    "CameraScreenMicrophoneCycles": 8,
+    "ReceiverCycles": 64,
+    "PublicationPhases": 32,
+    "PublicationFramesConsumed": 160,
+    "HeartbeatOrderingVerified": true,
+    "RawCallbackGenerationVerified": true,
+    "NativeEngineLoaded": false,
+    "PhysicalDevicesOpened": false,
+    "NetworkConnections": 0
+  },
+  "RustSrcReviewCoverage": {
+    "Current": 179,
+    "Characterized": 179,
+    "Missing": 0,
+    "AncillaryContracts": 11
+  },
+  "VirtualProlongedLedger": {
+    "Hours": 4,
+    "Frames": 14400,
+    "RealCall": false,
+    "NativeRekeyExecution": false
+  },
+  "ReportedDisconnect": {
+    "Version": "0.12.0",
+    "ApproximateDuration": "15 minutes or more",
+    "AffectedSide": "own client",
+    "CausalAttribution": false
+  },
+  "ThirdPartyNativeModuleLoadedForCapabilities": true,
+  "ThirdPartyNativeInitialization": false,
+  "DiscordAccountUsed": false,
+  "PhysicalDevicesUsed": false,
+  "ClientStarted": false,
+  "RealSuspend": false,
+  "InstallerExecuted": false,
+  "C5Open": true,
+  "H10NativeMissingCallbackHypothesisOpen": true,
+  "RealProlongedCallVerified": false,
+  "RemoteAudibilityVerified": false,
+  "PerformanceMeasurements": false,
+  "PreviousInstallerPreserved": true,
+  "UnrelatedFilesPreserved": 6,
+  "UserReadmePlanLinkPreserved": true,
+  "OtherBranchRefs": {
+    "Plus": "d35c06ac7e824c17198791b3d9208f732bc8be81",
+    "Legacy": "637d41f897a0e435c3d7e26d1c400afd6a640d0e"
+  },
+  "Published": false,
+  "RootReleaseAnnounced": false,
+  "PendingManifestRemoteUrlVerified": false,
+  "Artifacts": [
+    {
+      "Path": "dist/NotDiscord-Setup-0.13.0.exe",
+      "Bytes": 119119054,
+      "SHA256": "a595cfad04df656a18924948637e94eca28bf3a5a4f9d5d7012a1aa4e6f291b9"
+    },
+    {
+      "Path": "dist/version-0.13.0.pending.json",
+      "Bytes": 497,
+      "SHA256": "68f4be4a140e3aba6558acbf2dbe0ebc328d4644488e7de39796f23167e61205"
+    },
+    {
+      "Path": "target/installer-payload-0.13.0-20261109/NotDiscord.exe",
+      "Bytes": 28647936,
+      "SHA256": "8d197a2e18d7b9eedd1c5b40f048cce77afd59f9f248be9a3433f9cfb7401cdd"
+    },
+    {
+      "Path": "target/installer-payload-0.13.0-20261109/NotDiscord.Media.node",
+      "Bytes": 4467712,
+      "SHA256": "c7229ef7b8258ab91ef2cbc9c05f7222604740bd380f9d8010a2d424ebbeee7f"
+    },
+    {
+      "Path": "target/installer-payload-0.13.0-20261109/media-runtime/runtime-inventory.json",
+      "Bytes": 7539,
+      "SHA256": "267e6d6be60bb4b0b0e28a3fe8fe2c12dd4003cac872b9d3da25b56b7472578f"
+    },
+    {
+      "Path": "evidence/source-cut-0.13.0-delivery.json",
+      "Bytes": 28839,
+      "SHA256": "61bc8d3708e4dc9fed61448e6039e1da75ede2eea6079f2d7c5bd9800137637b"
+    },
+    {
+      "Path": "evidence/source-cut-0.13.0-tests.json",
+      "Bytes": 28551,
+      "SHA256": "a8b25acf8725ef445477445842dc31870bffb5e416dfbacfd1405f01b8893f22"
+    },
+    {
+      "Path": "evidence/t0-review-0.13.0.json",
+      "Bytes": 287206,
+      "SHA256": "9557e41a2122ac22cd8a6de148c0462a7be9d9bbe6f8e359a0106f9723fd4451"
+    },
+    {
+      "Path": "evidence/media-continuity-0.13.0.json",
+      "Bytes": 5514,
+      "SHA256": "7c68de5963092a5e2fffb7fba0e93770719c7fdb73094047cb970a5293aff6d6"
+    },
+    {
+      "Path": "evidence/preview-pipeline-0.13.0.json",
+      "Bytes": 5419,
+      "SHA256": "0c0f0ccde480113b8410735f1f87fd915388882ac864af18d5744021b5efc1e4"
+    },
+    {
+      "Path": "evidence/production-exports-0.13.0.json",
+      "Bytes": 360,
+      "SHA256": "47b802be893364684d9dab9da78c5eaadc05a7ced4bd2816fb35ca1267a07712"
+    },
+    {
+      "Path": "evidence/production-host-0.13.0.json",
+      "Bytes": 406,
+      "SHA256": "1adaf7d14dc145f681b80ca0921dbf65fc34b38969f055afd7593cdc2838cfd6"
+    }
+  ],
+  "LocalLogsRelativeToAppRoot": [
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/integrated-check.log",
+      "SHA256": "c39fc4dc520b8b9e5defad6821fac391af6a47aae50cb0269b6056f50655f89c"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/integrated-check-2.log",
+      "SHA256": "6d6f6af10f718f4b144ac0bde4909316260895f0202a65dd92d3a28796285590"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/workspace-tests.log",
+      "SHA256": "4de9bb9648aeda1d0662e22a24049544fa049f1e13fdba21ae72af1d66a3f7e6"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/opening-fixture.log",
+      "SHA256": "9581c1eb87b2ca04eacb1824cefc24764c020585d1648da800a646a875043e74"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/workspace-tests-2.log",
+      "SHA256": "bb5088fd1230f561c4523e1ad266154cc383bfd5752da9f73311a1e54619e70e"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/media-feature-tests.log",
+      "SHA256": "56a27b60e047bb5d482d018709ffc73a34763c2b8d66200b04c14f65ad691ace"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/media-feature-tests-2.log",
+      "SHA256": "4211f142d68723ad34d5e42f4496632f77c278a1c419cedf23f143ea83cff74a"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/media-diagnostic-build.log",
+      "SHA256": "fe5dfb2c52d26f68af6d3822d8925c99b9fe9c51e5b252d82dd00648d33070d9"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/media-diagnostic-build-2.log",
+      "SHA256": "a86fe12e02b4b610874d7c72f3edd4e25ee2805c68120f3c6796b7b0c9c6ed82"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/continuity-probe.log",
+      "SHA256": "e04b7310080b16ef5cee1cfdf9130c7bc9575996f07da97410fb6e4a14446996"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/continuity-probe-2.log",
+      "SHA256": "f92cc0e40aea6c23decab4542bb6748a33ad2ea8305f2c9d5061ede83d341256"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/preview-probe.log",
+      "SHA256": "2075a5a42b788b020efc131dc2cf5734a6ff2040addbc742d7faa6a53a54225c"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/production-build.log",
+      "SHA256": "d98851b8d4d62b3a6ee8c99f05609b3830d5fcf5d5b75389433db7da4ddc9329"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/all-targets-release.log",
+      "SHA256": "723115107b5e9270caaa9af91409f93cba81984f490c620ec657463cea3baf4a"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/prepare-runtime.log",
+      "SHA256": "6804b17e46ee7483763dabb5896d86f171ff951d7fb90bc78065365aec3a635f"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/package.log",
+      "SHA256": "f3befa3a0078ed0f265a263b15dc7cb453ce913a9635978cd27d5a9acc622e38"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/verify-package.log",
+      "SHA256": "3d0411d97f1694011561601d021601d6c5bd478c9e7584979b1f9feb246faf16"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/production-host.log",
+      "SHA256": "a511ab2b8000c3bb13582279aa6e076669a0ebc930f061f549e96d5d844fc881"
+    },
+    {
+      "Path": "../.tools/temp/current/modular-013-20261109/installer-build.log",
+      "SHA256": "82363fa56e84120633e580224a963914c8c7f50b64dbc1a8091c0037b7cbce44"
+    }
+  ]
+}

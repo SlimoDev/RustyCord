@@ -1,6 +1,8 @@
-# NotDiscord Rust 0.12.0
+# NotDiscord Rust 0.13.0
 
 Versión principal para Windows en Rust, rama `NotDiscord`. NotDiscord+ conserva su versión anterior en `codex/notdiscord-plus`; esta entrega no actualiza su rama ni su paquete.
+
+0.13.0 es una actualización **Mediana** de estabilidad y modularización: clasificación común de timeouts de voz, contexto de callbacks, IPC fuera del actor, eventos y recursos acotados y superficies de UI compartidas. Pasaron 1.021 pruebas del workspace, 61 del addon diagnóstico (solapadas con media), ambos probes N-API con fakes, build/check release y siete comprobaciones IPC. El [Setup local](dist/NotDiscord-Setup-0.13.0.exe) se generó sin ejecutarlo. La [nota 0.13.0](docs/modularizacion-llamadas-0.13.0.md) y el [informe T0](evidence/t0-review-0.13.0.json) distinguen evidencia y límites. C5 y la causa de los cortes reales desde unos quince minutos siguen abiertos. La publicación del manifiesto se registra después de verificar el asset; la compilación y Setup conservan `release: null`.
 
 0.12.0 es una actualización **Mediana publicada**: ciclo de pantallas y sonido de fin, recuperación coordinada de Gateway/voz/visualización y suspensión de Windows, navegación del perfil, registros de grupo y círculo propio de voz. La [nota 0.12.0](docs/llamadas-presencia-navegacion-0.12.0.md) identifica implementación, pruebas y límites. Pasaron 995 pruebas del workspace y 55 del addon diagnóstico (solapadas con media), build/check release y siete comprobaciones IPC. El [instalador Windows x64](https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.12.0/NotDiscord-Setup-0.12.0.exe) se verificó en GitHub por tamaño y SHA-256, sin ejecutarlo. C5, la pérdida física del micrófono al compartir, sigue abierto; se añade una observación local voluntaria sin grabar audio. El manifiesto de actualización anuncia el asset verificado; el compilado y el incluido en Setup conservan `release: null`.
 
@@ -32,6 +34,7 @@ Plus continúa usando sus archivos anteriores. La sincronización continua y la 
 
 En la publicación 0.12.0, `version.json` anuncia el instalador después de verificar el asset remoto por nombre, estado, tamaño y SHA-256. La etiqueta `NotDiscord-v0.12.0` fija las fuentes `9eb222ffd3a3e962106864317c6cb0a674f13209`; el manifiesto se publica en un commit posterior. El manifiesto compilado e incluido en Setup conserva `release: null` para evitar autorreferencia. El [acta de publicación](evidence/publication-0.12.0.json) distingue esos cortes y el acta local histórica. Las entregas publicadas usan un único Setup con el runtime requerido, tamaño y hashes verificados. El directorio de payload es sólo un temporal de compilación. El actualizador verifica el instalador, guarda los ajustes y utiliza su modo silencioso en la misma ruta elegida; no se publica una edición portable. No se publican cuentas, credenciales, datos, cachés ni herramientas locales.
 
+- [Plan de modularización y estabilidad de llamadas del 9 de noviembre](docs/plan-modularizacion-llamadas-conservador-2026-11-09.md)
 - [Reglas de desarrollo conservador](docs/desarrollo-conservador.md)
 - [Corrección de carga inicial de catálogos en 0.10.1](docs/startup-catalog-0.10.1.md)
 - [Plan y estado de conexión, envíos, adjuntos e interfaz de 0.10.0](docs/plan-conexion-envios-adjuntos-ui-2026-10-31.md)
