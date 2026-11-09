@@ -165,6 +165,7 @@ impl Host {
             id: self.video.sequence,
             native: native.clone(),
             session: 0,
+            generation: 0,
             user: p["userId"].as_str().unwrap_or("").into(),
             kind: "screen",
             local: true,

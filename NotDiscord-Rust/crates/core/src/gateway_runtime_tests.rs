@@ -100,6 +100,22 @@ fn runner_with_game_policy(
     mpsc::Receiver<GatewayEvent>,
     mpsc::Sender<Envelope>,
 ) {
+    runner_with_signal(listener,output_capacity,test_policy,game_policy,Default::default())
+}
+fn runner_with_signal(
+    listener: &TcpListener,
+    output_capacity: usize,
+    test_policy: Policy,
+    game_policy: Arc<GamePresencePolicy>,
+    recovery:Arc<RecoverySignal>,
+) -> (
+    tokio::task::JoinHandle<()>,
+    SafetyGate,
+    CancellationToken,
+    Arc<AtomicBool>,
+    mpsc::Receiver<GatewayEvent>,
+    mpsc::Sender<Envelope>,
+) {
     let (commands, rx) = mpsc::channel(32);
     let (events, output) = mpsc::channel(output_capacity);
     let gate = SafetyGate::default();
@@ -116,7 +132,7 @@ fn runner_with_game_policy(
         format!("ws://{}/", listener.local_addr().unwrap()),
         test_policy,
         game_policy,
-        Default::default(),
+        recovery,
     ));
     (task, gate, cancel, is_ready, output, commands)
 }
@@ -139,6 +155,25 @@ fn closes_preserve_resume_reidentify_and_terminal_decisions() {
             CloseAction::Terminal(SafetyState::ProtocolUnsupported)
         );
     }
+}
+
+#[test]
+fn causal_observation_does_not_consume_dispatch_capacity_or_change_safety_at_its_limit() {
+    let (output,_consumer)=mpsc::channel(1);
+    let mut delivery=Delivery::new(output);
+    let safety=SafetyGate::default();let recovery=RecoverySignal::default();
+    assert!(delivery.push(GatewayEvent::Status("First".into()),&safety));
+    for _ in 0..PENDING_EVENTS {assert!(delivery.push(GatewayEvent::Status("Pending".into()),&safety));}
+    let before=(delivery.pending.len(),delivery.bytes,delivery.output.capacity());
+    for connection in 1..=20 {
+        recovery.observe_exit(GatewayExit::new(GatewayExitReason::DeliveryDeadline,None,connection,0,
+            Instant::now(),None,delivery.pending.len(),delivery.bytes));
+    }
+    assert_eq!((delivery.pending.len(),delivery.bytes,delivery.output.capacity()),before);
+    assert_eq!(safety.state(),SafetyState::Allowed);
+    assert_eq!(recovery.last_exit.lock().unwrap().unwrap().connection,20);
+    assert!(!delivery.push(GatewayEvent::Status("Real overflow".into()),&safety));
+    assert_eq!(safety.state(),SafetyState::SynchronizationRequired);
 }
 #[test]
 fn resumed_subscription_retains_the_unsubscribe_even_if_the_selection_changed_in_queue() {
@@ -555,7 +590,8 @@ async fn ping_has_one_automatic_pong_and_safety_then_closes_the_socket() {
 #[tokio::test]
 async fn missing_heartbeat_ack_reconnects_with_resume_and_last_sequence() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let (task, gate, cancel, is_ready, _output, _commands) = runner(&listener, 32, policy());
+    let recovery=Arc::new(RecoverySignal::default());
+    let (task, gate, cancel, is_ready, mut output, _commands) = runner_with_signal(&listener, 32, policy(),Arc::new(GamePresencePolicy::default()),recovery.clone());
     let mut first = loopback(&listener).await;
     handshake(&mut first, 2).await;
     ready(&mut first).await;
@@ -581,6 +617,11 @@ async fn missing_heartbeat_ack_reconnects_with_resume_and_last_sequence() {
     })
     .await
     .unwrap();
+    let cause=tokio::time::timeout(Duration::from_secs(2),async {
+            loop {if let Some(summary)=*recovery.last_exit.lock().unwrap() {break summary;} tokio::task::yield_now().await;}
+        }).await.unwrap();
+    assert_eq!(cause.reason,GatewayExitReason::HeartbeatTimeout);
+    assert_eq!(cause.connection,1);
     assert_eq!(gate.state(), SafetyState::Allowed);
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(2), task)
@@ -863,7 +904,8 @@ async fn parked_owner_coalesces_stale_clicks_and_resumes_on_one_explicit_request
 async fn no_hello_and_no_ready_stop_after_one_opening_attempt() {
     for send_hello in [false, true] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let (task, gate, cancel, _ready, mut output, _commands) = runner(&listener, 32, policy());
+        let recovery=Arc::new(RecoverySignal::default());
+        let (task, gate, cancel, _ready, mut output, _commands) = runner_with_signal(&listener, 32, policy(),Arc::new(GamePresencePolicy::default()),recovery.clone());
         let mut socket = loopback(&listener).await;
         if send_hello {
             hello(&mut socket).await;
@@ -878,6 +920,12 @@ async fn no_hello_and_no_ready_stop_after_one_opening_attempt() {
                 }
             }
         });
+        let cause=tokio::time::timeout(Duration::from_secs(2),async {
+            loop {if let Some(summary)=*recovery.last_exit.lock().unwrap() {break summary;} tokio::task::yield_now().await;}
+        }).await.unwrap();
+        assert_eq!(cause.reason,if send_hello {GatewayExitReason::ReadyTimeout}else{GatewayExitReason::HelloTimeout});
+        assert_eq!(cause.connection,1);
+        assert!(cause.pending_events<=32);
         stopped(&mut output).await;
         assert!(tokio::time::timeout(Duration::from_millis(40), listener.accept()).await.is_err());
         assert_eq!(gate.state(), SafetyState::Allowed);

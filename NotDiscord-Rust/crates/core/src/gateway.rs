@@ -34,6 +34,9 @@ use shared_recovery::RecoveryBudget;
 #[path = "gateway_power.rs"]
 mod gateway_power;
 use gateway_power::PowerSignal;
+#[path = "gateway_exit.rs"]
+mod gateway_exit;
+pub use gateway_exit::{GatewayExit, GatewayExitReason};
 
 const EVENT_DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -56,12 +59,17 @@ pub struct ConnectionChange {
 /// or its cooldown coalesce into nothing instead of queueing another one.
 #[derive(Default)]
 struct RecoverySignal {
+    last_exit:Mutex<Option<GatewayExit>>,
     requested: AtomicBool,
     wake: Notify,
     budget: Arc<RecoveryBudget>,
     power: PowerSignal,
 }
 impl RecoverySignal {
+    fn observe_exit(&self,summary:GatewayExit) {
+        *self.last_exit.lock().unwrap_or_else(|error|error.into_inner())=Some(summary);
+        crate::diagnostics::gateway_exit(summary);
+    }
     fn request(&self) {
         self.requested.store(true, Ordering::Release);
         self.wake.notify_one();
@@ -163,6 +171,11 @@ pub struct GatewayHandle {
     inner: Arc<Inner>,
 }
 impl GatewayHandle {
+    /// Latest bounded diagnostic observation from this exact transport owner.
+    /// It occupies no dispatch/delivery slot and cannot consume a retry permit.
+    pub fn last_transport_exit(&self)->Option<GatewayExit> {
+        *self.inner.recovery.last_exit.lock().unwrap_or_else(|error|error.into_inner())
+    }
     /// Withdraw desired game activity even during reconnection. This only
     /// acknowledges local queue admission; it never claims a remote wire ACK.
     /// No nonempty activity or arbitrary Gateway operation is admitted offline.

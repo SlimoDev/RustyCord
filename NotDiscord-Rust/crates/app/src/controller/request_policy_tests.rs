@@ -94,7 +94,7 @@ fn a_new_ready_rejects_an_old_catalog_completion_and_secrets_are_not_kept_in_del
             ..Default::default()
         },
         result: Ok(Value::Null),
-        credential: None,
+        credential: None, media_permit:None,
     };
     assert!(!controller.accepts(&done));
     let delta=request_policy::catalog_delta("CHANNEL_CREATE",&json!({"id":"20","type":1,"token":"synthetic-private","recipients":[{"id":"42","username":"fixture","email":"synthetic-private"}]})).unwrap();

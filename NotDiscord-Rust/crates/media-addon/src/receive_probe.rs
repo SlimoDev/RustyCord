@@ -9,6 +9,16 @@ fn fail(message: &str) -> napi::Error {
 fn checked<T>(value: Result<T>) -> napi::Result<T> {
     value.map_err(|error| fail(&error.message))
 }
+/// The old fixture accumulated an entire publication matrix in an unbounded
+/// channel. A real parent consumes between operations; model that consumer,
+/// and fail explicitly if the bounded output ever reports a terminal fault.
+fn consume_output(receiver:&crate::host::output_queue::Receiver)->napi::Result<Vec<Value>> {
+    let delivered=receiver.try_iter().collect::<Vec<_>>();
+    if delivered.iter().any(|event|event["event"]=="fatal") {
+        return Err(fail("The synthetic consumer did not drain bounded host output before a terminal queue fault"));
+    }
+    Ok(delivered)
+}
 
 // Advance only the local test runtime and dispatch its real SocketJoined
 // events. An aborted fake task, like a real socket, is not closed merely
@@ -242,7 +252,7 @@ pub fn run(env: Env) -> napi::Result<Value> {
     // Fake callbacks may stay allocated until V8's next GC. They must not
     // keep this account-free Node test process alive after its assertions.
     sender.unref(&env)?;
-    let (output, receiver) = mpsc::channel();
+    let (output, receiver) = super::super::output_queue::channel(Arc::new(AtomicBool::new(false)));
     let (wake, _wake) = mpsc::sync_channel(1);
     let frames = Arc::new(Mutex::new(LatestFrames::default()));
     let closing = Arc::new(AtomicBool::new(false));
@@ -383,6 +393,28 @@ pub fn run(env: Env) -> napi::Result<Value> {
         callback.call(None, &[image.into_unknown()])?;
         Ok(())
     };
+    // Exercise the production raw RGBA callback, not an injected JSON event.
+    checked(host.video_source(1,"100","generation-camera","camera",true,"",true))?;
+    let generation_id=host.video.sources["generation-camera"].id;
+    checked(host.video_command("setVideoStreamVisible",&json!({"id":generation_id,"visible":true})))?;
+    for _ in receiver.try_iter() {}
+    push_frame("generation-camera")?;
+    if !receiver.try_iter().any(|event|event["event"]=="videoStream"&&event["state"]=="playing"&&event["transportGeneration"]==0) {return Err(fail("Initial raw callback omitted producer generation"));}
+    let old_callback:JsFunction=env.get_reference_value(registered.borrow().get("generation-camera").unwrap())?;
+    frames.lock().unwrap().drain();
+    host.video_suspend(1);
+    {let mut recoveries=host.recoveries.borrow_mut();let protocol=&mut recoveries.get_mut(&1).unwrap().protocol;protocol.suspend();checked(protocol.begin_resume(1))?;}
+    host.video_resume(1);
+    for _ in receiver.try_iter() {}
+    push_frame("generation-camera")?;
+    if !receiver.try_iter().any(|event|event["event"]=="videoStream"&&event["state"]=="playing"&&event["transportGeneration"]==1) {return Err(fail("Rebound raw callback did not capture its new generation"));}
+    frames.lock().unwrap().drain();
+    let mut old_image=env.create_object()?;old_image.set_named_property("width",2)?;old_image.set_named_property("height",1)?;
+    old_image.set_named_property("data",env.create_arraybuffer_with_data(vec![255;8])?.into_raw().into_typedarray(napi::TypedArrayType::Uint8Clamped,8,0)?)?;
+    old_callback.call(None,&[old_image.into_unknown()])?;
+    if !frames.lock().unwrap().drain().is_empty()||receiver.try_iter().any(|event|event["state"]=="playing") {return Err(fail("Detached old raw callback revived a current generation"));}
+    host.video_remove_local(1,"camera");
+    host.recoveries.borrow_mut().get_mut(&1).unwrap().protocol=voice_socket::ResumeState::default();
     let mut peaks = (0, 0, 0);
     let mut stopped_connections = 0;
     // Publication is independent of the local viewer. No output callback or
@@ -684,6 +716,8 @@ pub fn run(env: Env) -> napi::Result<Value> {
     // fake checks ownership and gate continuity; it cannot establish audibility.
     let mut publication_trace=Vec::<Value>::new();
     let mut publication_cycles=0;
+    let mut publication_egress_frames=consume_output(&receiver)?.len();
+    let mut publication_egress_phases=0;
     host.inventories.insert("cameras".into(),(Instant::now(),["synthetic-camera".to_owned()].into_iter().collect()));
     {
         let main=host.sessions.get_mut(&1).unwrap();
@@ -738,6 +772,11 @@ pub fn run(env: Env) -> napi::Result<Value> {
                         return Err(fail("A video transition changed main microphone ownership, gain, encryption or PTT/VAD"));
                     }
                     if publication_cycles==0 {publication_trace.push(json!({"phase":phase,"voiceInput":main.input_diagnostics(Instant::now(),false,host.settings.input_volume)}));}
+                    let delivered=consume_output(&receiver)?;
+                    if phase=="camera-stopped"&&!delivered.iter().any(|event|event["event"]=="cameraState"&&event["state"]=="stopped") {
+                        return Err(fail("The synthetic parent did not receive the confirmed camera stop control"));
+                    }
+                    publication_egress_frames+=delivered.len();publication_egress_phases+=1;
                 }
                 let calls=events.borrow();
                 if calls[calls_before..].iter().any(|call|
@@ -914,6 +953,24 @@ pub fn run(env: Env) -> napi::Result<Value> {
         || !events.borrow().iter().any(|call| call["session"] == 70 && call["method"] == "destroy") {
         return Err(fail("Disconnect did not confirm orphan publication release exactly once"));
     }
+    // Both delivery orders go through the same retained-session failure path.
+    for tick_first in [true,false] {
+        let id=if tick_first {90}else{91};let mut session=make_session(id,false,"")?;
+        session.session_description=true;session.dave_ready=true;session.connected=true;session.local_ready=true;
+        session.heartbeat_interval=Some(Duration::from_secs(1));session.next_heartbeat=Some(Instant::now()-Duration::from_secs(1));
+        session.connect_deadline=None;session.udp_deadline=None;session.dave_deadline=None;
+        let (socket,_)=voice_socket::offline(host.runtime.handle());checked(socket.heartbeat.sent(Instant::now()-Duration::from_secs(3),Duration::from_secs(1)))?;
+        host.voice=Some(id);host.sessions.insert(id,session);host.connections.insert(id,make_connection(id)?);
+        host.recoveries.borrow_mut().insert(id,crate::host::applied_frames::Recovery::default());host.sockets.insert(id,socket);
+        for _ in receiver.try_iter() {}
+        let failure=voice_socket::Failure::new("heartbeat",MediaError::new("VOICE_HEARTBEAT_TIMEOUT","The voice heartbeat acknowledgement did not arrive."));
+        if tick_first {host.tick();host.socket_error(id,0,failure);} else {host.socket_error(id,0,failure);host.tick();}
+        let observed=receiver.try_iter().collect::<Vec<_>>();
+        if observed.iter().filter(|event|event["event"]=="transportError"&&event["code"]=="VOICE_HEARTBEAT_TIMEOUT").count()!=1
+            || !observed.iter().any(|event|event["state"]=="interrupted") || !host.sessions.contains_key(&id)||!host.connections.contains_key(&id)
+            ||host.sockets.contains_key(&id) {return Err(fail("Tick/reader timeout ordering changed retention or duplicated transport failure"));}
+        host.close_all();settle_offline_closes(&mut host)?;
+    }
     let calls = events.borrow();
     let required_disables = calls
         .iter()
@@ -939,6 +996,9 @@ pub fn run(env: Env) -> napi::Result<Value> {
     report["FailedScreenAndLateCallbacksPreserveMainInput"]=json!(true);
     report["RemoteMicrophoneAudibilityVerified"]=json!(false);
     report["SeparateInputAndSanitizedNativeOutputTelemetry"]=json!(true);
+    report["PublicationMatrixConsumesBoundedOutputBetweenPhases"]=json!(true);
+    report["PublicationEgressFramesConsumed"]=json!(publication_egress_frames);
+    report["PublicationEgressPhasesConsumed"]=json!(publication_egress_phases);
     report["ReceiverDeafAndIndependentScreenGainLive"]=json!(true);
     report["LocalPublicationStartsWithoutViewer"]=json!(true);
     report["HidingLocalViewPreservesPublication"]=json!(true);
@@ -948,6 +1008,8 @@ pub fn run(env: Env) -> napi::Result<Value> {
     report["PreviewLateFramesDroppedCurrentRgbaVerified"]=json!(true);
     report["PreviewScreenCallbackAbiVerified"]=json!(true);
     report["DisconnectWithoutMainClosesOwnPublicationAfterJoin"]=json!(true);
+    report["HeartbeatTickAndReaderHaveEquivalentRetainedFailure"]=json!(true);
+    report["RawVideoCallbackGenerationCapturedAndOldSinkRejected"]=json!(true);
     drop(calls);
     Ok(report)
     })();

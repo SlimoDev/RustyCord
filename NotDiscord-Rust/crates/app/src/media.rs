@@ -17,9 +17,12 @@ use tokio::{
     net::windows::named_pipe::ServerOptions,
     sync::{mpsc, oneshot, watch},
 };
+#[path = "media_events.rs"]
+pub(crate) mod events;
 static NEXT_VIDEO_NAMESPACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 static NEXT_DIAGNOSTIC_SCOPE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 static CAPTURE_GATE: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+static RECEIVER_GATE: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
 const MAX_RESPONSE: usize = 262144;
 const MAX_REQUEST: usize = 1024 * 1024;
 // Video namespace zero is shared by every primary host. Diagnostics need a
@@ -117,6 +120,7 @@ pub struct MediaBridge {
     video_frames: SharedVideoFrames,
     video_namespace: u64,
     diagnostic_scope: u64,
+    overloaded: Arc<std::sync::atomic::AtomicBool>,
 }
 impl MediaBridge {
     pub fn is_available(root: &Path) -> bool {
@@ -169,17 +173,18 @@ impl MediaBridge {
     pub async fn start(
         root: &Path,
         data: &Path,
-        events: mpsc::UnboundedSender<Value>,
+        events: events::Sender,
         ctx: eframe::egui::Context,
     ) -> Result<Self, String> {
         Self::start_scoped(root,data,events,ctx,None).await
     }
-    pub async fn start_receiver(root:&Path,data:&Path,events:mpsc::UnboundedSender<Value>,ctx:eframe::egui::Context,frames:SharedVideoFrames)->Result<Self,String> {
+    pub async fn start_receiver(root:&Path,data:&Path,events:events::Sender,ctx:eframe::egui::Context,frames:SharedVideoFrames)->Result<Self,String> {
         let sequence=NEXT_VIDEO_NAMESPACE.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
         if sequence>1_000_000 {return Err("Se agotaron los identificadores de vídeo de esta sesión.".into());}
         Self::start_scoped(root,data,events,ctx,Some((sequence<<32,frames))).await
     }
-    async fn start_scoped(root:&Path,data:&Path,events:mpsc::UnboundedSender<Value>,ctx:eframe::egui::Context,scope:Option<(u64,SharedVideoFrames)>)->Result<Self,String> {
+    async fn start_scoped(root:&Path,data:&Path,events:events::Sender,ctx:eframe::egui::Context,scope:Option<(u64,SharedVideoFrames)>)->Result<Self,String> {
+        if !events.available() {return Err("No hay capacidad para otra entrega multimedia.".into());}
         let normal_root = normal_path(root);
         let root = normal_root.as_path();
         let normal_data = normal_path(data);
@@ -214,10 +219,8 @@ impl MediaBridge {
         let (video_namespace,video_frames)=scope.unwrap_or_else(||(0,Arc::new(std::sync::Mutex::new(LatestFrames::default()))));
         let diagnostic_scope = next_diagnostic_scope();
         if diagnostic_scope == 0 { return Err("Se agotaron los identificadores locales de diagnóstico.".into()); }
-        let gate=capture_gate();
-        let capture_permit=if is_capture_owner {
-            Some(gate.clone().acquire_owned().await.map_err(|_|"El cierre del motor de audio anterior no se pudo confirmar. Reinicia la aplicación antes de abrir otro micrófono.")?)
-        } else {None};
+        let gate=if is_capture_owner {capture_gate()} else {RECEIVER_GATE.get_or_init(||Arc::new(tokio::sync::Semaphore::new(1))).clone()};
+        let capture_permit=Some(gate.clone().acquire_owned().await.map_err(|_|"No se confirmó el cierre del host multimedia anterior. Reinicia la aplicación antes de reemplazarlo.")?);
         let child = tokio::process::Command::new(&executable)
             .env_remove("ELECTRON_RUN_AS_NODE")
             .env_remove("NODE_OPTIONS")
@@ -264,6 +267,7 @@ impl MediaBridge {
         let _ = events.send(ready);
         let (tx, rx) = mpsc::channel::<Request>(16);
         let close = tokio_util::sync::CancellationToken::new();
+        events.bind_close(close.clone());
         let (process_done,process_closed)=watch::channel(None);
         let video_close = close.clone();
         let frames = video_frames.clone();
@@ -277,11 +281,13 @@ impl MediaBridge {
                 else {let _=video_events.send(json!({"event":"videoError","message":message,"error":{"code":"VIDEO_PIPE_FAILED"}}));}
             }
         });
+        let overloaded=Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let overload_reason=overloaded.clone();
         let closed = close.clone();
         let frames = video_frames.clone();
         tokio::spawn(async move {
             let mut reason=tokio::select! {
-                _=closed.cancelled()=>ControlExit::new("HOST_STOP_REQUESTED","Se cerró el receptor solicitado.",true),
+                _=closed.cancelled()=>if overload_reason.load(std::sync::atomic::Ordering::Acquire){ControlExit::new("HOST_CONTROL_CAPACITY","La cola local de control no pudo admitir una parada; el host se cerró de forma segura.",false)}else{ControlExit::new("HOST_STOP_REQUESTED","Se cerró el receptor solicitado.",true)},
                 reason=serve_scoped(reader,write,rx,events.clone(),Some(frames.clone()),video_namespace,diagnostic_scope,(video_namespace!=0).then_some(video_failure_rx))=>reason,
             };
             closed.cancel();
@@ -325,22 +331,28 @@ impl MediaBridge {
             video_frames,
             video_namespace,
             diagnostic_scope,
+            overloaded,
         })
     }
     pub async fn command(&self, kind: &str, args: Value) -> Result<Value, String> {
         if self.close.is_cancelled() {
             return Err("El host multimedia se cerró.".into());
         }
+        let permit=match self.commands.try_reserve() {
+            Ok(permit)=>permit,
+            Err(mpsc::error::TrySendError::Closed(_))=>return Err("El host multimedia no está disponible.".into()),
+            Err(mpsc::error::TrySendError::Full(_))=>{
+                if matches!(kind,"stopShare"|"stopCamera"|"stopWatchStream"|"stopMicTest"|"disconnect"|"shutdown") {
+                    self.overloaded.store(true,std::sync::atomic::Ordering::Release);self.close();
+                    self.await_closed().await?;
+                    return Err("HOST_CONTROL_CAPACITY: se confirmó el cierre del host porque no podía admitir una parada local.".into());
+                }
+                return Err("MEDIA_CAPACITY_DEFERRED: el control local está ocupado; esta orden no se emitió.".into());
+            }
+        };
         prepare_video_request(kind,&args,Some(&self.video_frames),self.video_namespace)?;
         let (tx, rx) = oneshot::channel();
-        self.commands
-            .send(Request {
-                kind: kind.into(),
-                args,
-                done: tx,
-            })
-            .await
-            .map_err(|_| "El host multimedia no está disponible.")?;
+        permit.send(Request {kind:kind.into(),args,done:tx});
         rx.await
             .map_err(|_| "El host multimedia se cerró.".to_owned())?
     }
@@ -375,6 +387,7 @@ impl MediaBridge {
                 video_frames: Arc::new(std::sync::Mutex::new(LatestFrames::default())),
                 video_namespace:0,
                 diagnostic_scope:next_diagnostic_scope(),
+                overloaded:Arc::new(std::sync::atomic::AtomicBool::new(false)),
             },
             calls,
         )
@@ -447,7 +460,7 @@ async fn read_video_lane_scoped(
 #[cfg(test)]
 fn emit_event(
     value: Value,
-    events: &mpsc::UnboundedSender<Value>,
+    events: &events::Sender,
     frames: Option<&SharedVideoFrames>,
 ) {
     emit_scoped_event(value,events,frames,0,0);
@@ -456,7 +469,7 @@ fn clear_video_namespace(frames:&SharedVideoFrames,namespace:u64) {
     let mut frames=frames.lock().unwrap();
     for id in frames.active_ids().into_iter().filter(|id|id>>32==namespace>>32) {frames.remove(id);}
 }
-fn emit_scoped_event(value:Value,events:&mpsc::UnboundedSender<Value>,frames:Option<&SharedVideoFrames>,namespace:u64,diagnostic_scope:u64) {
+fn emit_scoped_event(value:Value,events:&events::Sender,frames:Option<&SharedVideoFrames>,namespace:u64,diagnostic_scope:u64) {
     crate::diagnostics::media_event_scoped(&value,diagnostic_scope);
     if value["event"] == "videoStream" {
         if let (Some(frames), Some(id)) = (frames, value["id"].as_u64()) {
@@ -551,7 +564,7 @@ async fn serve<R, W>(
     reader: BufReader<R>,
     writer: W,
     requests: mpsc::Receiver<Request>,
-    events: mpsc::UnboundedSender<Value>,
+    events: events::Sender,
 ) where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -563,7 +576,7 @@ async fn serve_with_video<R, W>(
     reader: BufReader<R>,
     writer: W,
     requests: mpsc::Receiver<Request>,
-    events: mpsc::UnboundedSender<Value>,
+    events: events::Sender,
     frames: Option<SharedVideoFrames>,
 ) where
     R: AsyncRead + Unpin,
@@ -577,7 +590,11 @@ async fn read_video_failure(receiver:&mut Option<oneshot::Receiver<String>>)->St
     *receiver=None;
     std::future::pending().await
 }
-async fn serve_scoped<R,W>(mut reader:BufReader<R>,mut writer:W,mut requests:mpsc::Receiver<Request>,events:mpsc::UnboundedSender<Value>,frames:Option<SharedVideoFrames>,video_namespace:u64,diagnostic_scope:u64,mut video_failure:Option<oneshot::Receiver<String>>)->ControlExit
+async fn serve_scoped<R,W>(mut reader:BufReader<R>,mut writer:W,mut requests:mpsc::Receiver<Request>,events:events::Sender,frames:Option<SharedVideoFrames>,video_namespace:u64,diagnostic_scope:u64,mut video_failure:Option<oneshot::Receiver<String>>)->ControlExit
+where R:AsyncRead+Unpin,W:AsyncWrite+Unpin {
+    serve_scoped_deadline(reader,writer,requests,events,frames,video_namespace,diagnostic_scope,video_failure,Duration::from_secs(35)).await
+}
+async fn serve_scoped_deadline<R,W>(mut reader:BufReader<R>,mut writer:W,mut requests:mpsc::Receiver<Request>,events:events::Sender,frames:Option<SharedVideoFrames>,video_namespace:u64,diagnostic_scope:u64,mut video_failure:Option<oneshot::Receiver<String>>,control_timeout:Duration)->ControlExit
 where R:AsyncRead+Unpin,W:AsyncWrite+Unpin {
     let mut sequence = 0u64;
     let mut pending = Vec::with_capacity(2048);
@@ -588,14 +605,22 @@ where R:AsyncRead+Unpin,W:AsyncWrite+Unpin {
           // Authorize immediately before writing the enable command. The first
           // raw frame may precede its JSON response on the independent lane.
           if let Err(error)=prepare_video_request(&request.kind,&request.args,frames.as_ref(),video_namespace){let _=request.done.send(Err(error));continue}
+          // One deadline covers writing and reading. A partial write is an
+          // unknown result: retire this pipe and retain the request until the
+          // process owner confirms exit; never reuse its framing for a retry.
+          let deadline=tokio::time::Instant::now()+control_timeout;
           bytes.push(b'\n');let written=tokio::select! {
-            written=writer.write_all(&bytes)=>written,
+            written=tokio::time::timeout_at(deadline,writer.write_all(&bytes))=>written,
             message=read_video_failure(&mut video_failure)=>break 'serve ControlExit::new("VIDEO_PIPE_FAILED",message,false).with_pending(request.done),
           };
-          if written.is_err(){break ControlExit::new("HOST_CONTROL_WRITE_FAILED","No se pudo entregar la orden al receptor.",false).with_pending(request.done)}
+          match written {
+            Err(_)=>break ControlExit::new("HOST_CONTROL_TIMEOUT","La escritura multimedia no terminó a tiempo; su resultado es desconocido.",false).with_pending(request.done),
+            Ok(Err(_))=>break ControlExit::new("HOST_CONTROL_WRITE_FAILED","No se pudo entregar la orden al receptor.",false).with_pending(request.done),
+            Ok(Ok(()))=>{}
+          }
           // Outer errors mean damaged transport. Inner errors are valid helper replies.
           let response=tokio::select! {
-            response=tokio::time::timeout(Duration::from_secs(35),async{loop{let value=read_frame_buffered(&mut reader,&mut pending).await?.ok_or("El host multimedia se cerró.".to_owned())?;if value["id"].as_str()==Some(&id){return Ok::<_,String>(if value["ok"]==true{Ok(value["result"].clone())}else if value["ok"]==false{Err("No se pudo completar la operación multimedia.".into())}else{return Err("Respuesta multimedia no válida.".into())})}if value["event"].is_string(){emit_scoped_event(value,&events,frames.as_ref(),video_namespace,diagnostic_scope);}}})=>response,
+            response=tokio::time::timeout_at(deadline,async{loop{let value=read_frame_buffered(&mut reader,&mut pending).await?.ok_or("El host multimedia se cerró.".to_owned())?;if value["id"].as_str()==Some(&id){return Ok::<_,String>(if value["ok"]==true{Ok(value["result"].clone())}else if value["ok"]==false{Err("No se pudo completar la operación multimedia.".into())}else{return Err("Respuesta multimedia no válida.".into())})}if value["event"].is_string(){emit_scoped_event(value,&events,frames.as_ref(),video_namespace,diagnostic_scope);}}})=>response,
             message=read_video_failure(&mut video_failure)=>break 'serve ControlExit::new("VIDEO_PIPE_FAILED",message,false).with_pending(request.done),
           };
           let(terminal,result)=match response {
@@ -618,7 +643,7 @@ where R:AsyncRead+Unpin,W:AsyncWrite+Unpin {
     };
     requests.close();
     while let Ok(request)=requests.try_recv() {reason.pending.push(request.done);}
-    let _ = writer.shutdown().await;
+    let _ = tokio::time::timeout(Duration::from_secs(1),writer.shutdown()).await;
     reason
 }
 #[repr(C)]
@@ -812,6 +837,38 @@ impl ProcessJob {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn full_local_admission_does_not_wait_or_register_video_and_mandatory_stop_closes_owner(){
+        use super::*;
+        let (mut bridge,_)=MediaBridge::fake(|_,_|Ok(json!({})));
+        let (tx,mut pending)=mpsc::channel(1);let (done,_)=oneshot::channel();
+        assert!(tx.try_send(Request{kind:"first".into(),args:json!({}),done}).is_ok());bridge.commands=Arc::new(tx);
+        let rejected=tokio::time::timeout(Duration::from_millis(100),bridge.command("setVideoStreamVisible",json!({"id":1,"visible":true}))).await.expect("Local admission cannot wait behind IPC").unwrap_err();
+        assert!(rejected.starts_with("MEDIA_CAPACITY_DEFERRED:"));
+        assert!(!bridge.video_frames.lock().unwrap().active_ids().contains(&1));
+        assert!(!bridge.close.is_cancelled());
+        let stopped=bridge.command("stopShare",json!({})).await.unwrap_err();
+        assert!(stopped.starts_with("HOST_CONTROL_CAPACITY:"));assert!(bridge.close.is_cancelled());
+        assert!(bridge.overloaded.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(pending.try_recv().unwrap().kind,"first");assert!(pending.try_recv().is_err());
+    }
+    #[tokio::test]
+    async fn a_partial_stalled_write_expires_without_releasing_its_unknown_completion() {
+        use super::*;
+        let (pipe,_blocked_peer)=tokio::io::duplex(8);
+        let (reader,writer)=tokio::io::split(pipe);
+        let (requests,rx)=mpsc::channel(1);
+        let (events,_)=events::channel();
+        let (done,mut reply)=oneshot::channel();
+        requests.send(Request{kind:"stats".into(),args:json!({}),done}).await.unwrap();
+        let mut exit=serve_scoped_deadline(BufReader::new(reader),writer,rx,events,None,0,0,None,Duration::from_millis(20)).await;
+        assert_eq!(exit.code,"HOST_CONTROL_TIMEOUT");
+        assert_eq!(exit.pending.len(),1);
+        assert!(matches!(reply.try_recv(),Err(oneshot::error::TryRecvError::Empty)));
+        // Production releases these only after observing process exit.
+        exit.pending.pop().unwrap().send(Err("process exit confirmed".into())).unwrap();
+        assert!(reply.await.unwrap().is_err());
+    }
     use super::*;
     #[tokio::test]
     async fn a_confirmed_native_exit_releases_the_capture_lease_for_the_next_host() {
@@ -878,7 +935,7 @@ mod tests {
         let frames=main.video_frames();let (receiver,_)=MediaBridge::fake_receiver(|_,_|Ok(json!({})),frames.clone());
         let receive_id=receiver.fake_video_id();
         {let mut frames=frames.lock().unwrap();assert!(frames.activate(1));assert!(frames.activate(receive_id));}
-        let (events,mut values)=mpsc::unbounded_channel();
+        let (events,mut values)=events::channel();
         emit_scoped_event(json!({"event":"videoStream","id":1,"state":"removed","active":false}),&events,Some(&frames),receiver.video_namespace,receiver.diagnostic_scope);
         assert!(values.try_recv().is_err());assert!(frames.lock().unwrap().active_ids().contains(&1));
         receiver.close();assert_eq!(frames.lock().unwrap().active_ids(),vec![1]);
@@ -938,7 +995,7 @@ mod tests {
         .unwrap();
         assert_eq!(delivered.subscription_id, 7);
         assert_eq!(delivered.rgba, [2; 8]);
-        let (events, _) = mpsc::unbounded_channel();
+        let (events, _) = events::channel();
         emit_event(
             json!({"event":"videoStream","id":7,"active":false,"state":"removed"}),
             &events,
@@ -1002,7 +1059,7 @@ mod tests {
         let (client, server) = tokio::io::duplex(4096);
         let (read, write) = tokio::io::split(client);
         let (tx, rx) = mpsc::channel(16);
-        let (events, mut notices) = mpsc::unbounded_channel();
+        let (events, mut notices) = events::channel();
         let work = tokio::spawn(serve(BufReader::new(read), write, rx, events));
         tokio::spawn(async move {
             let (read, mut write) = tokio::io::split(server);
@@ -1031,6 +1088,7 @@ mod tests {
             video_frames: Default::default(),
             video_namespace:0,
             diagnostic_scope:next_diagnostic_scope(),
+                overloaded:Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         assert!(bridge.command("startCamera", json!({})).await.is_err());
         assert_eq!(
@@ -1046,7 +1104,7 @@ mod tests {
         let (client, server) = tokio::io::duplex(4096);
         let (read, write) = tokio::io::split(client);
         let (tx, rx) = mpsc::channel(16);
-        let (events, _) = mpsc::unbounded_channel();
+        let (events, _) = events::channel();
         let task = tokio::spawn(serve(BufReader::new(read), write, rx, events));
         tokio::spawn(async move {
             let (read, mut write) = tokio::io::split(server);
@@ -1061,6 +1119,7 @@ mod tests {
             video_frames: Default::default(),
             video_namespace:0,
             diagnostic_scope:next_diagnostic_scope(),
+                overloaded:Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         assert!(bridge.command("stats", json!({})).await.is_err());
         task.await.unwrap();
@@ -1101,7 +1160,7 @@ mod tests {
         let (client, server) = tokio::io::duplex(4096);
         let (read, write) = tokio::io::split(client);
         let (tx, rx) = mpsc::channel(16);
-        let (events, mut notices) = mpsc::unbounded_channel();
+        let (events, mut notices) = events::channel();
         let task = tokio::spawn(serve(BufReader::new(read), write, rx, events));
         let (ready, fragment) = oneshot::channel();
         tokio::spawn(async move {
@@ -1131,6 +1190,7 @@ mod tests {
             video_frames: Default::default(),
             video_namespace:0,
             diagnostic_scope:next_diagnostic_scope(),
+                overloaded:Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         assert_eq!(
             bridge.command("stats", json!({})).await.unwrap()["ok"],
@@ -1153,7 +1213,7 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir(&data).unwrap();
-        let (events, mut rx) = mpsc::unbounded_channel();
+        let (events, mut rx) = events::channel();
         let bridge = MediaBridge::start(&root, &data, events, eframe::egui::Context::default())
             .await
             .unwrap();

@@ -26,6 +26,10 @@ use std::{
 use tokio_tungstenite::tungstenite::Message;
 #[path = "host/dispatch_queue.rs"]
 mod dispatch_queue;
+#[path = "host/output_queue.rs"]
+mod output_queue;
+#[path = "host/video_parameters.rs"]
+mod video_parameters;
 #[path = "host/voice_socket.rs"]
 mod voice_socket;
 #[path = "host/applied_frames.rs"]
@@ -85,7 +89,7 @@ pub struct Host {
     initialized: bool,
     receiver_only: bool,
     sender: Sender,
-    output: mpsc::Sender<Value>,
+    output: output_queue::Sender,
     closing: Arc<AtomicBool>,
     runtime: tokio::runtime::Runtime,
     sessions: HashMap<u64, Session>,
@@ -126,8 +130,14 @@ pub fn start(env: Env, engine: JsObject, pipe: String, data_dir: String) -> napi
     if !valid_pipe(&pipe) {
         return Err(napi::Error::from_reason("Invalid private media pipe."));
     }
-    let (output, receiver) = mpsc::channel::<Value>();
     let closing = Arc::new(AtomicBool::new(false));
+    let (output, receiver) = output_queue::channel(closing.clone());
+    let output_watchdog = closing.clone();
+    std::thread::spawn(move || {
+        while !output_watchdog.load(Ordering::Acquire) { std::thread::sleep(Duration::from_millis(100)); }
+        std::thread::sleep(Duration::from_millis(500));
+        std::process::exit(1);
+    });
     let mailbox = Arc::new(dispatch_queue::Mailbox::new(closing.clone(), output.clone()));
     let dispatch_mailbox = mailbox.clone();
     let noop = env.create_function_from_closure("dispatch", |ctx| ctx.env.get_undefined())?;
@@ -225,7 +235,7 @@ pub fn start(env: Env, engine: JsObject, pipe: String, data_dir: String) -> napi
         let mut frame = Vec::new();
         let mut buf = [0; 2048];
         loop {
-            for value in receiver.try_iter() {
+            for value in receiver.try_iter().take(32) {
                 let mut bytes = match serde_json::to_vec(&value) {
                     Ok(v) => v,
                     Err(_) => continue,
@@ -1372,10 +1382,7 @@ impl Host {
             s.streams.push(json!({"type":"video","rid":"100","ssrc":ssrc+1,"rtxSsrc":ssrc+2,"quality":100,"active":false}));
         }
         self.emit(s.state_event("negotiating", None));
-        let mut streams = vec![
-            json!({"type":"audio","ssrc":ssrc,"rid":"","maxBitrate":64000,"soundshare":s.stream()}),
-        ];
-        streams.extend(s.streams.clone());
+        let streams = video_parameters::native_ready(ssrc, s.stream(), &s.streams)?;
         let mut options = json!({"ssrc":ssrc,"address":ip,"port":port,"context":if s.stream(){"stream"}else{"default"},"experiments":[],"qosEnabled":true,"streamParameters":streams});
         if s.stream() {
             options["streamUserId"] = json!(s.credentials.stream_owner);
@@ -2433,19 +2440,7 @@ impl Host {
                 s.camera_deadline = Some(Instant::now() + Duration::from_secs(10));
                 self.stage(&s,"camera-selected");
                 self.emit(json!({"event":"cameraState","token":s.camera_token,"mediaSession":s.id,"state":"preparing"}));
-                let streams: Vec<Value> = s
-                    .streams
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| {
-                        let mut v = v.clone();
-                        v["active"] = json!(i == 0);
-                        v["maxResolution"] = json!({"type":"fixed","width":1280,"height":720});
-                        v["maxFrameRate"] = json!(30);
-                        v["maxBitrate"] = json!(2500000);
-                        v
-                    })
-                    .collect();
+                let streams = video_parameters::configured(&s.streams,1280,720,30,2500000)?;
                 self.conn_call(id,"setTransportOptions",vec![json!({"streamParameters":streams,"encodingVideoWidth":1280,"encodingVideoHeight":720,"encodingVideoFrameRate":30,"captureVideoFrameRate":30,"encodingVideoBitRate":600000,"encodingVideoMinBitRate":200000,"encodingVideoMaxBitRate":2500000})])?;
                 let _ = self.video_source(
                     s.id,
@@ -2498,7 +2493,7 @@ impl Host {
             self.video_remove_local(s.id, "camera");
             let broadcast = self.conn_call(s.id, "setVideoBroadcast", vec![json!(false)]);
             let input = self.eng("setVideoInputDevice", vec![json!("disabled")]);
-            self.send(s.id,12,json!({"audio_ssrc":s.ssrc,"video_ssrc":0,"rtx_ssrc":0,"streams":s.streams.iter().map(|v|json!({"type":v["type"],"rid":v["rid"],"ssrc":v["ssrc"],"rtx_ssrc":v["rtxSsrc"],"quality":v["quality"],"active":false})).collect::<Vec<_>>()}));
+            self.send(s.id,12,json!({"audio_ssrc":s.ssrc,"video_ssrc":0,"rtx_ssrc":0,"streams":video_parameters::gateway(&s.streams,false,Some(false))?}));
             self.emit(json!({"event":"cameraState","token":s.camera_token,"mediaSession":s.id,"state":"stopped"}));
             if let Err(error) = broadcast.and(input) {
                 self.video_error(s.id, &s.credentials.user_id, error);
@@ -2586,7 +2581,7 @@ impl Host {
             }
             p["active"] = json!(active && actual.map(|v| truthy(&v["active"])).unwrap_or(i == 0));
         }
-        self.send(s.id,12,json!({"audio_ssrc":s.ssrc,"video_ssrc":if active{ssrc}else{0},"rtx_ssrc":if active{s.streams.first().map(|v|v["rtxSsrc"].clone()).unwrap_or(json!(0))}else{json!(0)},"streams":s.streams.iter().map(|v|json!({"type":v["type"],"rid":v["rid"],"ssrc":v["ssrc"],"rtx_ssrc":v["rtxSsrc"],"quality":v["quality"],"active":v["active"]})).collect::<Vec<_>>()}));
+        self.send(s.id,12,json!({"audio_ssrc":s.ssrc,"video_ssrc":if active{ssrc}else{0},"rtx_ssrc":if active{s.streams.first().map(|v|v["rtxSsrc"].clone()).unwrap_or(json!(0))}else{json!(0)},"streams":video_parameters::gateway(&s.streams,false,None)?}));
         s.camera_active = active;
         self.emit(json!({"event":"cameraState","token":s.camera_token,"mediaSession":s.id,"state":if active{"active"}else if s.camera_requested{"preparing"}else{"stopped"}}));
         if active {
@@ -2618,20 +2613,7 @@ impl Host {
             s.soundshare_requested = true;
             self.conn_call(s.id,"setTransportOptions",vec![json!({"soundsharePid":selection.pid,"soundshareEventDriven":true,"soundshareLoopback":selection.loopback,"encodingVoiceBitRate":128000})])?;
         }
-        let streams: Vec<Value> = s
-            .streams
-            .iter()
-            .enumerate()
-            .map(|(i, v)| {
-                let mut v = v.clone();
-                v["active"] = json!(i == 0);
-                v["maxResolution"] =
-                    json!({"type":"fixed","width":width,"height":selection.height});
-                v["maxFrameRate"] = json!(selection.fps);
-                v["maxBitrate"] = json!(bitrate);
-                v
-            })
-            .collect();
+        let streams = video_parameters::configured(&s.streams,width,selection.height,selection.fps,bitrate)?;
         let degradation = native::property_json(self.env, &self.engine()?, "DegradationPreference")
             .ok()
             .and_then(|v| v.get("MAINTAIN_FRAMERATE").cloned())
@@ -2641,7 +2623,7 @@ impl Host {
         s.capture_active = true;
         self.conn_call(s.id,"setDesktopSourceWithOptions",vec![json!({"type":parts[0],"sourceId":parts[1],"useVideoHook":false,"useGraphicsCapture":true,"useGraphicsCaptureApiLevel":0,"useCaptureDeviceForEncode":true})])?;
         self.conn_call(s.id, "setVideoBroadcast", vec![json!(true)])?;
-        self.send(s.id,12,json!({"audio_ssrc":s.ssrc,"video_ssrc":streams.first().map(|v|v["ssrc"].clone()).unwrap_or(json!(0)),"rtx_ssrc":streams.first().map(|v|v["rtxSsrc"].clone()).unwrap_or(json!(0)),"streams":streams.iter().map(|v|json!({"type":v["type"],"rid":v["rid"],"ssrc":v["ssrc"],"rtx_ssrc":v["rtxSsrc"],"quality":v["quality"],"active":v["active"],"max_bitrate":v["maxBitrate"],"max_framerate":v["maxFrameRate"],"max_resolution":v["maxResolution"]})).collect::<Vec<_>>()}));
+        self.send(s.id,12,json!({"audio_ssrc":s.ssrc,"video_ssrc":streams.first().map(|v|v["ssrc"].clone()).unwrap_or(json!(0)),"rtx_ssrc":streams.first().map(|v|v["rtxSsrc"].clone()).unwrap_or(json!(0)),"streams":video_parameters::gateway(&streams,true,None)?}));
         s.share_selection = Some(selection);
         self.stage(s,"share-capture-requested");
         Ok(())
@@ -2667,6 +2649,11 @@ impl Host {
         if !self.mic_stop_failed&&self.mic_test.is_some_and(|at| now >= at) {
             let _=self.stop_mic_test();
         }
+        let ledger_events: Vec<_> = self.recoveries.borrow_mut().iter_mut().filter_map(|(id,recovery)| {
+            let generation=recovery.protocol.generation();
+            recovery.diagnostic(now).map(|(pending,age,opcode)|json!({"event":"voiceLedger","mediaSession":id,"transportGeneration":generation,"pendingFrames":pending,"oldestAgeMs":age,"opcode":opcode}))
+        }).collect();
+        for event in ledger_events {self.emit(event);}
         let ids: Vec<_> = self.sessions.keys().copied().collect();
         let mut diagnostic_queries = Vec::new();
         for id in ids {
@@ -2716,7 +2703,10 @@ impl Host {
                     Ok(())
                 })();
                 if let Err(e) = result {
-                    self.fail(&mut s, e)
+                    if matches!(e.code, "VOICE_HEARTBEAT_TIMEOUT" | "VOICE_SEND_CLOSED") {
+                        let generation = self.recoveries.borrow().get(&id).map(|r| r.protocol.generation()).unwrap_or(0);
+                        self.transport_failure(&mut s, generation, voice_socket::Failure::new("heartbeat", e));
+                    } else { self.fail(&mut s, e); }
                 }
                 if !s.closed && !s.stream() {
                     match s.input_capture.poll(now, s.epoch) {

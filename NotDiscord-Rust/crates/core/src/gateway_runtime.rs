@@ -601,6 +601,7 @@ pub(super) async fn run(
     let mut subscription: Option<GatewayCommand> = None;
     let subscription_wire = Arc::new(Mutex::new(SubscriptionState::default()));
     let identify_window = Arc::new(IdentifyWindow::default());
+    let mut connection_counter=0u32;
     'connections: while !cancel.is_cancelled() && safety.state() == SafetyState::Allowed {
         drain_disconnected_clears(&mut commands, &mut status, &mut activity, &mut presence_requested,&game_policy);
         // A positive power pause never opens a replacement while suspended.
@@ -627,7 +628,13 @@ pub(super) async fn run(
         let config = WebSocketConfig::default()
             .max_message_size(Some(32 * 1024 * 1024))
             .max_frame_size(Some(32 * 1024 * 1024));
-        let connection = tokio::select! {biased;_=cancel.cancelled()=>break,_=safety.wait_blocked()=>break,
+        connection_counter=connection_counter.saturating_add(1);
+        let started=Instant::now();
+        let episode=gateway_attempt.as_ref().map_or(0,|permit|permit.episode());
+        let mut exit_reason=GatewayExitReason::Unknown;
+        let mut close_code=None;
+        let mut last_ack=None;
+        let connection = tokio::select! {biased;_=cancel.cancelled()=>{exit_reason=GatewayExitReason::LocalCancelled;None},_=safety.wait_blocked()=>{exit_reason=GatewayExitReason::SafetyStopped;None},
             _=recovery.power.changed(power_epoch)=>None,
             result=tokio::time::timeout(policy.connect,connect_async_with_config(&url,Some(config),false))=>Some(result)};
         let mut cooldown = Duration::ZERO;
@@ -664,41 +671,41 @@ pub(super) async fn run(
                     let emit_deadline = delivery.deadline();
                     tokio::select! {
                         biased;
-                        _=cancel.cancelled()=>break,
-                        _=safety.wait_blocked()=>break,
-                        _=recovery.power.changed(power_epoch)=>break,
+                        _=cancel.cancelled()=>{exit_reason=GatewayExitReason::LocalCancelled;break},
+                        _=safety.wait_blocked()=>{exit_reason=GatewayExitReason::SafetyStopped;break},
+                        _=recovery.power.changed(power_epoch)=>{exit_reason=GatewayExitReason::PowerChanged;break},
                         _=game_policy.changed.notified()=>{
                             if synchronize_game_policy(&mut activity,&mut presence_requested,&game_policy) && ready.load(Ordering::Acquire) && settings_proto::valid_presence(&status) {
-                                if !user(&users,activity.envelope(&status,show_current_game,&game_policy),&safety){break;}
+                                if !user(&users,activity.envelope(&status,show_current_game,&game_policy),&safety){exit_reason=GatewayExitReason::ControlSaturated;break;}
                             }
                         },
-                        _=sleep_until(hello_at.unwrap_or(far)),if hello_at.is_some()=>break,
-                        _=sleep_until(ready_at.unwrap_or(far)),if ready_at.is_some()=>break,
-                        _=sleep_until(emit_deadline.unwrap_or(far)),if emit_deadline.is_some()=>{safety.block(SafetyState::SynchronizationRequired);break;},
+                        _=sleep_until(hello_at.unwrap_or(far)),if hello_at.is_some()=>{exit_reason=GatewayExitReason::HelloTimeout;break},
+                        _=sleep_until(ready_at.unwrap_or(far)),if ready_at.is_some()=>{exit_reason=GatewayExitReason::ReadyTimeout;break},
+                        _=sleep_until(emit_deadline.unwrap_or(far)),if emit_deadline.is_some()=>{exit_reason=GatewayExitReason::DeliveryDeadline;safety.block(SafetyState::SynchronizationRequired);break;},
                         _=sleep_until(heartbeat_at.unwrap_or(far)),if heartbeat_at.is_some()=>{
-                            if !heartbeat_ack {break;}
+                            if !heartbeat_ack {exit_reason=GatewayExitReason::HeartbeatTimeout;break;}
                             heartbeat_ack=false;
-                            if !control(&controls,json!({"op":1,"d":sequence}),&safety) {break;}
+                            if !control(&controls,json!({"op":1,"d":sequence}),&safety) {exit_reason=GatewayExitReason::ControlSaturated;break;}
                             heartbeat_at=Some(Instant::now()+heartbeat_interval);
                         },
-                        _=&mut writer_task=>{writer_joined=true;break;},
+                        _=&mut writer_task=>{writer_joined=true;exit_reason=GatewayExitReason::WriterStopped;break;},
                         permit=output.reserve(),if !delivery.pending.is_empty()=>match permit {Ok(permit)=>delivery.send(permit),Err(_)=>{cancel.cancel();break;}},
                         received=stream.next(),if !prefer_command || commands.is_empty()=>{
                             prefer_command=true;
-                            let Some(Ok(message))=received else {break};
+                            let message=match received {Some(Ok(message))=>message,Some(Err(_))=>{exit_reason=GatewayExitReason::ReaderFailed;break},None=>{exit_reason=GatewayExitReason::Eof;break}};
                             let text=match message {
                                 Message::Text(text)=>text,
-                                Message::Ping(_)=>{if controls.try_send(Control::Flush).is_err(){safety.block(SafetyState::SynchronizationRequired);break;}continue;},
+                                Message::Ping(_)=>{if controls.try_send(Control::Flush).is_err(){exit_reason=GatewayExitReason::ControlSaturated;safety.block(SafetyState::SynchronizationRequired);break;}continue;},
                                 Message::Pong(_)=>continue,
-                                Message::Close(frame)=>{if let Some(frame)=frame {match close_action(frame.code.into()) {CloseAction::Terminal(state)=>safety.block(state),CloseAction::Fresh=>{session_id=None;sequence=None;url=initial_url.clone();},CloseAction::RateLimited=>cooldown=policy.rate_cooldown,CloseAction::Resume=>{}}}break;},
+                                Message::Close(frame)=>{exit_reason=GatewayExitReason::RemoteClose;if let Some(frame)=frame {close_code=Some(frame.code.into());match close_action(frame.code.into()) {CloseAction::Terminal(state)=>safety.block(state),CloseAction::Fresh=>{session_id=None;sequence=None;url=initial_url.clone();},CloseAction::RateLimited=>cooldown=policy.rate_cooldown,CloseAction::Resume=>{}}}break;},
                                 _=>break,
                             };
-                            let Ok(root)=serde_json::from_str::<Value>(&text) else {break};
+                            let Ok(root)=serde_json::from_str::<Value>(&text) else {exit_reason=GatewayExitReason::ProtocolFrame;break};
                             if let Some(seq)=root["s"].as_i64() {sequence=Some(seq);}
                             let data=&root["d"];
                             match i(&root,"op") {
                                 10=>{
-                                    if hello_at.is_none() {safety.block(SafetyState::SynchronizationRequired);break;}
+                                    if hello_at.is_none() {exit_reason=GatewayExitReason::ProtocolHandshake;safety.block(SafetyState::SynchronizationRequired);break;}
                                     let Some(interval)=data["heartbeat_interval"].as_u64().map(Duration::from_millis).filter(|interval|*interval>=policy.min_heartbeat && *interval<=Duration::from_secs(120)) else {safety.block(SafetyState::ProtocolUnsupported);break};
                                     hello_at=None;ready_at=Some(Instant::now()+policy.ready);heartbeat_interval=interval;heartbeat_at=Some(Instant::now()+interval.mul_f64(rand::random::<f64>()));
                                     resume_handshake=Some(session_id.is_some());
@@ -706,24 +713,24 @@ pub(super) async fn run(
                                     if session_id.is_none() {
                                         *subscription_wire.lock().unwrap_or_else(|error|error.into_inner())=SubscriptionState::default();
                                     }
-                                    if !authentication_control(&controls,token.as_str(),session_id.as_deref(),sequence,&status,&safety) {break;}
+                                    if !authentication_control(&controls,token.as_str(),session_id.as_deref(),sequence,&status,&safety) {exit_reason=GatewayExitReason::ControlSaturated;break;}
                                 },
-                                11=>{heartbeat_ack=true;recovery.budget.acknowledge();},
-                                1=>{if !control(&controls,json!({"op":1,"d":sequence}),&safety) {break;}},
-                                7=>break,
-                                9=>{if data.as_bool()!=Some(true) {session_id=None;sequence=None;url=initial_url.clone();}break;},
+                                11=>{heartbeat_ack=true;last_ack=Some(Instant::now());recovery.budget.acknowledge();},
+                                1=>{if !control(&controls,json!({"op":1,"d":sequence}),&safety) {exit_reason=GatewayExitReason::ControlSaturated;break;}},
+                                7=>{exit_reason=GatewayExitReason::ServerReconnect;break},
+                                9=>{exit_reason=GatewayExitReason::InvalidSession;if data.as_bool()!=Some(true) {session_id=None;sequence=None;url=initial_url.clone();}break;},
                                 0=>{
                                     let kind=s(&root,"t");
                                     if matches!(kind.as_str(),"READY"|"RESUMED") && (hello_at.is_some() || handshake_complete || resume_handshake!=Some(kind=="RESUMED") || kind=="RESUMED" && session_id.is_none()) {
-                                        safety.block(SafetyState::SynchronizationRequired);break;
+                                        exit_reason=GatewayExitReason::ProtocolHandshake;safety.block(SafetyState::SynchronizationRequired);break;
                                     }
                                     if kind=="READY" {
-                                        if hello_at.is_some() {safety.block(SafetyState::SynchronizationRequired);break;}
+                                        if hello_at.is_some() {exit_reason=GatewayExitReason::ProtocolHandshake;safety.block(SafetyState::SynchronizationRequired);break;}
                                         let sid=s(data,"session_id");session_id=(!sid.is_empty() && sid.len()<=256).then_some(sid);
                                         let chosen=s(&data["user_settings"],"status");if settings_proto::valid_presence(&chosen) {status=chosen;}
                                         if let Ok(values)=settings_proto::read(&s(data,"user_settings_proto"),true) {if let Some(chosen)=values.status {status=chosen;}show_current_game=values.show_current_game;}
                                         if let Some(next)=resume_url(&s(data,"resume_gateway_url")) {url=next;}
-                                        if !delivery.push(GatewayEvent::Dispatch{kind:"READY_CATALOG".into(),data:crate::catalog::ready_catalog(data)},&safety) {break;}
+                                        if !delivery.push(GatewayEvent::Dispatch{kind:"READY_CATALOG".into(),data:crate::catalog::ready_catalog(data)},&safety) {exit_reason=GatewayExitReason::DeliverySaturated;break;}
                                     }
                                     if matches!(kind.as_str(),"READY"|"RESUMED") {
                                         drain_disconnected_clears(&mut commands,&mut status,&mut activity,&mut presence_requested,&game_policy);
@@ -731,25 +738,25 @@ pub(super) async fn run(
                                         if !recovery.power.mark_ready(power_epoch,&ready) {break;}
                                         ready_at=None;recovery.budget.gateway_ready(Instant::now());
                                         if let Some(attempt)=gateway_attempt.take() {attempt.finish(true);}
-                                        if !delivery.push(GatewayEvent::Status("En línea".into()),&safety) {break;}
-                                        if !delivery.push(connection_event(ConnectionPhase::Synchronized,Duration::ZERO,kind=="RESUMED"),&safety) {break;}
-                                        if let Some(command)=subscription.clone() {if !user(&users,Envelope{command,done:None,game_epoch:game_policy.current().0},&safety){break;}}
+                                        if !delivery.push(GatewayEvent::Status("En línea".into()),&safety) {exit_reason=GatewayExitReason::DeliverySaturated;break;}
+                                        if !delivery.push(connection_event(ConnectionPhase::Synchronized,Duration::ZERO,kind=="RESUMED"),&safety) {exit_reason=GatewayExitReason::DeliverySaturated;break;}
+                                        if let Some(command)=subscription.clone() {if !user(&users,Envelope{command,done:None,game_epoch:game_policy.current().0},&safety){exit_reason=GatewayExitReason::ControlSaturated;break;}}
                                         if presence_requested && settings_proto::valid_presence(&status) {
-                                            if !user(&users,activity.envelope(&status,show_current_game,&game_policy),&safety){break;}
+                                            if !user(&users,activity.envelope(&status,show_current_game,&game_policy),&safety){exit_reason=GatewayExitReason::ControlSaturated;break;}
                                         }
                                     }
                                     if kind=="USER_SETTINGS_UPDATE" {
                                         let chosen=s(data,"status");if settings_proto::valid_presence(&chosen){status=chosen;}
                                         if presence_requested && matches!(&activity,ActivitySelection::Rich(..)) && settings_proto::valid_presence(&status) {
-                                            if !user(&users,activity.envelope(&status,show_current_game,&game_policy),&safety){break;}
+                                            if !user(&users,activity.envelope(&status,show_current_game,&game_policy),&safety){exit_reason=GatewayExitReason::ControlSaturated;break;}
                                         }
-                                        if !delivery.push(GatewayEvent::Dispatch{kind:"SELF_PRESENCE".into(),data:json!({"status":status})},&safety){break;}
+                                        if !delivery.push(GatewayEvent::Dispatch{kind:"SELF_PRESENCE".into(),data:json!({"status":status})},&safety){exit_reason=GatewayExitReason::DeliverySaturated;break;}
                                     }
                                     if kind=="USER_SETTINGS_PROTO_UPDATE" && i(&data["settings"],"type")==1 {
                                         if let Ok(values)=settings_proto::read(&s(&data["settings"],"proto"),!b(data,"partial")) {
                                             if let Some(chosen)=values.status {status=chosen;}if values.show_current_game.is_some(){show_current_game=values.show_current_game;}
-                                            if activity.has_activity() && settings_proto::valid_presence(&status) {if !user(&users,activity.envelope(&status,show_current_game,&game_policy),&safety){break;}}
-                                            if !delivery.push(GatewayEvent::Dispatch{kind:"SELF_PRESENCE".into(),data:json!({"status":status,"show_current_game":show_current_game})},&safety){break;}
+                                            if activity.has_activity() && settings_proto::valid_presence(&status) {if !user(&users,activity.envelope(&status,show_current_game,&game_policy),&safety){exit_reason=GatewayExitReason::ControlSaturated;break;}}
+                                            if !delivery.push(GatewayEvent::Dispatch{kind:"SELF_PRESENCE".into(),data:json!({"status":status,"show_current_game":show_current_game})},&safety){exit_reason=GatewayExitReason::DeliverySaturated;break;}
                                         }
                                     }
                                     if matches!(kind.as_str(),"READY"|"READY_SUPPLEMENTAL") && !delivery.push(GatewayEvent::Dispatch{kind:"READY_METADATA".into(),data:ready_metadata(data)},&safety){break;}
@@ -771,7 +778,7 @@ pub(super) async fn run(
                             if matches!(&envelope.command,GatewayCommand::RichPresence{..}) {
                                 envelope.command=activity.command(&status,show_current_game,&game_policy);
                             }
-                            if !user(&users,envelope,&safety) {break;}
+                            if !user(&users,envelope,&safety) {exit_reason=GatewayExitReason::ControlSaturated;break;}
                         },
                     }
                 }
@@ -792,9 +799,15 @@ pub(super) async fn run(
                 if response.status().as_u16() == 401 =>
             {
                 safety.block(SafetyState::AuthenticationRequired);
+                exit_reason=GatewayExitReason::Authentication;
             }
-            _ => {}
+            Some(Err(_))=>{exit_reason=GatewayExitReason::ConnectTimeout;}
+            Some(Ok(Err(_)))=>{exit_reason=GatewayExitReason::ConnectFailed;}
+            None=>{if exit_reason==GatewayExitReason::Unknown {exit_reason=GatewayExitReason::PowerChanged;}}
         }
+        let summary=GatewayExit::new(exit_reason,close_code,connection_counter,episode,started,last_ack,delivery.pending.len(),delivery.bytes);
+        // Recording occurs at the producer: a blocked actor cannot erase cause.
+        recovery.observe_exit(summary);
         ready.store(false, Ordering::Release);
         if let Some(attempt) = gateway_attempt.take() { attempt.finish(false); }
         recovery.budget.gateway_lost(Instant::now());

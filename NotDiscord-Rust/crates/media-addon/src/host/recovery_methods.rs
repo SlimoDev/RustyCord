@@ -130,6 +130,12 @@ impl Host {
     pub(super) fn socket_error(&mut self, id: u64, generation: u64, failure: voice_socket::Failure) {
         if !self.socket_current(id, generation) { return; }
         let Some(mut s) = self.sessions.remove(&id) else { return; };
+        self.transport_failure(&mut s, generation, failure);
+        if !s.closed { self.sessions.insert(id, s); }
+    }
+    pub(super) fn transport_failure(&mut self, s: &mut Session, generation: u64, failure: voice_socket::Failure) {
+        let id=s.id;
+        if self.recoveries.borrow().get(&id).is_none_or(|r|r.protocol.generation()!=generation || r.interrupted) {return;}
         let class = failure.disposition();
         let close = failure.close_code.map(|code| code.value());
         self.emit(json!({"event":"transportError","mediaSession":id,"phase":failure.phase,
@@ -137,15 +143,14 @@ impl Host {
         let resumable = class == RecoveryClass::ResumeCandidate && s.session_description
             && self.connections.contains_key(&id);
         if resumable {
-            if let Err(error) = self.suspend_session(&mut s, failure.error, close) { self.fail(&mut s, error); }
-            if !s.closed { self.sessions.insert(id, s); }
+            if let Err(error) = self.suspend_session(s, failure.error, close) { self.fail(s, error); }
         } else {
             let mut event = s.state_event("error", Some(failure.error));
             event["closeCode"] = json!(close);
             event["recoveryClass"] = json!(match class { RecoveryClass::ResumeCandidate => "fresh-candidate",
                 RecoveryClass::SessionInvalid => "session-invalid", RecoveryClass::Terminal => "terminal" });
             self.emit(event);
-            self.close(&mut s, false);
+            self.close(s, false);
         }
     }
     pub(super) fn recovery_command(&mut self, name: &str, p: &Value) -> Result<Value> {

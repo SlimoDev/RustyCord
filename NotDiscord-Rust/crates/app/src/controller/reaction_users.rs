@@ -231,7 +231,7 @@ mod tests {
         c.reaction_queries.pending=Some(s(&first_result,"requestId"));
         c.reaction_queries.queued=Some(request("33"));
         let stale=Completed {generation:c.generation,nav:None,action:UiAction::new("__reaction-users"),
-            result:Ok(first_result.clone()),credential:None};
+            result:Ok(first_result.clone()),credential:None,media_permit:None};
         c.generation=c.generation.wrapping_add(1);
         c.reset_session_view();
         assert!(!c.accepts(&stale));

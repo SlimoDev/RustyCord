@@ -95,6 +95,7 @@ struct Completed {
     action: UiAction,
     result: Reply,
     credential: Option<crate::authentication::Credential>,
+    media_permit: Option<crate::media::events::Permit>,
 }
 #[cfg(test)]
 struct TestDataDirectory(PathBuf);
@@ -256,7 +257,7 @@ pub async fn run(
     loop {
         tokio::select! {
             action=actions.recv()=>match action{Some(action)=>{if action.kind=="shutdown"{break}if let Err(error)=c.act(action.clone()).await{c.action_error(&action,error)}},None=>break},
-            done=replies.recv()=>if let Some(done)=done{if c.accepts(&done){if let Some(credential)=done.credential {c.login_pending=false;c.disconnect().await;c.connect_secret(credential.into_secret());}else{match done.result{Ok(value)=>if let Err(error)=c.complete(done.action.clone(),value).await{c.complete_failed(&done.action).await;c.completion_error(&done.action,error)},Err(error)=>{c.complete_failed(&done.action).await;c.completion_error(&done.action,error)}}}}},
+            done=replies.recv()=>if let Some(done)=done{if c.accepts(&done){if let Some(credential)=done.credential {c.login_pending=false;c.disconnect().await;c.connect_secret(credential.into_secret());}else{match done.result{Ok(value)=>if let Err(error)=c.complete(done.action.clone(),if let Some(permit)=done.media_permit.as_ref(){permit.refresh(value)}else{value}).await{c.complete_failed(&done.action).await;c.completion_error(&done.action,error)},Err(error)=>{c.complete_failed(&done.action).await;c.completion_error(&done.action,error)}}}}},
             event=async{match &mut c.gateway_rx{Some(rx)=>rx.recv().await,None=>std::future::pending().await}}=>match event{Some(GatewayEvent::Dispatch{kind,data})=>{if let Err(error)=c.dispatch(&kind,data).await{c.error(error)}},Some(GatewayEvent::Status(status))=>{c.state.connection=status;c.publish();},Some(GatewayEvent::Connection(change))=>c.connection_changed(change),Some(GatewayEvent::Safety(state))=>{if let Some(api)=&c.api {api.safety().block(state);}},None=>{c.gateway_rx=None;c.gateway_ended();}},
             _=tokio::time::sleep_until(tokio::time::Instant::from_std(next_tick))=>{
                 c.tick().await;next_tick=Instant::now()+c.maintenance_delay();
@@ -719,7 +720,7 @@ impl Controller {
                 nav,
                 action,
                 result,
-                credential: None,
+                credential: None, media_permit: None,
             });
         });
     }
@@ -732,7 +733,7 @@ impl Controller {
             use futures_util::FutureExt;
             let result=std::panic::AssertUnwindSafe(future).catch_unwind().await
                 .unwrap_or_else(|_|Err("No se pudo confirmar un cierre multimedia.".into()));
-            let _=tx.send(Completed {generation,nav:None,action,result,credential:None});
+            let _=tx.send(Completed {generation,nav:None,action,result,credential:None,media_permit:None});
         });
     }
     fn launch_credential(&self) {
@@ -757,7 +758,7 @@ impl Controller {
                 nav: None,
                 action: UiAction::new("__credential"),
                 result,
-                credential,
+                credential, media_permit:None,
             });
         });
     }

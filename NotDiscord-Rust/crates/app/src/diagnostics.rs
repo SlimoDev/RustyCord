@@ -78,6 +78,9 @@ pub fn media_event_scoped(value: &Value, scope: u64) {
         "enqueue"=>Phase::Enqueue,"heartbeat"=>Phase::Heartbeat,"dispatch"=>Phase::Dispatch,_=>Phase::Unknown,
     };
     match value["event"].as_str().unwrap_or_default() {
+        "voiceLedger"=>{
+            if let Some(bits)=ledger_summary(value) {log::record(Component::Voice,Code::VoiceLedgerPending,Phase::Dispatch,bits);}
+        },
         "mediaStage"=>{
             if let Some(summary)=voice_input_summary(value) {
                 log::record(Component::Voice,Code::VoiceInputState,Phase::Present,summary);
@@ -90,14 +93,15 @@ pub fn media_event_scoped(value: &Value, scope: u64) {
             "VOICE_SOCKET_PROTOCOL"=>Code::TransportProtocol,"VOICE_SOCKET_CLOSED"=>Code::TransportClosed,
             "VOICE_SOCKET_ALREADY_CLOSED"=>Code::TransportAlreadyClosed,"VOICE_SOCKET_UTF8"=>Code::TransportUtf8,
             "VOICE_SOCKET_ENDPOINT"=>Code::TransportEndpoint,"VOICE_SOCKET_HTTP_FORMAT"=>Code::TransportFormat,
-            "VOICE_QUEUE_FULL"|"NAPI_QUEUE_FULL"|"VOICE_SEND_QUEUE_FULL"|"VOICE_CONTROL_QUEUE_FULL"|"MEDIA_DISPATCH_QUEUE_FULL"|"MEDIA_CONTROL_QUEUE_FULL"|"MEDIA_CALLBACK_UNAVAILABLE"=>Code::QueueSaturated,
+            "VOICE_QUEUE_FULL"|"NAPI_QUEUE_FULL"|"VOICE_SEND_QUEUE_FULL"|"VOICE_CONTROL_QUEUE_FULL"|"MEDIA_DISPATCH_QUEUE_FULL"|"MEDIA_CONTROL_QUEUE_FULL"|"MEDIA_CALLBACK_UNAVAILABLE"|"MEDIA_OUTPUT_QUEUE_FULL"|"HOST_CONTROL_CAPACITY"=>Code::QueueSaturated,
             "VOICE_SEND_TOO_LARGE"=>Code::TransportCapacity,
             "VOICE_SOCKET_TIMEOUT"|"VOICE_WRITE_TIMEOUT"=>Code::ControlTimeout,_=>Code::TransportFailure,
         },phase,correlation),
         "fatal"=>{
             let code=match value["error"]["controlCode"].as_str().unwrap_or_default(){
                 "HOST_CONTROL_READ_FAILED"=>Code::ControlReadFailed,"HOST_CONTROL_WRITE_FAILED"=>Code::ControlWriteFailed,
-                "HOST_CONTROL_TIMEOUT"=>Code::ControlTimeout,"VIDEO_PIPE_FAILED"=>Code::VideoPipeFailed,_=>Code::TransportClosed,
+                "HOST_CONTROL_TIMEOUT"=>Code::ControlTimeout,"VIDEO_PIPE_FAILED"=>Code::VideoPipeFailed,
+                "MEDIA_OUTPUT_QUEUE_FULL"|"MEDIA_EVENTS_SATURATED"|"HOST_CONTROL_CAPACITY"=>Code::QueueSaturated,_=>Code::TransportClosed,
             };
             log::record(Component::Media,code,Phase::Stop,0);
             log::record(Component::Media,Code::HostExited,Phase::Stop,value["error"]["exitCode"].as_i64().unwrap_or(0) as u64);
@@ -105,6 +109,31 @@ pub fn media_event_scoped(value: &Value, scope: u64) {
         },
         "videoError"=>log::record(Component::Media,Code::Recoverable,Phase::Read,correlation),
         _=>{}
+    }
+}
+/// A stalled applied prefix is an observation, not proof that the server or
+/// microphone failed. Unknown/invalid counts do not become healthy zeroes.
+fn ledger_summary(value:&Value)->Option<u64> {
+    let pending=value.get("pendingFrames")?.as_u64()?;
+    let age=value.get("oldestAgeMs")?.as_u64()?;
+    let opcode=value.get("opcode")?.as_u64()?;
+    let generation=value.get("transportGeneration")?.as_u64()?;
+    if !(1..=128).contains(&pending)||age>600_000||opcode>255 {return None;}
+    Some(pending|(age<<8)|(opcode<<28)|((generation&0x00ff_ffff)<<36))
+}
+#[cfg(test)] mod ledger_tests {
+    use super::*;
+    use serde_json::json;
+    #[test] fn ledger_observation_rejects_unknown_counts_and_never_copies_free_payload() {
+        let value=json!({"pendingFrames":3,"oldestAgeMs":5000,"opcode":24,"transportGeneration":2,
+            "token":"credential","device":"private","payload":"message"});
+        let bits=ledger_summary(&value).unwrap();
+        assert_eq!(bits&255,3);assert_eq!((bits>>8)&0xfffff,5000);
+        assert_eq!((bits>>28)&255,24);assert_eq!(bits>>36,2);
+        for bad in [json!({}),json!({"pendingFrames":0,"oldestAgeMs":1,"opcode":24,"transportGeneration":0}),
+            json!({"pendingFrames":129,"oldestAgeMs":1,"opcode":24,"transportGeneration":0})] {
+            assert_eq!(ledger_summary(&bad),None);
+        }
     }
 }
 /// Fixed schema, phase and state/counts only. The arbitrary IPC object never

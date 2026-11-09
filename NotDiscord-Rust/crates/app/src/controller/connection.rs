@@ -24,6 +24,11 @@ impl Recovery {
     pub(super) fn defer_view(&mut self) { self.deferred_view = true; }
 }
 impl Controller {
+    pub(super) fn gateway_transport_exit(&mut self, summary:notdiscord_core::gateway::GatewayExit) {
+        // Diagnostics were recorded by the transport owner, even if this
+        // delivery was delayed. This label does not alter recovery admission.
+        if self.state.signed_in {self.state.connection=summary.reason.label().into();}
+    }
     pub(super) fn transport_suspended(&self) -> bool {
         self.state.connection_phase.suspended() || self.voice_lifecycle.recovery_pending()
     }
@@ -49,6 +54,11 @@ impl Controller {
             change.phase
         };
         self.state.connection_phase = phase;
+        if phase.lost() {
+            if let Some(summary)=self.gateway.as_ref().and_then(|gateway|gateway.last_transport_exit()) {
+                self.gateway_transport_exit(summary);
+            }
+        }
         // Visibility can advance while offline. Do not drain those watermarks
         // when synchronization returns; later visible demand may queue an ACK.
         if previous.suspended() { self.read_acks.discard_pending(); }
@@ -211,7 +221,7 @@ mod tests {
         let stale = Completed {
             generation: c.generation, nav: None,
             action: UiAction { kind: "__sidebar".into(), extra: previous_epoch.to_string(), ..Default::default() },
-            result: Ok(canonical), credential: None,
+            result: Ok(canonical), credential: None, media_permit:None,
         };
         assert!(!c.accepts(&stale));
         // Prevent navigation restoration from scheduling another page request.

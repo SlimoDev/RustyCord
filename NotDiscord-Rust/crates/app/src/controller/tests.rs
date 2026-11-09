@@ -647,7 +647,7 @@ async fn session_transitions_preserve_explicit_mute_and_deaf() {
 fn session_and_navigation_guard_independent() {
     let (mut c, _) = Controller::test_fixture();
     let mut done = Completed {
-        credential: None,
+        credential: None, media_permit:None,
         generation: c.generation,
         nav: Some(c.nav),
         action: UiAction::new("fixture"),

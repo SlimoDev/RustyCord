@@ -176,6 +176,7 @@ struct Source {
     id: u64,
     native: String,
     session: u64,
+    generation: u64,
     user: String,
     kind: &'static str,
     local: bool,
@@ -215,7 +216,7 @@ impl VideoState {
     }
 }
 fn metadata(source: &Source, active: bool, state: &str) -> Value {
-    json!({"event":"videoStream","id":source.id,"userId":source.user,"kind":source.kind,"local":source.local,"preview":source.preview,"previewToken":source.selection_token,"token":source.operation_token,"sourceId":source.source_id,"label":if source.preview{"Vista previa"}else if source.kind=="screen"{"Pantalla compartida"}else{"Cámara"},"active":active,"visible":source.visible,"state":state,"streamKey":source.stream_key,"mediaSession":source.session})
+    json!({"event":"videoStream","id":source.id,"userId":source.user,"kind":source.kind,"local":source.local,"preview":source.preview,"previewToken":source.selection_token,"token":source.operation_token,"sourceId":source.source_id,"label":if source.preview{"Vista previa"}else if source.kind=="screen"{"Pantalla compartida"}else{"Cámara"},"active":active,"visible":source.visible,"state":state,"streamKey":source.stream_key,"mediaSession":source.session,"transportGeneration":source.generation})
 }
 fn fitted_size(width: u32, height: u32, max_width: u32, max_height: u32) -> (u32, u32) {
     let factor = (max_width as f64 / width as f64)
@@ -315,12 +316,14 @@ impl Host {
         if !self.video.visible || self.video.sinks.contains_key(native_stream) {
             return Ok(());
         }
-        let source = self
+        let mut source = self
             .video
             .sources
             .get(native_stream)
             .cloned()
             .ok_or_else(MediaError::internal)?;
+        source.generation = self.recoveries.borrow().get(&source.session).map(|r|r.protocol.generation()).unwrap_or(0);
+        if let Some(stored)=self.video.sources.get_mut(native_stream) {stored.generation=source.generation;}
         if !source.visible {
             return Ok(());
         }
@@ -521,6 +524,7 @@ impl Host {
                 id: self.video.sequence,
                 native: native_stream.into(),
                 session,
+                generation: self.recoveries.borrow().get(&session).map(|r|r.protocol.generation()).unwrap_or(0),
                 user: user.into(),
                 kind,
                 local,

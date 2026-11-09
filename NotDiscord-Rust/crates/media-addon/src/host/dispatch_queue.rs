@@ -34,13 +34,13 @@ struct State {
     tick: bool, mic: Option<Event>, controls_since_mic: usize, scheduled: bool,
 }
 pub(super) struct Mailbox {
-    state: Mutex<State>, closing: Arc<AtomicBool>, output: mpsc::Sender<Value>,
+    state: Mutex<State>, closing: Arc<AtomicBool>, output: super::output_queue::Sender,
     pub(super) cancel: Arc<Cancellation>, faulted: AtomicBool,
     rejected: AtomicU64, coalesced: AtomicU64,
 }
 pub(super) struct Delivery { pub(super) event: Event, pub(super) bytes: usize }
 impl Mailbox {
-    pub(super) fn new(closing: Arc<AtomicBool>, output: mpsc::Sender<Value>) -> Self {
+    pub(super) fn new(closing: Arc<AtomicBool>, output: super::output_queue::Sender) -> Self {
         Self { state: Mutex::new(State::default()), closing, output, cancel: Arc::new(Cancellation::default()),
             faulted: AtomicBool::new(false), rejected: AtomicU64::new(0), coalesced: AtomicU64::new(0) }
     }
@@ -175,7 +175,7 @@ mod tests {
     use super::*;
     #[test]
     fn control_budget_keeps_inflight_reservations_and_telemetry_coalesces() {
-        let (output, _) = mpsc::channel();
+        let (output, _) = super::super::output_queue::channel(Arc::new(AtomicBool::new(false)));
         let mailbox = Mailbox::new(Arc::new(AtomicBool::new(false)), output);
         for id in 0..CONTROL_MESSAGES { assert!(mailbox.push(Event::WsOpen(id as u64, 0)).is_ok()); }
         assert!(mailbox.push(Event::WsOpen(999, 0)).is_err());

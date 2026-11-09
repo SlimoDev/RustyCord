@@ -13,9 +13,59 @@ mod input_diagnostic;
 #[cfg(test)]
 #[path = "source_lifecycle_tests.rs"]
 mod source_lifecycle_tests;
+fn forward_media_events(tx:mpsc::UnboundedSender<Completed>,mut rx:crate::media::events::Receiver,generation:u64,media_epoch:u64,receiver_epoch:Option<u64>) {
+    tokio::spawn(async move {while let Some(delivery)=rx.recv().await {
+        let (value,permit)=delivery.into_parts();let mut action=UiAction::new("__media");action.extra=media_epoch.to_string();
+        let value=if let Some(epoch)=receiver_epoch {json!({"event":"receiver-host","epoch":epoch,"value":value})} else {value};
+        if tx.send(Completed {generation,nav:None,action,result:Ok(value),credential:None,media_permit:Some(permit)}).is_err(){break;}
+    }});
+}
 struct OpenedMedia {
     media: MediaBridge,
     capabilities: Value,
+}
+/// The actor keeps the slot while this owned preparation runs. Dropping its
+/// intention never cancels an IPC write or admits a replacement process early.
+async fn prepare_opened(slot:OpenSlot,opened:Result<OpenedMedia,String>,commands:Vec<(&'static str,Value)>)->Reply {
+    let result=match opened {
+        Ok(opened)=>{
+            let mut error=None;
+            for (command,args) in commands {
+                if Arc::strong_count(&slot)==1 {error=Some("Se canceló la preparación multimedia.".into());break;}
+                if let Err(reason)=opened.media.command(command,args).await {error=Some(reason);break;}
+            }
+            if error.is_some() || Arc::strong_count(&slot)==1 {
+                let closed=opened.media.close_and_wait().await;
+                Err(error.or_else(||closed.err()).unwrap_or_else(||"Se canceló la preparación multimedia.".into()))
+            } else {Ok(opened)}
+        },
+        Err(error)=>Err(error),
+    };
+    *slot.lock().unwrap()=Some(result);
+    Ok(json!({"prepared":true}))
+}
+#[cfg(test)]
+mod preparation_tests {
+    use super::*;
+    #[tokio::test]
+    async fn local_capacity_clears_only_the_current_camera_preparation_without_ending_voice(){
+        let (mut c,_)=Controller::test_fixture();c.voice_attempt=10;c.voice_lifecycle.camera_attempt=3;
+        c.state.camera_preparing=true;c.voice_lifecycle.pending_camera=Some(("fixture-camera".into(),Instant::now()));
+        let mut action=UiAction::new("__voice-camera");let mut meta=c.meta();meta["camera"]=json!(2);action.extra=meta.to_string();
+        let failure=json!({"ok":false,"error":"MEDIA_CAPACITY_DEFERRED: not emitted"});
+        c.voice_complete(action.clone(),failure.clone()).await.unwrap();assert!(c.state.camera_preparing);assert!(c.voice_lifecycle.pending_camera.is_some());
+        meta["camera"]=json!(3);action.extra=meta.to_string();c.voice_complete(action,failure).await.unwrap();
+        assert!(!c.state.camera_preparing);assert!(c.voice_lifecycle.pending_camera.is_none());assert_eq!(c.voice_attempt,10);
+    }
+    #[tokio::test]
+    async fn cancelled_before_first_poll_never_configures_the_host() {
+        let (media,calls)=MediaBridge::fake(|command,_|panic!("Cancelled preparation emitted {command}"));
+        let slot:OpenSlot=Arc::new(Mutex::new(None));
+        let future=prepare_opened(slot.clone(),Ok(OpenedMedia{media:media.clone(),capabilities:json!({})}),vec![("configureAudio",json!({}))]);
+        drop(slot);future.await.unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+        assert!(media.close_and_wait().await.is_ok());
+    }
 }
 enum ShareDeleteCause {
     StreamFull,
@@ -305,8 +355,8 @@ impl Controller {
         let frames=self.media.as_ref().ok_or("La llamada de voz terminó.")?.video_frames();
         self.voice_lifecycle.receiver_epoch=self.voice_lifecycle.receiver_epoch.wrapping_add(1);
         let epoch=self.voice_lifecycle.receiver_epoch;let media_epoch=self.voice_lifecycle.media_epoch;
-        let tx=self.completion.clone();let generation=self.generation;let (events,mut rx)=mpsc::unbounded_channel();
-        tokio::spawn(async move {while let Some(value)=rx.recv().await {let mut action=UiAction::new("__media");action.extra=media_epoch.to_string();let _=tx.send(Completed {generation,nav:None,action,result:Ok(json!({"event":"receiver-host","epoch":epoch,"value":value})),credential:None});}});
+        let (events,rx)=crate::media::events::channel();
+        forward_media_events(self.completion.clone(),rx,self.generation,media_epoch,Some(epoch));
         let slot:OpenSlot=Arc::new(Mutex::new(None));self.voice_lifecycle.receiver_opening=Some(slot.clone());
         let root=self.root.clone();let data=self.data.join("receive-host");let ctx=self.ctx.clone();let settings=self.receiver_parameters();
         let mut action=UiAction::id("__voice-data","receiver-opened");let mut meta=self.meta();meta["receiver"]=json!(epoch);action.extra=meta.to_string();
@@ -361,22 +411,8 @@ impl Controller {
         }
         self.voice_lifecycle.media_epoch += 1;
         let epoch = self.voice_lifecycle.media_epoch;
-        let tx = self.completion.clone();
-        let generation = self.generation;
-        let (events, mut rx) = mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            while let Some(value) = rx.recv().await {
-                let mut action = UiAction::new("__media");
-                action.extra = epoch.to_string();
-                let _ = tx.send(Completed {
-                    generation,
-                    nav: None,
-                    action,
-                    result: Ok(value),
-                    credential: None,
-                });
-            }
-        });
+        let (events,rx)=crate::media::events::channel();
+        forward_media_events(self.completion.clone(),rx,self.generation,epoch,None);
         let slot: OpenSlot = Arc::new(Mutex::new(None));
         self.voice_lifecycle.opening = Some(slot.clone());
         let root = self.root.clone();
@@ -948,23 +984,35 @@ impl Controller {
         action: UiAction,
         value: Value,
     ) -> Result<(), String> {
-        if action.kind=="__voice-data" && action.id=="receiver-opened" {
+        if action.kind=="__voice-data" && matches!(action.id.as_str(),"opened"|"receiver-opened") {
+            let receiver=action.id=="receiver-opened";
+            let meta:Value=serde_json::from_str(&action.extra).unwrap_or_default();
+            if receiver {
+                if meta["media"].as_u64()!=Some(self.voice_lifecycle.media_epoch)||meta["voice"].as_u64()!=Some(self.voice_attempt)||meta["receiver"].as_u64()!=Some(self.voice_lifecycle.receiver_epoch){return Ok(());}
+            } else if action.extra.parse::<u64>().ok()!=Some(self.voice_lifecycle.media_epoch){return Ok(());}
+            let slot=if receiver {self.voice_lifecycle.receiver_opening.clone()} else {self.voice_lifecycle.opening.clone()};
+            let Some(slot)=slot else{return Ok(());};
+            let opened=slot.lock().unwrap().take();
+            let Some(opened)=opened else{return Ok(());};
+            let mut done=action;done.id=if receiver {"receiver-prepared"} else {"prepared"}.into();
+            let mut commands=vec![("setVideoVisible",json!({"visible":self.voice_lifecycle.video_visible!=Some(false)}))];
+            if receiver {commands.push(("configureReceiver",self.receiver_parameters()));}
+            self.launch_owned_close(done,prepare_opened(slot,opened,commands));
+            return Ok(());
+        }
+        if action.kind=="__voice-data" && action.id=="receiver-prepared" {
             let meta:Value=serde_json::from_str(&action.extra).unwrap_or_default();
             if meta["media"].as_u64()!=Some(self.voice_lifecycle.media_epoch)||meta["voice"].as_u64()!=Some(self.voice_attempt)||meta["receiver"].as_u64()!=Some(self.voice_lifecycle.receiver_epoch) {return Ok(());}
             let opened=self.voice_lifecycle.receiver_opening.take().and_then(|slot|slot.lock().unwrap().take());
             match opened {
                 Some(Ok(opened))=>{
-                    if let Err(error)=opened.media.command("setVideoVisible",json!({"visible":self.voice_lifecycle.video_visible!=Some(false)})).await {opened.media.close();self.receiver_failed(&error).await?;return Ok(());}
-                    // Opening is asynchronous: a global stream volume change
-                    // may have arrived after its initial settings were captured.
-                    if let Err(error)=opened.media.command("configureReceiver",self.receiver_parameters()).await {opened.media.close();self.receiver_failed(&error).await?;return Ok(());}
-                    self.voice_lifecycle.receiver=Some(opened.media);let keys=self.voice_lifecycle.watches.keys().cloned().collect::<Vec<_>>();for key in keys {self.try_watch(&key).await?;}
+                    self.voice_lifecycle.receiver=Some(opened.media);self.sync_receiver_settings();let keys=self.voice_lifecycle.watches.keys().cloned().collect::<Vec<_>>();for key in keys {self.try_watch(&key).await?;}
                 }
                 Some(Err(error))=>self.receiver_failed(&error).await?,
                 None=>self.receiver_failed("El receptor de pantalla no confirmó su inicio. Puedes volver a abrir la pantalla.").await?,
             }return Ok(());
         }
-        if action.kind == "__voice-data" && action.id == "opened" {
+        if action.kind == "__voice-data" && action.id == "prepared" {
             if action.extra.parse::<u64>().ok() != Some(self.voice_lifecycle.media_epoch) {
                 return Ok(());
             }
@@ -974,13 +1022,6 @@ impl Controller {
                 .take()
                 .and_then(|slot| slot.lock().unwrap().take())
                 .ok_or("El servicio multimedia no confirmó su inicio.")?;
-            let opened=match opened {
-                Ok(opened)=>match opened.media.command("setVideoVisible",json!({"visible":self.voice_lifecycle.video_visible!=Some(false)})).await {
-                    Ok(_)=>Ok(opened),
-                    Err(error)=>{opened.media.close();Err(error)},
-                },
-                Err(error)=>Err(error),
-            };
             match opened {
                 Ok(opened) => {
                     self.state.voice_available = b(&opened.capabilities, "voice");
@@ -1263,6 +1304,15 @@ impl Controller {
             && meta["mic"].as_u64() != Some(self.voice_lifecycle.mic_attempt)
         {
             return Ok(());
+        }
+        if value["ok"]==false&&value["error"].as_str().is_some_and(|error|error.starts_with("MEDIA_CAPACITY_DEFERRED:")) {
+            // All operation-specific guards above must precede local rollback.
+            if action.kind=="__voice-camera" {self.state.camera_preparing=false;self.voice_lifecycle.pending_camera=None;}
+            if action.kind=="__voice-share" {self.state.screen_preparing=false;self.voice_lifecycle.pending_share=None;}
+            if action.kind=="__voice-data"&&action.id=="mic-start" {self.finish_mic_test().await?;}
+            if action.kind=="__voice-data"&&matches!(action.id.as_str(),"volume-user"|"volume-input")
+                &&self.voice_lifecycle.pending_volumes.get(&action.channel_id).copied()==meta["volumeRequest"].as_u64(){self.voice_lifecycle.pending_volumes.remove(&action.channel_id);}
+            self.status("El control multimedia local está ocupado. La orden no se emitió y no se repetirá automáticamente.");self.refresh_call();return Ok(());
         }
         let result = match unwrapped(&value) {
             Ok(v) => v,
@@ -5923,11 +5973,19 @@ mod tests {
     }
     #[tokio::test]
     async fn a_joining_media_host_open_failure_remains_visible_after_request_cleanup() {
-        let (mut c,_,_)=target();c.voice_channel.clear();c.state.voice_connecting=true;
+        let (mut c,_,mut replies)=target();c.voice_channel.clear();c.state.voice_connecting=true;
         c.voice_lifecycle.request_pending=true;c.voice_lifecycle.request_channel="200".into();
         c.voice_lifecycle.opening=Some(Arc::new(Mutex::new(Some(Err("Synthetic media host startup failed".into())))));
         let mut opened=UiAction::id("__voice-data","opened");opened.extra=c.voice_lifecycle.media_epoch.to_string();
-        assert!(c.voice_complete(opened,json!({"ok":true,"result":{}})).await.is_err());
+        c.voice_complete(opened,json!({"ok":true,"result":{}})).await.unwrap();
+        // Preparation is an owned background job. Its failure must remain
+        // visible when the actual completion returns, without blocking this
+        // opening handler or prematurely cleaning the pending request.
+        assert!(c.state.voice_connecting&&c.voice_lifecycle.request_pending);
+        let prepared=tokio::time::timeout(Duration::from_secs(1),replies.recv()).await.unwrap().unwrap();
+        assert!(c.accepts(&prepared));assert_eq!(prepared.action.kind,"__voice-data");assert_eq!(prepared.action.id,"prepared");
+        assert_eq!(prepared.action.extra,c.voice_lifecycle.media_epoch.to_string());
+        assert!(c.complete(prepared.action,prepared.result.unwrap()).await.is_err());
         assert!(!c.state.voice_connecting&&!c.voice_lifecycle.request_pending&&c.voice_lifecycle.request_channel.is_empty());
         assert_eq!(c.state.voice_error,"Synthetic media host startup failed");
     }
