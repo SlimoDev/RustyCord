@@ -6,6 +6,10 @@ mod avatar_cache;
 mod image_spool;
 #[path = "resources/custom_animation.rs"]
 mod custom_animation;
+#[path = "resources/admission.rs"]
+mod admission;
+pub(super) fn cdn_ready() -> bool { admission::cdn_ready() }
+pub(super) fn cdn_rate_limited(headers: &reqwest::header::HeaderMap) { admission::rate_limited(headers); }
 #[path = "resources/gif_source.rs"]
 mod gif_source;
 #[path = "resources/webp_animation.rs"]
@@ -137,6 +141,7 @@ pub struct Pictures {
     deleted_previews: deleted_preview::Cache,
     pending: HashSet<String>,
     failed: HashMap<String, (Instant, String)>,
+    failures: admission::Failures,
     request: mpsc::SyncSender<PictureRequest>,
     ready: mpsc::Receiver<(u64, String, PictureResult, DecodePermit)>,
     local_sources: HashMap<String, PathBuf>,
@@ -290,10 +295,12 @@ pub fn save_original(source: &str, destination: &Path, limit: u64) -> Result<(),
         .timeout(Duration::from_secs(60))
         .build()
         .map_err(|_| "No se pudo iniciar la descarga.")?;
+    if !cdn_ready() { return Err("Descarga aplazada: sigue vigente la espera indicada por el servidor.".into()); }
     let mut response = client
         .get(source)
         .send()
         .map_err(|_| "No se pudo descargar el original.")?;
+    if response.status().as_u16()==429 { cdn_rate_limited(response.headers()); }
     let kind = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -478,6 +485,8 @@ fn download_spool(
 ) -> Result<(EncodedSpool, reqwest::header::HeaderMap), String> {
     let url = gif_source::resolve(url,gif_source::Want::Poster,&cancelled)?;
     let c = client().ok_or("No se pudo iniciar la descarga de la imagen.")?;
+    if cancelled() { return Err("Carga de imagen cancelada.".into()); }
+    if !cdn_ready() { return Err("Descarga aplazada: sigue vigente la espera indicada por el servidor.".into()); }
     let response = c.get(&url).send().map_err(|e| {
         if e.is_timeout() {
             "La descarga de la imagen tardó demasiado. Puedes reintentar.".to_owned()
@@ -485,6 +494,7 @@ fn download_spool(
             "No se pudo conectar con el servidor de la imagen.".to_owned()
         }
     })?;
+    if response.status().as_u16()==429 { cdn_rate_limited(response.headers()); }
     if let Some(error) = http_image_error(response.status()) {
         return Err(error);
     }
@@ -644,6 +654,13 @@ fn image_key(url: &str, width: u32) -> String {
     format!("{url}\t{}", side_bucket(width))
 }
 impl Pictures {
+    fn record_failure(&mut self, key: String, error: String) {
+        self.failures.failed(&key);
+        if self.failed.len() >= 256 && !self.failed.contains_key(&key) {
+            if let Some(old) = self.failed.iter().min_by_key(|(_, (at, _))| *at).map(|(key, _)| key.clone()) { self.failed.remove(&old); }
+        }
+        self.failed.insert(key,(Instant::now(),error));
+    }
     pub(super) fn set_download_limit(&mut self, limit: u64) {
         let limit = limit.clamp(1, MAX_ENCODED);
         if self.download_limit.swap(limit, Ordering::AcqRel) == limit { return; }
@@ -820,6 +837,7 @@ impl Pictures {
             deleted_previews: deleted_preview::Cache::default(),
             pending: HashSet::new(),
             failed: HashMap::new(),
+            failures: admission::Failures::default(),
             request,
             ready,
             local_sources: HashMap::new(),
@@ -857,6 +875,7 @@ impl Pictures {
             }
             self.pending.remove(&url);
             if let Ok((w, h, pixels)) = result {
+                self.failures.succeeded(&url);
                 let weight = pixels.len();
                 if weight > BUDGET / 2 {
                     let tex = ctx.load_texture(
@@ -890,17 +909,7 @@ impl Pictures {
                     self.used += weight;
                 }
             } else if let Err(error) = result {
-                if self.failed.len() >= 256 {
-                    if let Some(old) = self
-                        .failed
-                        .iter()
-                        .min_by_key(|(_, (at, _))| *at)
-                        .map(|(key, _)| key.clone())
-                    {
-                        self.failed.remove(&old);
-                    }
-                }
-                self.failed.insert(url, (Instant::now(), error));
+                self.record_failure(url,error);
             }
         }
         while let Ok((generation, url, decoded)) = self.animation_ready.try_recv() {
@@ -1151,6 +1160,7 @@ impl Pictures {
         }
         // Failures remain explicit until Retry; silently re-fetching an expired URL forever is misleading.
         if !self.failed.contains_key(&key)
+            && self.failures.state(&key, false, false, false) == admission::State::Fresh
             && !self.pending.contains(&key)
             && self.pending.len() < 64
             && !self.visuals_suspended()
@@ -1162,6 +1172,7 @@ impl Pictures {
                 side,
             };
             if self.request.try_send(request).is_ok() {
+                self.failures.admitted(&key);
                 self.pending.insert(key);
             }
         }
@@ -1174,6 +1185,8 @@ impl Pictures {
         self.failed
             .get(&image_key(url, width))
             .map(|(_, message)| message.as_str())
+            .or_else(|| (self.failures.state(&image_key(url,width),false,false,false)==admission::State::CapacityDeferred)
+                .then_some("Carga aplazada por el registro local de fallos. Reintentar autoriza sólo esta imagen."))
     }
     pub fn path_error(&self, path: &Path, width: u32) -> Option<&str> {
         self.failed
@@ -1182,12 +1195,20 @@ impl Pictures {
                 width,
             ))
             .map(|(_, message)| message.as_str())
+            .or_else(|| (self.failures.state(&image_key(&format!("local:{}",path.to_string_lossy()),width),false,false,false)==admission::State::CapacityDeferred)
+                .then_some("Lectura aplazada por el registro local de fallos. Reintentar autoriza sólo este archivo."))
     }
     pub fn retry(&mut self, url: &str, width: u32) {
-        self.failed.remove(&image_key(url, width));
+        let key=image_key(url,width);
+        if self.pending.contains(&key) { return; }
+        self.failed.remove(&key);
+        self.failures.retry(key);
+        self.custom_animations.retry(url);
     }
     pub fn retry_path(&mut self, path: &Path, width: u32) {
-        self.failed.remove(&image_key(&format!("local:{}", path.to_string_lossy()), width));
+        let key=image_key(&format!("local:{}",path.to_string_lossy()),width);
+        if self.pending.contains(&key) { return; }
+        self.failed.remove(&key);self.failures.retry(key);
     }
     pub fn paste_bitmap(&self, channel: &str, account: &str, generation:u64, operation:&str, root: PathBuf) -> Result<(), String> {
         self.paste_request
@@ -1279,11 +1300,12 @@ impl Pictures {
     /// textures. Ordinary navigation still uses stop() to preserve its LRU.
     pub fn clear_account(&mut self) {
         self.stop();
-        self.custom_animations.clear();
+        self.custom_animations.clear_account();
         self.textures = HashMap::new();
         self.deleted_previews = deleted_preview::Cache::default();
         self.pending = HashSet::new();
         self.failed = HashMap::new();
+        self.failures = admission::Failures::default();
         self.local_sources = HashMap::new();
         self.avatar_sources = HashMap::new();
         self.media_geometry = HashMap::new();
@@ -1361,6 +1383,8 @@ impl Pictures {
         if self.visuals_suspended() { return None; }
         self.custom_animations.texture(ctx, url)
     }
+    pub(super) fn custom_emoji_deferred(&self, url: &str) -> bool { self.custom_animations.deferred(url) }
+    pub(super) fn retry_custom_emoji(&mut self, url: &str) { self.custom_animations.retry(url); }
     pub fn custom_emoji_playing(&self) -> bool {
         self.message_animation.unwrap_or(false)
     }
@@ -1496,6 +1520,26 @@ fn decode_animation_checked(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn failure_reason_eviction_and_viewer_release_do_not_readmit_downloads() {
+        let mut pictures=super::Pictures::new(egui::Context::default());
+        for n in 0..1000 { pictures.record_failure(super::image_key(&format!("https://cdn.discordapp.com/synthetic-{n}.png"),384),"Synthetic failure".into()); }
+        let url="https://cdn.discordapp.com/synthetic-0.png";
+        let key=super::image_key(url,384);
+        assert!(!pictures.failed.contains_key(&key),"old reason was evicted");
+        for _ in 0..1000 {
+            assert!(pictures.texture_sized(url,384).is_none());
+            assert!(pictures.pending.is_empty(),"hover cannot emit after eviction");
+        }
+        pictures.release_viewer(url,None);
+        assert!(pictures.texture_sized(url,384).is_none());assert!(pictures.pending.is_empty());
+        assert!(pictures.image_error(url,384).is_some());
+        // Retry grants only this key. Inspect the admission before queueing so
+        // this test never touches an external transport.
+        pictures.retry(url,384);
+        assert_eq!(pictures.failures.state(&key,false,false,false),super::admission::State::Fresh);
+        assert_ne!(pictures.failures.state(&super::image_key("https://cdn.discordapp.com/synthetic-1.png",384),false,false,false),super::admission::State::Fresh);
+    }
     use super::*;
     #[test]
     fn closing_viewer_releases_full_texture_and_local_source_but_keeps_chat_thumbnail() {

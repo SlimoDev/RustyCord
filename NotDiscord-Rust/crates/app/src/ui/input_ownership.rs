@@ -136,16 +136,9 @@ pub(super) fn begin(app:&NotDiscordUi,ctx:&egui::Context,state:&AppSnapshot) {
     }
     owner.frame=frame;
     owner.overlay=overlay;
-    owner.blocked=crate::diagnostics::is_open(ctx) || app.viewer.is_some() || app.text_viewer.is_some();
-    owner.layer=if app.color_editor.is_some() {
-        Some(egui::LayerId::new(egui::Order::Foreground,egui::Id::new("color-editor")))
-    }else if app.time_picker.is_some() {
-        Some(egui::LayerId::new(egui::Order::Foreground,egui::Id::new("timestamp-picker")))
-    }else if app.picker.is_some() {
-        Some(egui::LayerId::new(egui::Order::Foreground,egui::Id::new("content-picker")))
-    }else if app.dialog.is_none() && app.search_open {
-        Some(egui::LayerId::new(egui::Order::Foreground,egui::Id::new("search-completion")))
-    }else {None};
+    let top=app.active_surfaces(ctx).last().copied();
+    owner.blocked=top.is_some_and(|surface|surface.keyboard_blocked());
+    owner.layer=top.and_then(|surface|surface.keyboard_layer());
     let popup=egui::Popup::is_any_open(ctx);
     if !popup && owner.selected_in_popup {
         if let Some(focused)=ctx.memory(|memory|memory.focused()).filter(|focused|Some(*focused)==owner.selected) {ctx.memory_mut(|memory|memory.surrender_focus(focused));}

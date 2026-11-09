@@ -234,6 +234,7 @@ pub(super) fn get(
         if cancelled() {
             return Err("Carga multimedia cancelada.".into());
         }
+        if !admission::cdn_ready() { return Err("Descarga aplazada: sigue vigente la espera indicada por el servidor.".into()); }
         if !allowed(&current) && !notdiscord_core::parsing::gif_page(&current) {
             return Err("El proveedor redirigió a un origen no permitido.".into());
         }
@@ -257,6 +258,7 @@ pub(super) fn get(
                 .ok_or("El proveedor devolvió una redirección no válida.")?;
             continue;
         }
+        if response.status().as_u16()==429 { admission::rate_limited(response.headers()); }
         if !response.status().is_success() {
             return Err(match response.status().as_u16(){
                 401|403=>format!("El proveedor devolvió HTTP {} y no permite resolver o descargar la animación. Puedes reintentar o abrir el original; la vista previa no demuestra que la animación esté disponible.",response.status().as_u16()),

@@ -1528,21 +1528,27 @@ impl NotDiscordUi {
             // A paused custom emoji requests the first static frame, not an
             // animated response which would be decoded just to discard frames.
             let static_url = if emoji.animated { url.replace("&animated=true", "") } else { url.clone() };
-            if let Some(texture) = animated {
+            let response=if let Some(texture) = animated {
                 ui.add(egui::Image::new(&texture).fit_to_exact_size(egui::vec2(size, size))).on_hover_text(format!(":{}:", emoji.name))
             } else if let Some(texture)=self.pictures.texture_sized(&static_url,(size*ui.ctx().pixels_per_point()).ceil() as u32) {
                 let (rect,response)=ui.allocate_exact_size(egui::Vec2::splat(size),egui::Sense::hover());
                 let shape=ui.painter().add(egui::Shape::image(texture.id(),rect,
                     egui::Rect::from_min_max(egui::Pos2::ZERO,egui::pos2(1.,1.)),Color32::WHITE));
                 if deferred && emoji.animated && self.prefs.allow_gif_playback {
-                    self.pictures.stage_emoji(ui.painter().clone(),shape,rect,url);
+                    self.pictures.stage_emoji(ui.painter().clone(),shape,rect,url.clone());
                 }
                 response.on_hover_text(format!(":{}:",emoji.name))
             } else if self.pictures.image_error(&static_url, (size * ui.ctx().pixels_per_point()).ceil() as u32).is_some() {
                 ui.label(RichText::new(format!(":{}:", emoji.name)).size(size.min(self.prefs.chat_size))).on_hover_text("No se pudo cargar el emoji personalizado.")
             } else {
                 self.pictures.image(ui, &static_url, egui::vec2(size, size), false).on_hover_text(format!(":{}:", emoji.name))
-            }
+            };
+            if emoji.animated && self.pictures.custom_emoji_deferred(&url) {
+                response.on_hover_ui(|ui| {
+                    ui.label("La animación no está disponible. Se conserva la vista estática.");
+                    if ui.button("Reintentar animación").clicked() {self.pictures.retry_custom_emoji(&url);}
+                })
+            } else {response}
         } else {
             let key = (
                 emoji.name.clone(),
@@ -1589,6 +1595,9 @@ impl NotDiscordUi {
 }
 impl eframe::App for NotDiscordUi {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Reap completed text loads even after their window closes/minimizes;
+        // cancellation alone cannot release an active worker's resource lease.
+        self.poll_text_jobs();
         self.updater.poll(ctx,self.preview.is_none());
         if self.updater.take_shutdown_request() {
             match self.prepare_orderly_close() {
@@ -1745,12 +1754,7 @@ impl eframe::App for NotDiscordUi {
             input_ownership::begin(self,ctx,&state);
             self.draw_modal_barrier(ctx);
             self.draw_shell(ctx, &state);
-            self.draw_dialog(ctx, &state);
-            self.draw_picker(ctx, &state);
-            self.draw_viewer(ctx);
-            self.draw_timestamp_picker(ctx,&state);
-            self.draw_text_viewer(ctx,&state);
-            crate::diagnostics::draw(ctx);
+            self.draw_overlay_surfaces(ctx, &state);
             if let Some(kind)=crate::diagnostics::take_voice_action(ctx){
                 let mut action=UiAction::new(kind);
                 action.extra=serde_json::json!({"accountId":state.current_user.as_ref().map(|u|u.id.as_str()).unwrap_or(""),"generation":state.notification_generation,"voiceAttempt":state.call_instance_id}).to_string();

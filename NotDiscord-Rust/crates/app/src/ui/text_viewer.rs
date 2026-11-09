@@ -1,7 +1,7 @@
 //! Read-only viewer shared by prepared and received text attachments. Bytes are
 //! read and validated off the UI thread; content is shown, never interpreted.
 use super::*;
-use std::{io::Read, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}};
+use std::{io::Read, sync::{Arc, Mutex, Condvar, OnceLock, mpsc, atomic::{AtomicBool, Ordering}}};
 
 const INPUT_LIMIT: usize = 1024 * 1024;
 const OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
@@ -19,9 +19,74 @@ struct Document { text: Arc<str>, rows: Arc<Vec<(u32, u32)>> }
 enum Outcome { Ready(Document), Expired, Failed(String) }
 struct Load { cancel: Arc<AtomicBool>, slot: Arc<Mutex<Option<Outcome>>> }
 impl Drop for Load {
-    fn drop(&mut self) { self.cancel.store(true, Ordering::Release); }
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Release);
+        if let Some(executor) = EXECUTOR.get() {
+            let mut queue = executor.queue.0.lock().unwrap_or_else(|e| e.into_inner());
+            if queue.pending.as_ref().is_some_and(|job| Arc::ptr_eq(&job.cancel, &self.cancel)) { queue.pending = None; }
+        }
+    }
 }
 enum View { Loading, Ready(Document), Expired, Failed(String) }
+struct Job {
+    source: Result<PathBuf, String>,
+    cancel: Arc<AtomicBool>,
+    slot: Arc<Mutex<Option<Outcome>>>,
+    ctx: egui::Context,
+}
+#[derive(Default)]
+struct Queue { pending: Option<Job>, active: Option<PathBuf>, stopped: bool }
+impl Queue {
+    fn replace(&mut self, job: Job) {
+        if let Some(old) = self.pending.take() { old.cancel.store(true, Ordering::Release); }
+        self.pending=Some(job);
+    }
+    fn take(&mut self) -> Job {
+        let job=self.pending.take().unwrap();self.active=job.source.as_ref().ok().cloned();job
+    }
+}
+struct Executor {
+    queue: Arc<(Mutex<Queue>, Condvar)>,
+    finished: Mutex<mpsc::Receiver<PathBuf>>,
+    started: bool,
+}
+static EXECUTOR: OnceLock<Executor> = OnceLock::new();
+fn read_job(source: &Result<PathBuf,String>, cancel: &AtomicBool) -> Outcome {
+    match source { Ok(path)=>read_local(path,cancel), Err(url)=>read_remote(url,cancel) }
+}
+/// One worker owns admission through the actual reader return. `read` is the
+/// sole transport boundary, allowing blocked-reader regressions without I/O.
+fn run_worker(work: Arc<(Mutex<Queue>,Condvar)>, done: mpsc::SyncSender<PathBuf>,
+    read: impl Fn(&Result<PathBuf,String>, &AtomicBool)->Outcome) {
+    loop {
+        let job = {
+            let mut queue = work.0.lock().unwrap_or_else(|e| e.into_inner());
+            while queue.pending.is_none() && !queue.stopped { queue=work.1.wait(queue).unwrap_or_else(|e|e.into_inner()); }
+            if queue.stopped { return; }
+            queue.take()
+        };
+        let outcome=if job.cancel.load(Ordering::Acquire) { Outcome::Failed("Lectura cancelada.".into()) }
+            else { read(&job.source,&job.cancel) };
+        if !job.cancel.load(Ordering::Acquire) { *job.slot.lock().unwrap_or_else(|e|e.into_inner())=Some(outcome); }
+        work.0.lock().unwrap_or_else(|e|e.into_inner()).active=None;
+        job.ctx.request_repaint();
+        if let Ok(path)=job.source {
+            if done.send(path).is_err() { return; }
+            job.ctx.request_repaint();
+        }
+    }
+}
+fn executor() -> &'static Executor {
+    EXECUTOR.get_or_init(|| {
+        let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
+        let work = queue.clone();
+        // The completion slot also owns capacity: a stalled UI cannot build an
+        // unlimited list of paths awaiting its reference-aware cleanup.
+        let (done, finished) = mpsc::sync_channel(1);
+        let started = std::thread::Builder::new().name("text-viewer".into()).spawn(move ||run_worker(work,done,read_job)).is_ok();
+        Executor { queue, finished: Mutex::new(finished), started }
+    })
+}
 pub(super) struct TextViewer {
     operation: u64,
     name: String,
@@ -100,6 +165,7 @@ fn bounded(mut reader: impl Read, cancel: &AtomicBool) -> Result<Vec<u8>, String
     Err(TOO_LARGE.into())
 }
 fn read_local(path: &std::path::Path, cancel: &AtomicBool) -> Outcome {
+    if cancel.load(Ordering::Acquire) { return Outcome::Failed("Lectura cancelada.".into()); }
     let result = std::fs::File::open(path).map_err(|_| "No se pudo abrir el adjunto.".to_owned()).and_then(|file| {
         let metadata = file.metadata().map_err(|_| "No se pudo comprobar el adjunto.".to_owned())?;
         if !metadata.is_file() { return Err("El adjunto no es un archivo.".into()); }
@@ -115,11 +181,15 @@ fn allowed_source(url: &str) -> bool {
 }
 /// Uses the media client: no credentials, no cookies and no automatic redirect.
 fn read_remote(url: &str, cancel: &AtomicBool) -> Outcome {
+    if cancel.load(Ordering::Acquire) { return Outcome::Failed("Lectura cancelada.".into()); }
     if !allowed_source(url) { return Outcome::Failed("El adjunto no procede de un origen permitido.".into()); }
     let Some(client) = resources::client() else { return Outcome::Failed("La descarga no está disponible.".into()); };
+    if cancel.load(Ordering::Acquire) { return Outcome::Failed("Lectura cancelada.".into()); }
+    if !resources::cdn_ready() { return Outcome::Failed("Descarga aplazada: sigue vigente la espera indicada por el servidor.".into()); }
     let Ok(response) = client.get(url).send() else {
         return Outcome::Failed("No se pudo descargar el adjunto. Comprueba la conexión.".into());
     };
+    if response.status().as_u16()==429 { resources::cdn_rate_limited(response.headers()); }
     match response.status().as_u16() {
         200 => {}
         401 | 403 | 404 | 410 => return Outcome::Expired,
@@ -139,23 +209,19 @@ impl TextViewer {
     fn start(&mut self, ctx: &egui::Context) {
         let cancel = Arc::new(AtomicBool::new(false));
         let slot = Arc::new(Mutex::new(None));
-        let (worker_cancel, worker_slot, worker_ctx) = (cancel.clone(), slot.clone(), ctx.clone());
+        let executor = executor();
         let source = match &self.source {
             Source::Local(path) => Ok(path.clone()),
             Source::Remote { url, .. } => Err(url.clone()),
         };
-        let started = std::thread::Builder::new().name("text-viewer".into()).spawn(move || {
-            let outcome = match &source {
-                Ok(path) => read_local(path, &worker_cancel),
-                Err(url) => read_remote(url, &worker_cancel),
-            };
-            if !worker_cancel.load(Ordering::Acquire) {
-                *worker_slot.lock().unwrap_or_else(|error| error.into_inner()) = Some(outcome);
-                worker_ctx.request_repaint();
-            }
-        });
-        self.view = if started.is_ok() { View::Loading } else { View::Failed("No se pudo iniciar la lectura.".into()) };
-        self.load = started.is_ok().then_some(Load { cancel, slot });
+        if !executor.started { self.view = View::Failed("No se pudo iniciar la lectura.".into()); return; }
+        // Replacing a load revokes it before admitting the newest demand.
+        self.load = None;
+        let mut queue = executor.queue.0.lock().unwrap_or_else(|e| e.into_inner());
+        queue.replace(Job { source, cancel: cancel.clone(), slot: slot.clone(), ctx: ctx.clone() });
+        drop(queue); executor.queue.1.notify_one();
+        self.view = View::Loading;
+        self.load = Some(Load { cancel, slot });
     }
     fn poll(&mut self) {
         let Some(load) = &self.load else { return; };
@@ -178,8 +244,8 @@ impl TextViewer {
 impl NotDiscordUi {
     pub(super) fn open_local_text(&mut self, path: &std::path::Path, name: &str) {
         let mut viewer = TextViewer::new(name, Source::Local(path.to_owned()));
-        viewer.start(&self.ctx);
         self.close_text_viewer();
+        viewer.start(&self.ctx);
         self.text_viewer = Some(viewer);
     }
     pub(super) fn open_remote_text(&mut self, message: &ChatMessage, attachment: &ChatAttachment, state: &AppSnapshot) {
@@ -188,12 +254,20 @@ impl NotDiscordUi {
             account, generation: state.notification_generation, channel: message.channel_id.clone(),
             message: message.id.clone(), attachment: attachment.id.clone(), url: attachment.url.clone(),
         });
-        viewer.start(&self.ctx);
         self.close_text_viewer();
+        viewer.start(&self.ctx);
         self.text_viewer = Some(viewer);
     }
     pub(super) fn text_viewer_holds(&self, path: &PathBuf) -> bool {
         self.text_viewer.as_ref().is_some_and(|viewer| matches!(&viewer.source, Source::Local(held) if held == path))
+            || EXECUTOR.get().is_some_and(|executor| {
+                let queue = executor.queue.0.lock().unwrap_or_else(|e| e.into_inner());
+                queue.active.as_ref() == Some(path) || queue.pending.as_ref().is_some_and(|job| job.source.as_ref().ok() == Some(path))
+            })
+    }
+    pub(super) fn poll_text_jobs(&mut self) {
+        let paths: Vec<_> = EXECUTOR.get().map(|executor| executor.finished.lock().unwrap_or_else(|e| e.into_inner()).try_iter().collect()).unwrap_or_default();
+        self.cleanup_unreferenced_temporary(&paths);
     }
     /// Ends the load and releases the viewer's reference to a prepared file.
     pub(super) fn close_text_viewer(&mut self) {
@@ -264,6 +338,85 @@ impl NotDiscordUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn real_worker_retains_blocked_read_while_one_hundred_replacements_coalesce() {
+        use std::sync::atomic::AtomicUsize;
+        use std::time::Duration;
+        struct WorkerGuard {
+            queue: Arc<(Mutex<Queue>,Condvar)>, release: Option<mpsc::SyncSender<()>>,
+            finished: Option<mpsc::Receiver<PathBuf>>, worker: Option<std::thread::JoinHandle<()>>,
+        }
+        impl Drop for WorkerGuard {
+            fn drop(&mut self) {
+                // This also makes a failed assertion unblock the fake reader
+                // and the bounded completion send before joining its thread.
+                self.release.take();self.finished.take();
+                {let mut queue=self.queue.0.lock().unwrap_or_else(|e|e.into_inner());queue.stopped=true;queue.pending=None;}
+                self.queue.1.notify_all();
+                if let Some(worker)=self.worker.take() {let _=worker.join();}
+            }
+        }
+        let queue=Arc::new((Mutex::new(Queue::default()),Condvar::new()));
+        let (done,finished)=mpsc::sync_channel(1);let (release,blocked)=mpsc::sync_channel(0);
+        let (entered,observed)=mpsc::channel();
+        let calls=Arc::new(AtomicUsize::new(0));let active=Arc::new(AtomicUsize::new(0));let peak=Arc::new(AtomicUsize::new(0));
+        let (work,read_calls,read_active,read_peak)=(queue.clone(),calls.clone(),active.clone(),peak.clone());
+        let worker=std::thread::spawn(move ||run_worker(work,done,move |source,_cancel| {
+            let index=read_calls.fetch_add(1,Ordering::AcqRel);
+            let count=read_active.fetch_add(1,Ordering::AcqRel)+1;read_peak.fetch_max(count,Ordering::AcqRel);
+            let _=entered.send(source.as_ref().unwrap().clone());
+            if index==0 {let _=blocked.recv();}
+            read_active.fetch_sub(1,Ordering::AcqRel);
+            document(b"synthetic text")
+        }));
+        let mut guard=WorkerGuard{queue:queue.clone(),release:Some(release),finished:Some(finished),worker:Some(worker)};
+        let ctx=egui::Context::default();
+        let make=|n|Job{source:Ok(PathBuf::from(format!("synthetic-{n}.txt"))),cancel:Arc::new(AtomicBool::new(false)),slot:Arc::new(Mutex::new(None)),ctx:ctx.clone()};
+        let first=make(0);let first_cancel=first.cancel.clone();let first_slot=first.slot.clone();
+        queue.0.lock().unwrap().replace(first);queue.1.notify_one();
+        assert_eq!(observed.recv_timeout(Duration::from_secs(3)).unwrap(),PathBuf::from("synthetic-0.txt"));
+        first_cancel.store(true,Ordering::Release);
+        let mut replaced=Vec::new();let mut last_slot=None;
+        for n in 1..=100 {
+            let job=make(n);replaced.push(job.cancel.clone());last_slot=Some(job.slot.clone());
+            let mut state=queue.0.lock().unwrap();state.replace(job);
+            assert_eq!(state.active,Some(PathBuf::from("synthetic-0.txt")));
+            assert!(state.pending.is_some());
+        }
+        queue.1.notify_one();
+        assert_eq!(active.load(Ordering::Acquire),1);assert_eq!(calls.load(Ordering::Acquire),1);
+        assert_eq!(peak.load(Ordering::Acquire),1);assert!(observed.try_recv().is_err());
+        assert!(replaced[..99].iter().all(|cancel|cancel.load(Ordering::Acquire)));
+        assert!(!replaced[99].load(Ordering::Acquire));
+        guard.release.take().unwrap().send(()).unwrap();
+        assert_eq!(guard.finished.as_ref().unwrap().recv_timeout(Duration::from_secs(3)).unwrap(),PathBuf::from("synthetic-0.txt"));
+        assert_eq!(observed.recv_timeout(Duration::from_secs(3)).unwrap(),PathBuf::from("synthetic-100.txt"));
+        assert_eq!(guard.finished.as_ref().unwrap().recv_timeout(Duration::from_secs(3)).unwrap(),PathBuf::from("synthetic-100.txt"));
+        assert_eq!(calls.load(Ordering::Acquire),2);assert_eq!(peak.load(Ordering::Acquire),1);assert_eq!(active.load(Ordering::Acquire),0);
+        assert!(first_slot.lock().unwrap().is_none(),"cancelled old outcome is never published");
+        assert!(matches!(last_slot.unwrap().lock().unwrap().as_ref(),Some(Outcome::Ready(_))));
+        queue.0.lock().unwrap().stopped=true;queue.1.notify_all();
+        assert!(guard.worker.take().unwrap().join().is_ok());
+    }
+    #[test]
+    fn replacement_coalesces_one_hundred_demands_and_cancel_does_not_release_the_active_file() {
+        let make=|n|Job { source: Ok(PathBuf::from(format!("synthetic-{n}.txt"))),cancel:Arc::new(AtomicBool::new(false)),
+            slot:Arc::new(Mutex::new(None)),ctx:egui::Context::default() };
+        let mut queue=Queue::default();queue.replace(make(0));let active=queue.take();
+        active.cancel.store(true,Ordering::Release);
+        let mut replaced=Vec::new();
+        for n in 1..=100 {
+            let next=make(n);replaced.push(next.cancel.clone());queue.replace(next);
+            assert_eq!(queue.active,Some(PathBuf::from("synthetic-0.txt")));
+        }
+        assert!(replaced[..99].iter().all(|cancel|cancel.load(Ordering::Acquire)));
+        assert!(!replaced[99].load(Ordering::Acquire));
+        let latest=queue.take();assert_eq!(latest.source.ok(),Some(PathBuf::from("synthetic-100.txt")));
+        assert!(queue.pending.is_none());
+        // Cancellation is checked before opening a file or selecting a client.
+        assert!(matches!(read_local(PathBuf::from("does-not-exist.txt").as_path(),&active.cancel),Outcome::Failed(message) if message=="Lectura cancelada."));
+        assert!(matches!(read_remote("https://cdn.discordapp.com/synthetic.txt",&active.cancel),Outcome::Failed(_)));
+    }
     #[test]
     fn accepts_unicode_and_boms_but_never_guesses_binary() {
         assert_eq!(decode("añ😀".as_bytes()).unwrap(), "añ😀");

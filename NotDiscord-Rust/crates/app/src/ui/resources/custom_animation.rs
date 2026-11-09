@@ -24,6 +24,7 @@ pub(super) struct Cache {
     entries: HashMap<String, Entry>,
     pending: HashSet<String>,
     failed: HashMap<String, Instant>,
+    failures: admission::Failures,
     worker: Option<Worker>,
     epoch: Arc<AtomicU64>,
     wanted: Arc<Mutex<HashSet<String>>>,
@@ -253,26 +254,17 @@ impl Cache {
                 continue;
             }
             self.pending.remove(&url);
-            if self.failed.len() >= 64 {
-                if let Some(oldest) = self.failed.iter().min_by_key(|(_, at)| **at).map(|(url, _)| url.clone()) { self.failed.remove(&oldest); }
-            }
             let frames = match result {
                 Ok(frames) => frames,
                 Err(_) => {
-                    if self.failed.len() >= 64 {
-                        self.failed
-                            .retain(|_, at| at.elapsed() < Duration::from_secs(60));
-                        if self.failed.len() >= 64 {
-                            self.failed.clear();
-                        }
-                    }
-                    self.failed.insert(url, Instant::now());
+                    self.failures.failed(&url);
+                    if self.failed.len() < 64 { self.failed.insert(url, Instant::now()); }
                     continue;
                 }
             };
             let bytes = frames.iter().map(|frame| frame.2.len()).sum::<usize>();
             if bytes > MAX_BYTES {
-                self.failed.insert(url, Instant::now());
+                self.failures.failed(&url);
                 continue;
             }
             if self.entries.len() >= MAX_ITEMS
@@ -286,8 +278,8 @@ impl Cache {
             {
                 // Never evict another emoji from the same hovered message and
                 // re-download it on the next pass. Budget overflow uses the
-                // existing static image with a bounded retry delay instead.
-                self.failed.insert(url, Instant::now());
+                // existing static image and explicit, per-source retry instead.
+                self.failures.failed(&url);
                 continue;
             }
             let frames: Vec<_> = frames
@@ -308,6 +300,7 @@ impl Cache {
                 })
                 .collect();
             if let Some(first) = frames.first() {
+                self.failures.succeeded(&url);
                 let now = Instant::now();
                 let next = now + first.1;
                 self.entries.insert(
@@ -353,10 +346,7 @@ impl Cache {
         // Do not evict visible entries and repeatedly re-download them each frame.
         if self.pending.len() + self.entries.len() < MAX_ITEMS
             && !self.pending.contains(url)
-            && self
-                .failed
-                .get(url)
-                .is_none_or(|at| at.elapsed() > Duration::from_secs(60))
+            && self.failures.state(url,false,false,self.failed.contains_key(url)) == admission::State::Fresh
         {
             self.initialize(ctx);
             if self
@@ -367,6 +357,7 @@ impl Cache {
                 .try_send((self.epoch.load(Ordering::Acquire), url.into()))
                 .is_ok()
             {
+                self.failures.admitted(url);
                 self.pending.insert(url.into());
             }
         }
@@ -416,12 +407,21 @@ impl Cache {
         self.epoch.fetch_add(1, Ordering::AcqRel);
         self.entries = HashMap::new();
         self.pending.clear();
-        self.failed.clear();
         self.wanted.lock().unwrap_or_else(|error| error.into_inner()).clear();
         self.requested_this_frame.clear();
         if let Some(worker) = &self.worker {
             while worker.ready.try_recv().is_ok() {}
         }
+    }
+    pub(super) fn retry(&mut self, url: &str) {
+        if self.pending.contains(url) { return; }
+        self.failed.remove(url);self.failures.retry(url.into());
+    }
+    pub(super) fn deferred(&self, url: &str) -> bool {
+        matches!(self.failures.state(url,self.entries.contains_key(url),self.pending.contains(url),self.failed.contains_key(url)),admission::State::Failed|admission::State::CapacityDeferred)
+    }
+    pub(super) fn clear_account(&mut self) {
+        self.clear();self.failed.clear();self.failures=admission::Failures::default();
     }
 }
 impl Drop for Cache {
@@ -433,6 +433,19 @@ impl Drop for Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn old_animation_failure_survives_minimization_and_time_without_new_work() {
+        let mut cache=Cache::default();let ctx=egui::Context::default();
+        let url="https://cdn.discordapp.com/emojis/123.gif?size=32";
+        cache.failed.insert(url.into(),Instant::now()-Duration::from_secs(3600));cache.failures.failed(url);
+        for _ in 0..1000 { assert!(cache.texture(&ctx,url).is_none());assert!(cache.worker.is_none()); }
+        cache.clear();
+        assert!(cache.texture(&ctx,url).is_none());assert!(cache.worker.is_none());
+        cache.retry(url);
+        assert_eq!(cache.failures.state(url,false,false,false),admission::State::Fresh);
+        // Account replacement may discard its failure namespace deliberately.
+        cache.clear_account();assert!(!cache.deferred(url));
+    }
     fn synthetic_webp(count: usize) -> Vec<u8> {
         use image::ImageEncoder;
         fn chunk(out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {

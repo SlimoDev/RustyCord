@@ -901,8 +901,7 @@ impl NotDiscordUi {
     }
 
     pub(super) fn background_blocked(&self) -> bool {
-        self.dialog.is_some() || self.picker.is_some() || self.time_picker.is_some() || self.viewer.is_some() || self.search_open
-            || self.text_viewer.is_some() || crate::diagnostics::is_open(&self.ctx)
+        !self.active_surfaces(&self.ctx).is_empty()
             || self.ctx.data(|data|data.get_temp::<u64>(egui::Id::new("overlay-dismissal-block")))
                 == Some(self.ctx.cumulative_frame_nr())
     }
@@ -926,7 +925,8 @@ impl NotDiscordUi {
                 ui.allocate_rect(rect, egui::Sense::click_and_drag());
                 ui.painter().rect_filled(rect, 0., egui::Color32::from_black_alpha(60));
             });
-        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        // This layer only intercepts input. Carets, animation, asynchronous
+        // results and their deadlines retain responsibility for wakeups.
     }
     pub(super) fn open_media(&mut self) {
         self.dialog = Some(Dialog::Media);
