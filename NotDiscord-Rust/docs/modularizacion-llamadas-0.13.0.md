@@ -1,5 +1,9 @@
 # Modularización y estabilidad de llamadas — ejecución 0.13.0
 
+**Estado actual:** [NotDiscord 0.13.0 publicada](https://github.com/SlimoDev/RustyCord/releases/tag/NotDiscord-v0.13.0)
+y verificada. El [acta de publicación](../evidence/publication-0.13.0.json)
+registra el estado posterior al corte local que se conserva abajo.
+
 Trabajo iniciado el 9 de noviembre de 2026, America/Lima, mediante
 `notdiscord-programar`, sobre `01c7ed88ae9bcdbe6b4b9288fe6c74fe2c641811`, rama
 `NotDiscord`, variante estándar. Tipo inferido **Mediana: 0.12.0 → 0.13.0**,
@@ -24,8 +28,8 @@ controles permitidos; no autoriza instalar ni ampliar esas pruebas.
 ## Estado de implementación
 
 T0–T7 están implementadas dentro de las comprobaciones permitidas; los casos
-físicos de C5/H10 continúan abiertos. La entrega local T8 está generada y
-verificada; la publicación se registra después de verificar el asset remoto.
+físicos de C5/H10 continúan abiertos. La entrega local T8 se generó y verificó;
+su publicación posterior se registra al final de esta nota.
 
 Cambios integrados:
 
@@ -122,6 +126,21 @@ IPC del paquete carga el módulo nativo para capacidades pero no inicializa el
 motor ni dispositivos. No se abrió el cliente, no se usó cuenta Discord, no se
 instaló ni ejecutó Setup. No se midió CPU/RAM/p95; las cuotas y los contadores
 sintéticos no certifican ahorro de memoria ni una llamada física prolongada.
+
+## Publicación posterior verificada
+
+Se publicó `NotDiscord 0.13.0`, sin draft ni prerelease, con etiqueta
+`NotDiscord-v0.13.0` sobre `719a421ddd9f89c2b68377f8cb482060f59c9954`.
+Los tres commits de fuentes/contratos y evidencia conservan `release: null`
+en el corte compilado. El mapa Git vincula los 189 inputs, distinguiendo 67
+normalizaciones de texto de los bytes de compilación.
+
+El asset público coincide con Setup en nombre, estado, 119119054 bytes y
+SHA-256; el enlace respondió HTTP200. El manifiesto se anuncia en un commit
+posterior a esa verificación. El acta local queda histórica y no se reconstruye
+Setup con su propio hash. No se instaló ni modificó la instalación del usuario,
+Plus o legacy. Las causas físicas y las comprobaciones reales pendientes no
+se convierten en casos resueltos por publicar esta entrega.
 
 Se preservan los cambios anteriores del usuario en README, plan del 31 de
 octubre y skill de planificación, además de la evidencia ajena. No se modifican

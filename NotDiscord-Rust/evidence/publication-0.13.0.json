@@ -1,0 +1,91 @@
+{
+  "Schema": 1,
+  "LocalDate": "2026-11-09",
+  "TimeZone": "America/Lima",
+  "VerifiedAtUtc": "2026-11-09T23:59:45.513Z",
+  "Variant": "standard",
+  "Version": "0.13.0",
+  "Branch": "NotDiscord",
+  "UpdateType": "Mediana",
+  "SourceCommit": "719a421ddd9f89c2b68377f8cb482060f59c9954",
+  "ContractCommits": [
+    "413ef27fb3ee4eec62623231e1e91528f4b8fe9f",
+    "abf5704a43e5290d90846fe753391b7520b5179b"
+  ],
+  "BaseRevision": "01c7ed88ae9bcdbe6b4b9288fe6c74fe2c641811",
+  "BuildId": "61bc8d3708e4dc9fed61448e6039e1da75ede2eea6079f2d7c5bd9800137637b",
+  "SourceCut": "source-cut-0.13.0-delivery.json",
+  "GitSourceMap": "source-git-map-0.13.0.json",
+  "SourceInputsBoundToCommit": 189,
+  "BuildInputBytesAndGitNormalizationDistinguished": true,
+  "LocalDeliveryActPreserved": true,
+  "Release": {
+    "Id": 439783573,
+    "Name": "NotDiscord 0.13.0",
+    "Tag": "NotDiscord-v0.13.0",
+    "Url": "https://github.com/SlimoDev/RustyCord/releases/tag/NotDiscord-v0.13.0",
+    "Draft": false,
+    "Prerelease": false,
+    "TagCommit": "719a421ddd9f89c2b68377f8cb482060f59c9954"
+  },
+  "Installer": {
+    "AssetId": 729446009,
+    "Name": "NotDiscord-Setup-0.13.0.exe",
+    "Bytes": 119119054,
+    "SHA256": "a595cfad04df656a18924948637e94eca28bf3a5a4f9d5d7012a1aa4e6f291b9",
+    "GitHubDigest": "sha256:a595cfad04df656a18924948637e94eca28bf3a5a4f9d5d7012a1aa4e6f291b9",
+    "State": "uploaded",
+    "Url": "https://github.com/SlimoDev/RustyCord/releases/download/NotDiscord-v0.13.0/NotDiscord-Setup-0.13.0.exe",
+    "PublicHttpStatus": 200
+  },
+  "ExecutableSHA256": "8d197a2e18d7b9eedd1c5b40f048cce77afd59f9f248be9a3433f9cfb7401cdd",
+  "ProductionAddonSHA256": "c7229ef7b8258ab91ef2cbc9c05f7222604740bd380f9d8010a2d424ebbeee7f",
+  "CompiledManifestRelease": null,
+  "InstallerManifestRelease": null,
+  "UpdateManifest": "NotDiscord-Rust/version.json",
+  "UpdateManifestAnnouncedAfterAssetVerification": true,
+  "UpdateManifestWorktreeSHA256": "68f4be4a140e3aba6558acbf2dbe0ebc328d4644488e7de39796f23167e61205",
+  "Published": true,
+  "WorkspaceLibraryTestsPassed": 1021,
+  "WorkspaceLibraryTestsIgnored": 5,
+  "DiagnosticFeatureTestsPassed": 61,
+  "DiagnosticTestsOverlapMedia": true,
+  "ProductionBuildPassed": true,
+  "AllTargetsReleaseCheckPassed": true,
+  "PackageVerified": true,
+  "ProductionIpcChecks": 7,
+  "RustSrcReviewCoverage": {
+    "Current": 179,
+    "Characterized": 179,
+    "Missing": 0,
+    "AncillaryContracts": 11
+  },
+  "VirtualProlongedLedger": {
+    "Hours": 4,
+    "Frames": 14400,
+    "RealCall": false,
+    "NativeRekeyExecution": false
+  },
+  "ReportedDisconnect": {
+    "Version": "0.12.0",
+    "ApproximateDuration": "15 minutes or more",
+    "AffectedSide": "own client",
+    "CausalAttribution": false
+  },
+  "C5Open": true,
+  "H10NativeMissingCallbackHypothesisOpen": true,
+  "RealProlongedCallVerified": false,
+  "RemoteAudibilityVerified": false,
+  "DiscordAccountUsed": false,
+  "PhysicalDevicesUsed": false,
+  "RealSuspend": false,
+  "InstallerExecuted": false,
+  "PerformanceMeasurements": false,
+  "OtherBranchRefs": {
+    "Plus": "d35c06ac7e824c17198791b3d9208f732bc8be81",
+    "Legacy": "637d41f897a0e435c3d7e26d1c400afd6a640d0e"
+  },
+  "OtherBranchesPreserved": true,
+  "UnrelatedFilesPreserved": 6,
+  "UserReadmePlanLinkPreserved": true
+}

@@ -1,6 +1,6 @@
 # Plan de modularización y estabilidad de llamadas — 9 de noviembre de 2026
 
-**Estado vigente: T0–T7 implementadas y comprobadas dentro de los límites autorizados; entrega local 0.13.0 generada y verificada.** El apartado 8 y la [nota de ejecución](modularizacion-llamadas-0.13.0.md) registran los resultados posteriores. Los apartados 1–7 conservan el corte de planificación sobre 0.12.0; sus estados pendientes son históricos. No existe todavía una reproducción física que explique las desconexiones del usuario ni que cierre C5/H10.
+**Estado vigente: T0–T7 implementadas y comprobadas dentro de los límites autorizados; 0.13.0 publicada con instalador y manifiesto verificados.** El apartado 8 y la [nota de ejecución](modularizacion-llamadas-0.13.0.md) registran los resultados posteriores. Los apartados 1–7 conservan el corte de planificación sobre 0.12.0; sus estados pendientes son históricos. No existe todavía una reproducción física que explique las desconexiones del usuario ni que cierre C5/H10.
 
 ## 1. Base y alcance
 
@@ -275,7 +275,7 @@ ni justifica un temporizador nuevo de quince minutos.
 | T5 | Superficie compartida, prioridad/foco/cierre exterior `@time`, barrera sin repintado16ms; fixtures headless correctas |
 | T6 | Modelo de vídeo con proyecciones distintas; H11 opcional diferido por beneficio marginal, sin fusionar JSON/multipart |
 | T7 | Matriz sintética y cuatro horas virtuales correctas; diagnóstico acotado de ledger. C5/H10 y llamadas reales siguen abiertos |
-| T8 | Build/check release, paquete y siete IPC correctos; Setup generado sin ejecutar. Publicación después de verificar el asset |
+| T8 | Build/check release, paquete y siete IPC correctos; Setup publicado y verificado sin ejecutar. Manifiesto anunciado después del asset |
 
 Pasaron **1.021 pruebas del workspace** (app784, core178, media59; cinco ignoradas
 existentes) y **61 diagnósticas**, solapadas con media. Los dos drivers N-API
@@ -291,3 +291,13 @@ y contratos, con build ID
 `61bc8d3708e4dc9fed61448e6039e1da75ede2eea6079f2d7c5bd9800137637b`.
 No se midieron CPU/RAM/p95 ni se anuncia ahorro; se conservaron políticas,
 datos, borradores, dependencias y variantes ajenas.
+
+### Publicación
+
+La release `NotDiscord 0.13.0` se publicó con etiqueta `NotDiscord-v0.13.0`
+sobre `719a421ddd9f89c2b68377f8cb482060f59c9954`. Asset de 119119054 bytes y
+SHA-256 `a595cfad04df656a18924948637e94eca28bf3a5a4f9d5d7012a1aa4e6f291b9`
+coincidentes con Setup local; enlace público HTTP200. El manifiesto se anuncia
+después y el [acta de publicación](../evidence/publication-0.13.0.json) conserva
+la separación entre ese anuncio, el corte compilado y el acta local histórica.
+No se instaló ni ejecutó Setup, ni se declararon resueltas las hipótesis físicas.
